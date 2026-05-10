@@ -180,7 +180,11 @@ std::array<float, 4> ChassisManager::update(const float actual_p[4],
     if (level_ == auv::common::ControlLevel::POSITION) {
       ProfileState d;
       if (config_.planner_enabled) {
-        d = profiles_[i].update(target_p[i], dt);
+        if (i == 3) {
+          d = profiles_[i].updateAngle(target_p[i], dt);
+        } else {
+          d = profiles_[i].update(target_p[i], dt);
+        }
       } else {
         d.p = target_p[i];
         d.v = 0.0f;
@@ -191,8 +195,10 @@ std::array<float, 4> ChassisManager::update(const float actual_p[4],
       // v_actual_world)
       float actual_v_world_val = (i < 2) ? actual_v_world_now[i] : actual_v[i];
       float pos_derivative = d.v - actual_v_world_val;
+      float pos_error = (i == 3) ? CoordinateManager::normalizeAngle(d.p - actual_p[i]) 
+                                 : (d.p - actual_p[i]);
       v_target_world[i] =
-          pos_pids_[i].compute(d.p - actual_p[i], dt, pos_derivative) + d.v;
+          pos_pids_[i].compute(pos_error, dt, pos_derivative) + d.v;
     } else if (level_ == auv::common::ControlLevel::VELOCITY) {
       // 速度环规划器演进
       float target_v_world = 0.0f;

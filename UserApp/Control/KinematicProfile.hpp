@@ -71,6 +71,14 @@ public:
     ProfileState update(float target_p, float dt);
 
     /**
+     * @brief 更新位置规划器（角度模式，处理 +-PI 突变）
+     * @param target_p 目标角度
+     * @param dt 时间步长
+     * @return 当前平滑后的状态
+     */
+    ProfileState updateAngle(float target_p, float dt);
+
+    /**
      * @brief 速度跟踪演进
      * @param target_v 目标期望速度
      * @param dt 步长
