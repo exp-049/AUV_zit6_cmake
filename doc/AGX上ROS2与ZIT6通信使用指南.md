@@ -58,8 +58,11 @@ MicroXRCEAgent serial --dev /dev/ttyUSB0 -b 921600
 
 ### 4.1 AGX -> MCU（控制指令）
 
-- `/zit6/cmd/setpoint`（`zit6_interfaces/msg/ZitSetpoint`）：位置/速度/推力控制目标。
-- `/zit6/cmd/agxhbt`（`std_msgs/msg/UInt32`）：上位机心跳与解锁触发。
+- `/zit6/cmd/setpoint`（`zit6_interfaces/msg/ZitSetpoint`）：位置/速度/推力控制目标。  
+  - `control_key` 常用值：`0=POS`、`1=VEL`、`2=FORCE`；可叠加 `0x10`（机体系）与 `0x20`（增量模式）。
+  - `type_mask` 为轴掩码位：`1=X`、`2=Y`、`4=Z`、`8=Yaw`，按位组合使用。
+- `/zit6/cmd/agxhbt`（`std_msgs/msg/UInt32`）：上位机心跳与解锁触发。  
+  - 常用值：`1=普通解锁（需导航就绪）`，`3=推力解锁/遥控模式（绕过导航检查，谨慎使用）`。
 - `/zit6/cmd/ins`（`std_msgs/msg/UInt8`）：INS 控制指令。
 - `/zit6/cmd/light`（`std_msgs/msg/UInt8`）：灯控。
 - `/zit6/cmd/servo`（`std_msgs/msg/Float32`）：舵机角度。
