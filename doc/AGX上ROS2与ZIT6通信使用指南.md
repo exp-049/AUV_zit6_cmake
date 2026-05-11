@@ -67,7 +67,7 @@ MicroXRCEAgent serial --dev /dev/ttyUSB0 -b 921600
 
 ## 5. 控制话题详细说明（含“数值 -> 结果”）
 
-## 5.1 `/zit6/cmd/ins` (`std_msgs/msg/UInt8`)
+### 5.1 `/zit6/cmd/ins` (`std_msgs/msg/UInt8`)
 
 这是你提到的重点：**比如 `cmd/ins = 1` 会发生什么**。
 
@@ -94,7 +94,7 @@ ros2 topic pub --once /zit6/cmd/ins std_msgs/msg/UInt8 "{data: 1}"
 
 ---
 
-## 5.2 `/zit6/cmd/agxhbt` (`std_msgs/msg/UInt32`)
+### 5.2 `/zit6/cmd/agxhbt` (`std_msgs/msg/UInt32`)
 
 该消息用于“心跳+解锁模式选择”。
 
@@ -132,7 +132,7 @@ ros2 topic pub -r 10 /zit6/cmd/agxhbt std_msgs/msg/UInt32 "{data: 3}"
 
 ---
 
-## 5.3 `/zit6/cmd/setpoint` (`zit6_interfaces/msg/ZitSetpoint`)
+### 5.3 `/zit6/cmd/setpoint` (`zit6_interfaces/msg/ZitSetpoint`)
 
 字段：`control_key`, `type_mask`, `x y z yaw`, `seq`。
 
@@ -154,7 +154,7 @@ ros2 topic pub -r 10 /zit6/cmd/agxhbt std_msgs/msg/UInt32 "{data: 3}"
 - `48`（0x30）：Body + 增量位置
 - `50`（0x32）：Body + 增量推力
 
-### B) `type_mask`（按位“屏蔽”轴）
+### B) `type_mask`（关键：位=1 即“屏蔽/不更新”）
 
 > 这里容易误解：在当前固件实现中，**位为 1 表示该轴不更新/被屏蔽**，不是“启用”。
 
@@ -179,7 +179,7 @@ ros2 topic pub -r 10 /zit6/cmd/agxhbt std_msgs/msg/UInt32 "{data: 3}"
 
 ---
 
-## 5.4 `/zit6/cmd/light` (`std_msgs/msg/UInt8`)
+### 5.4 `/zit6/cmd/light` (`std_msgs/msg/UInt8`)
 
 - MCU 收到后直接调用 `setLightState(data)`，并封包发给运动控制板。
 - 当前链路中该值不做范围校验，建议按项目约定发送（常见约定：1/2/3）。
@@ -192,7 +192,7 @@ ros2 topic pub --once /zit6/cmd/light std_msgs/msg/UInt8 "{data: 1}"
 
 ---
 
-## 5.5 `/zit6/cmd/servo` (`std_msgs/msg/Float32`)
+### 5.5 `/zit6/cmd/servo` (`std_msgs/msg/Float32`)
 
 - MCU 收到后直接调用 `setServoAngle(data)`，下发给运动控制板。
 - 当前实现不做角度钳位，建议上位机自行限制安全范围。
