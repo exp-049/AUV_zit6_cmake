@@ -98,13 +98,13 @@ ros2 topic pub --once /zit6/cmd/ins std_msgs/msg/UInt8 "{data: 1}"
 
 该消息用于“心跳+解锁模式选择”。
 
-### A) `data` 常用取值
+#### A) `data` 常用取值
 
 - `1`：普通解锁模式（要求导航有效，或 HITL 仿真启用）。
 - `3`：遥控/推力解锁模式（可绕过导航有效性检查）。
 - 其他值：不会满足当前解锁条件（通常无法解锁）。
 
-### B) 解锁判据（MCU 实际逻辑）
+#### B) 解锁判据（MCU 实际逻辑）
 
 MCU 不会“收到一包就解锁”，需要同时满足：
 
@@ -114,7 +114,7 @@ MCU 不会“收到一包就解锁”，需要同时满足：
    - `data==3`；
    - `data==1` 且 `navigation_ready=true`（或 HITL 模式开启）。
 
-### C) 掉心跳后的行为
+#### C) 掉心跳后的行为
 
 - 已解锁状态下，若超过 **500ms** 没有新心跳：强制失锁；
 - 失锁后推进器输出回到 0（安全态）；
@@ -136,7 +136,7 @@ ros2 topic pub -r 10 /zit6/cmd/agxhbt std_msgs/msg/UInt32 "{data: 3}"
 
 字段：`control_key`, `type_mask`, `x y z yaw`, `seq`。
 
-### A) `control_key`（模式 + 标志位）
+#### A) `control_key`（模式 + 标志位）
 
 - 低 2 位：
   - `0=POS` 位置环
@@ -154,7 +154,7 @@ ros2 topic pub -r 10 /zit6/cmd/agxhbt std_msgs/msg/UInt32 "{data: 3}"
 - `48`（0x30）：Body + 增量位置
 - `50`（0x32）：Body + 增量推力
 
-### B) `type_mask`（关键：位=1 即“屏蔽/不更新”）
+#### B) `type_mask`（关键：位=1 即“屏蔽/不更新”）
 
 > 这里容易误解：在当前固件实现中，**位为 1 表示该轴不更新/被屏蔽**，不是“启用”。
 
@@ -168,7 +168,7 @@ ros2 topic pub -r 10 /zit6/cmd/agxhbt std_msgs/msg/UInt32 "{data: 3}"
 - `type_mask=7`（1|2|4）：X/Y/Z 被屏蔽，仅 Yaw 更新；
 - `type_mask=8`：仅屏蔽 Yaw，其余轴更新。
 
-### C) 收到 setpoint 后会发生什么
+#### C) 收到 setpoint 后会发生什么
 
 1. 先检查：NaN/Inf、解锁状态、控制模式合法性；
 2. 不满足则直接丢弃；
