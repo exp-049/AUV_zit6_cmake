@@ -84,6 +84,18 @@ class ConfigApp(QMainWindow):
             "simulation.hitl_enabled",
         }
         self._enum_paths = {"z_data_sourse"}
+        self._enum_allowed = {
+            "z_data_sourse": {
+                "use_ins_integrated_z",
+                "use_ms5837_z",
+                "use_ins_pressure_z",
+                "use_manometer_z",
+            }
+        }
+        self._enum_aliases = {
+            "use_manometer_z": "use_ins_pressure_z",
+        }
+        self._types_map = {}
 
         # UI Layout
         main_widget = QWidget()
@@ -144,6 +156,8 @@ class ConfigApp(QMainWindow):
     def flatten_json(self, data, prefix=""):
         res = {}
         for k, v in data.items():
+            if not prefix and k == "types":
+                continue
             path = f"{prefix}.{k}" if prefix else k
             if isinstance(v, dict):
                 res.update(self.flatten_json(v, path))
@@ -156,6 +170,26 @@ class ConfigApp(QMainWindow):
             return "true" if val else "false"
         return str(val)
 
+    def _apply_types_map(self, types_map):
+        for path, t in types_map.items():
+            t_norm = str(t).strip().lower()
+            if t_norm in ("uint32", "uint32_t", "int32", "int32_t"):
+                self._int_paths.add(path)
+            elif t_norm in ("bool", "boolean"):
+                self._bool_paths.add(path)
+            elif t_norm.startswith("enum"):
+                self._enum_paths.add(path)
+
+    def _normalize_enum_value(self, path, val_str):
+        v = val_str.strip().lower()
+        return self._enum_aliases.get(v, v)
+
+    def _is_enum_value_valid(self, path, val_str):
+        allowed = self._enum_allowed.get(path)
+        if not allowed:
+            return True
+        return val_str in allowed
+
     def _normalize_value_for_send(self, path, val_str):
         s = val_str.strip()
         if path in self._bool_paths:
@@ -164,8 +198,13 @@ class ConfigApp(QMainWindow):
                 return "true"
             if low in ("false", "0"):
                 return "false"
+        if path in self._int_paths:
+            try:
+                return str(int(float(s)))
+            except ValueError:
+                return s
         if path in self._enum_paths:
-            return s.lower()
+            return self._normalize_enum_value(path, s)
         return s
 
     def _infer_value_from_str(self, path, val_str):
@@ -177,7 +216,7 @@ class ConfigApp(QMainWindow):
             if low in ("false", "0"):
                 return False
         if path in self._enum_paths:
-            return s
+            return self._normalize_enum_value(path, s)
         if path in self._int_paths:
             try:
                 return int(float(s))
@@ -218,9 +257,14 @@ class ConfigApp(QMainWindow):
         try:
             with open(self.config_path, 'r') as f:
                 config = json.load(f)
+                if isinstance(config.get("types"), dict):
+                    self._types_map = config.get("types")
+                    self._apply_types_map(self._types_map)
                 flat = self.flatten_json(config)
                 self.table.setRowCount(len(flat))
                 for i, (path, val) in enumerate(flat.items()):
+                    if path in self._enum_paths and isinstance(val, str):
+                        val = self._normalize_enum_value(path, val)
                     self.table.setItem(i, 0, QTableWidgetItem(path))
                     self.table.item(i, 0).setFlags(Qt.ItemIsEnabled)
                     self.table.setItem(i, 1, QTableWidgetItem(self._format_value(val)))
@@ -233,19 +277,30 @@ class ConfigApp(QMainWindow):
     def update_table_values(self, data):
         for path, val in data.items():
             if path in self.params_map:
+                if path in self._enum_paths and isinstance(val, str):
+                    val = self._normalize_enum_value(path, val)
                 row = self.params_map[path]
                 self.table.setItem(row, 1, QTableWidgetItem(self._format_value(val)))
                 self.table.item(row, 1).setFlags(Qt.ItemIsEnabled)
 
     def on_apply(self):
         paths, values = [], []
+        invalid_enums = []
         for i in range(self.table.rowCount()):
             path = self.table.item(i, 0).text()
             cur_val = self.table.item(i, 1).text()
             new_val = self.table.item(i, 2).text()
             if cur_val != new_val:
+                normalized = self._normalize_value_for_send(path, new_val)
+                if path in self._enum_paths and not self._is_enum_value_valid(path, normalized):
+                    invalid_enums.append((path, new_val))
+                    continue
                 paths.append(path)
-                values.append(self._normalize_value_for_send(path, new_val))
+                values.append(normalized)
+
+        if invalid_enums:
+            lines = "\n".join([f"{p}: {v}" for p, v in invalid_enums])
+            QMessageBox.warning(self, "Invalid Enum", f"Invalid enum values:\n{lines}")
         
         if paths:
             self.worker.push_params(paths, values)
@@ -269,6 +324,9 @@ class ConfigApp(QMainWindow):
                 if part not in d: d[part] = {}
                 d = d[part]
             d[parts[-1]] = val
+
+        if self._types_map:
+            nested_data["types"] = self._types_map
         
         try:
             with open(self.config_path, 'w') as f:

@@ -5,6 +5,7 @@
 #include "SystemConfig.hpp"
 #include "cJSON.h"
 #include "task.h"
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -71,12 +72,48 @@ static void copyParamString(void *ptr, const char *value) {
   dst[63] = '\0';
 }
 
+static void toLowerCopy(const char *src, char *dst, size_t dst_size) {
+  if (!dst || dst_size == 0)
+    return;
+  if (!src) {
+    dst[0] = '\0';
+    return;
+  }
+  size_t i = 0;
+  for (; i + 1 < dst_size && src[i]; ++i) {
+    dst[i] = (char)std::tolower((unsigned char)src[i]);
+  }
+  dst[i] = '\0';
+}
+
+static bool startsWith(const char *s, const char *prefix) {
+  if (!s || !prefix)
+    return false;
+  return strncmp(s, prefix, strlen(prefix)) == 0;
+}
+
+static auv::config::ParamType resolveParamType(const auv::config::ParamMeta &p) {
+  using auv::config::ParamType;
+  if (!p.path)
+    return p.type;
+  if (strcmp(p.path, "soft_watchdog.timeout_ms") == 0)
+    return ParamType::UINT32;
+  if (p.type == ParamType::UINT32) {
+    if (startsWith(p.path, "chassis.") || startsWith(p.path, "simulation.") ||
+        startsWith(p.path, "ins.")) {
+      return ParamType::FLOAT;
+    }
+  }
+  return p.type;
+}
+
 static bool dispatchUpdate(const char *path, const char *value, bool &updated) {
   using namespace auv::config;
   for (size_t i = 0; i < SYSTEM_PARAMS_COUNT; ++i) {
     const auto &p = SYSTEM_PARAMS[i];
     if (p.path && strcmp(p.path, path) == 0) {
-      switch (p.type) {
+      const auto effective_type = resolveParamType(p);
+      switch (effective_type) {
       case ParamType::FLOAT:
         *(float *)p.ptr = strtof(value, nullptr);
         break;
@@ -93,12 +130,16 @@ static bool dispatchUpdate(const char *path, const char *value, bool &updated) {
       case ParamType::STRING:
         copyParamString(p.ptr, value);
         break;
-      case ParamType::ENUM_Z:
-        if (strstr(value, "ms5837"))
+      case ParamType::ENUM_Z: {
+        char lower[32];
+        toLowerCopy(value, lower, sizeof(lower));
+        if (strstr(lower, "ms5837"))
           *(ZDataSource *)p.ptr = ZDataSource::USE_MS5837_Z;
+        else if (strstr(lower, "manometer") || strstr(lower, "pressure"))
+          *(ZDataSource *)p.ptr = ZDataSource::USE_INS_PRESSURE_Z;
         else
           *(ZDataSource *)p.ptr = ZDataSource::USE_INS_INTEGRATED_Z;
-        break;
+      } break;
       default:
         return false;
       }
@@ -190,7 +231,8 @@ const char *ConfigService::getParamsJson(const char **req_paths,
     }
     if (include) {
       any_match = true;
-      switch (p.type) {
+      const auto effective_type = resolveParamType(p);
+      switch (effective_type) {
       case ParamType::FLOAT:
         jw.pair(p.path, *(float *)p.ptr);
         break;
@@ -207,9 +249,13 @@ const char *ConfigService::getParamsJson(const char **req_paths,
         jw.pair(p.path, (const char *)p.ptr);
         break;
       case ParamType::ENUM_Z:
-        jw.pair(p.path, (*(ZDataSource *)p.ptr == ZDataSource::USE_MS5837_Z)
-                            ? "use_ms5837_z"
-                            : "use_ins_integrated_z");
+        if (*(ZDataSource *)p.ptr == ZDataSource::USE_MS5837_Z) {
+          jw.pair(p.path, "use_ms5837_z");
+        } else if (*(ZDataSource *)p.ptr == ZDataSource::USE_INS_PRESSURE_Z) {
+          jw.pair(p.path, "use_ins_pressure_z");
+        } else {
+          jw.pair(p.path, "use_ins_integrated_z");
+        }
         break;
       default:
         break;

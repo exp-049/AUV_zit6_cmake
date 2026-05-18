@@ -2,6 +2,22 @@
 #include "SystemConfig.hpp"
 #include "main.h"
 #include <algorithm>
+#include <cmath>
+
+namespace {
+constexpr float kPi = 3.14159265f;
+constexpr float kTwoPi = 6.2831853f;
+
+float wrapAngle(float angle) {
+  if (angle > kPi || angle < -kPi) {
+    angle = std::fmod(angle + kPi, kTwoPi);
+    if (angle < 0.0f)
+      angle += kTwoPi;
+    angle -= kPi;
+  }
+  return angle;
+}
+} // namespace
 
 namespace auv {
 namespace control {
@@ -26,7 +42,7 @@ void ChassisManager::applyConfig(const auv::config::ChassisConfig &cfg) {
     pos_cfg.kd = axis_cfg.pos_kd;
     pos_cfg.i_limit = axis_cfg.pos_i_limit;
     pos_cfg.output_limit = axis_cfg.pos_output_limit;
-    pos_cfg.dt = 0.01f;            // 固定周期
+    pos_cfg.dt = 0.01f; // 固定周期
     pos_pids_[i].setConfig(pos_cfg);
 
     PID_Controller::Config vel_cfg;
@@ -180,19 +196,32 @@ std::array<float, 4> ChassisManager::update(const float actual_p[4],
     if (level_ == auv::common::ControlLevel::POSITION) {
       ProfileState d;
       if (config_.planner_enabled) {
-        d = profiles_[i].update(target_p[i], dt);
+        if (i == 3) {
+          float current = profiles_[i].getState().p;
+          float target = current + wrapAngle(target_p[i] - current);
+          d = profiles_[i].update(target, dt);
+        } else {
+          d = profiles_[i].update(target_p[i], dt);
+        }
       } else {
         d.p = target_p[i];
         d.v = 0.0f;
         d.a = 0.0f;
+        if (i == 3) {
+          float actual_yaw = actual_p[i];
+          d.p = actual_yaw + wrapAngle(target_p[i] - actual_yaw);
+        }
       }
-      
+
       // 修正：位置环的导数项应使用世界系下的速度误差 (v_ref_world -
       // v_actual_world)
       float actual_v_world_val = (i < 2) ? actual_v_world_now[i] : actual_v[i];
       float pos_derivative = d.v - actual_v_world_val;
+      float pos_error = d.p - actual_p[i];
+      if (i == 3)
+        pos_error = wrapAngle(pos_error);
       v_target_world[i] =
-          pos_pids_[i].compute(d.p - actual_p[i], dt, pos_derivative) + d.v;
+          pos_pids_[i].compute(pos_error, dt, pos_derivative) + d.v;
     } else if (level_ == auv::common::ControlLevel::VELOCITY) {
       // 速度环规划器演进
       float target_v_world = 0.0f;
@@ -266,6 +295,8 @@ std::array<float, 4> ChassisManager::update(const float actual_p[4],
       f_base += (f_ff_accel + f_ff_drag);
     }
     output_forces[i] = f_base + target_forces_[i];
+    // 强制截断到绝对物理极限 [-1.0, 1.0]
+    output_forces[i] = std::max(-1.0f, std::min(1.0f, output_forces[i]));
   }
 
   for (int i = 0; i < 4; i++) {

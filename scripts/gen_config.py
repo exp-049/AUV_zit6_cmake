@@ -2,30 +2,84 @@ import json
 import os
 import sys
 
-def get_cpp_type(val, path=""):
+TYPE_MAP = {
+    "uint32": ("ParamType::UINT32", "uint32_t"),
+    "uint32_t": ("ParamType::UINT32", "uint32_t"),
+    "int32": ("ParamType::INT32", "int32_t"),
+    "int32_t": ("ParamType::INT32", "int32_t"),
+    "float": ("ParamType::FLOAT", "float"),
+    "float32": ("ParamType::FLOAT", "float"),
+    "bool": ("ParamType::BOOL", "bool"),
+    "boolean": ("ParamType::BOOL", "bool"),
+    "string": ("ParamType::STRING", "const char*"),
+    "cstring": ("ParamType::STRING", "const char*"),
+    "enum_z": ("ParamType::ENUM_Z", "ZDataSource"),
+    "zdatasource": ("ParamType::ENUM_Z", "ZDataSource"),
+}
+
+def load_type_overrides(config_path):
+    base_dir = os.path.dirname(config_path)
+    type_path = os.path.join(base_dir, "config.types.json")
+    if not os.path.exists(type_path):
+        return {}
+    try:
+        with open(type_path, 'r') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def resolve_type_override(override):
+    if override is None:
+        return None, None
+    if isinstance(override, dict):
+        t = override.get("type") or override.get("param_type")
+        cpp_override = override.get("cpp_type")
+    else:
+        t = override
+        cpp_override = None
+    if not t:
+        return None, None
+    t_norm = str(t).strip().lower()
+    if t_norm.startswith("enum"):
+        return "ParamType::ENUM_Z", (cpp_override or "ZDataSource")
+    mapped = TYPE_MAP.get(t_norm)
+    if not mapped:
+        return None, None
+    return mapped[0], (cpp_override or mapped[1])
+
+def get_cpp_type(val, path="", type_overrides=None):
+    if type_overrides and path in type_overrides:
+        p_type, cpp_type = resolve_type_override(type_overrides[path])
+        if p_type:
+            return p_type, cpp_type
     if isinstance(val, bool):
         return "ParamType::BOOL", "bool"
     if isinstance(val, int):
-        if path.endswith("timeout_ms"):
-            return "ParamType::UINT32", "uint32_t"
         return "ParamType::FLOAT", "float"
     if isinstance(val, float):
         return "ParamType::FLOAT", "float"
     if isinstance(val, str):
         # 特殊处理枚举
-        if "use_ms5837_z" in val or "use_ins" in val:
-             return "ParamType::ENUM_Z", "ZDataSource"
+        enum_vals = {
+            "use_ms5837_z",
+            "use_ins_integrated_z",
+            "use_ins_pressure_z",
+            "use_manometer_z",
+        }
+        if val in enum_vals:
+            return "ParamType::ENUM_Z", "ZDataSource"
         return "ParamType::STRING", "const char*"
     return None, None
 
-def collect_params(data, prefix=""):
+def collect_params(data, prefix="", type_overrides=None):
     params = []
     for k, v in data.items():
         path = f"{prefix}.{k}" if prefix else k
         if isinstance(v, dict):
-            params.extend(collect_params(v, path))
+            params.extend(collect_params(v, path, type_overrides))
         else:
-            p_type, cpp_type = get_cpp_type(v, path)
+            p_type, cpp_type = get_cpp_type(v, path, type_overrides)
             if p_type:
                 params.append({
                     "path": path,
@@ -73,7 +127,8 @@ struct ParamMeta {
 // 传感器枚举定义
 enum class ZDataSource {
     USE_INS_INTEGRATED_Z,
-    USE_MS5837_Z
+    USE_MS5837_Z,
+    USE_INS_PRESSURE_Z
 };
 
 // --- 自动生成的配置结构体 ---
@@ -148,8 +203,21 @@ extern const size_t SYSTEM_PARAMS_COUNT;
 """
 
     # 生成注册表源文件 (SystemConfig.cpp)
-    params = collect_params(config)
-    
+    if isinstance(config.get("types"), dict):
+        type_overrides = config.get("types")
+    else:
+        type_overrides = load_type_overrides(json_path)
+    config_for_params = {k: v for k, v in config.items() if k != "types"}
+    params = collect_params(config_for_params, type_overrides=type_overrides)
+
+    z_src = str(config.get('z_data_sourse', 'use_ins_integrated_z'))
+    if z_src == 'use_ms5837_z':
+        z_enum = 'USE_MS5837_Z'
+    elif z_src in ('use_ins_pressure_z', 'use_manometer_z'):
+        z_enum = 'USE_INS_PRESSURE_Z'
+    else:
+        z_enum = 'USE_INS_INTEGRATED_Z'
+
     cpp_content = f"""#include "SystemConfig.hpp"
 
 namespace auv {{
@@ -165,7 +233,7 @@ SystemConfig sys_config = {{
     }},
     .ins = {{ {config['ins']['init_lat']}, {config['ins']['init_lon']} }},
     .soft_watchdog = {{ {config['soft_watchdog']['timeout_ms']}, {str(config['soft_watchdog']['check_microros']).lower()}, {str(config['soft_watchdog']['check_ins']).lower()}, {str(config['soft_watchdog']['check_depth']).lower()} }},
-    .sensors = {{ ZDataSource::{ "USE_MS5837_Z" if config['z_data_sourse'] == 'use_ms5837_z' else "USE_INS_INTEGRATED_Z" } }},
+    .sensors = {{ ZDataSource::{z_enum} }},
     .simulation = {{ {str(config['simulation']['hitl_enabled']).lower()}, {config['simulation']['mass']}, {config['simulation']['drag']}, {config['simulation']['thrust_k']} }}
 }};
 

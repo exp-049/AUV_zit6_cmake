@@ -23,13 +23,22 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Debug")
 endif()
 
-# Generate config header from JSON (only run if generated headers missing)
-execute_process(
-    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_config.py 
-            ${CMAKE_CURRENT_SOURCE_DIR}/config.json 
-            ${CMAKE_CURRENT_SOURCE_DIR}/UserApp/Common
+# Generate config header from JSON (run on build when config.json changes)
+set(GEN_CONFIG_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_config.py)
+set(CONFIG_JSON ${CMAKE_CURRENT_SOURCE_DIR}/config.json)
+set(GEN_CONFIG_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/UserApp/Common)
+set(GEN_CONFIG_HPP ${GEN_CONFIG_OUT_DIR}/SystemConfig.hpp)
+set(GEN_CONFIG_CPP ${GEN_CONFIG_OUT_DIR}/SystemConfig.cpp)
+
+add_custom_command(
+    OUTPUT ${GEN_CONFIG_HPP} ${GEN_CONFIG_CPP}
+    COMMAND python3 ${GEN_CONFIG_SCRIPT} ${CONFIG_JSON} ${GEN_CONFIG_OUT_DIR}
+    DEPENDS ${GEN_CONFIG_SCRIPT} ${CONFIG_JSON}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Generating SystemConfig from config.json"
+    VERBATIM
 )
+add_custom_target(gen_system_config DEPENDS ${GEN_CONFIG_HPP} ${GEN_CONFIG_CPP})
 
 # Set the project name
 set(CMAKE_PROJECT_NAME AUV_zit6)
@@ -47,6 +56,7 @@ enable_language(C ASM CXX)
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
+add_dependencies(${CMAKE_PROJECT_NAME} gen_system_config)
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
