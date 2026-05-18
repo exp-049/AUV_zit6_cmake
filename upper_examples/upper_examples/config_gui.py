@@ -75,6 +75,15 @@ class ConfigApp(QMainWindow):
         self.resize(900, 700)
         self.params_map = {} # path -> row_idx
         self.config_path = os.path.join(os.getcwd(), 'config.json')
+        self._int_paths = {"soft_watchdog.timeout_ms"}
+        self._bool_paths = {
+            "soft_watchdog.check_microros",
+            "soft_watchdog.check_ins",
+            "soft_watchdog.check_depth",
+            "chassis.planner_enabled",
+            "simulation.hitl_enabled",
+        }
+        self._enum_paths = {"z_data_sourse"}
 
         # UI Layout
         main_widget = QWidget()
@@ -127,7 +136,7 @@ class ConfigApp(QMainWindow):
         try:
             from PyQt5.QtCore import QTimer
         except ImportError:
-            from PySide6.QtCore import QTimer
+            from PySide6.QtCore import QTimer 
         QTimer.singleShot(1000, lambda: self.worker.fetch_params([]))
 
         self.load_structure()
@@ -141,6 +150,43 @@ class ConfigApp(QMainWindow):
             else:
                 res[path] = v
         return res
+
+    def _format_value(self, val):
+        if isinstance(val, bool):
+            return "true" if val else "false"
+        return str(val)
+
+    def _normalize_value_for_send(self, path, val_str):
+        s = val_str.strip()
+        if path in self._bool_paths:
+            low = s.lower()
+            if low in ("true", "1"):
+                return "true"
+            if low in ("false", "0"):
+                return "false"
+        if path in self._enum_paths:
+            return s.lower()
+        return s
+
+    def _infer_value_from_str(self, path, val_str):
+        s = val_str.strip()
+        low = s.lower()
+        if path in self._bool_paths:
+            if low in ("true", "1"):
+                return True
+            if low in ("false", "0"):
+                return False
+        if path in self._enum_paths:
+            return s
+        if path in self._int_paths:
+            try:
+                return int(float(s))
+            except ValueError:
+                return s
+        try:
+            return float(s)
+        except ValueError:
+            return s
 
     def load_structure(self):
         # 优化：优先使用 ROS 2 路径查找，其次是当前工作目录
@@ -177,9 +223,9 @@ class ConfigApp(QMainWindow):
                 for i, (path, val) in enumerate(flat.items()):
                     self.table.setItem(i, 0, QTableWidgetItem(path))
                     self.table.item(i, 0).setFlags(Qt.ItemIsEnabled)
-                    self.table.setItem(i, 1, QTableWidgetItem(str(val)))
+                    self.table.setItem(i, 1, QTableWidgetItem(self._format_value(val)))
                     self.table.item(i, 1).setFlags(Qt.ItemIsEnabled)
-                    self.table.setItem(i, 2, QTableWidgetItem(str(val)))
+                    self.table.setItem(i, 2, QTableWidgetItem(self._format_value(val)))
                     self.params_map[path] = i
         except Exception as e:
             print(f"Failed to load config.json: {e}")
@@ -188,7 +234,7 @@ class ConfigApp(QMainWindow):
         for path, val in data.items():
             if path in self.params_map:
                 row = self.params_map[path]
-                self.table.setItem(row, 1, QTableWidgetItem(str(val)))
+                self.table.setItem(row, 1, QTableWidgetItem(self._format_value(val)))
                 self.table.item(row, 1).setFlags(Qt.ItemIsEnabled)
 
     def on_apply(self):
@@ -199,7 +245,7 @@ class ConfigApp(QMainWindow):
             new_val = self.table.item(i, 2).text()
             if cur_val != new_val:
                 paths.append(path)
-                values.append(new_val)
+                values.append(self._normalize_value_for_send(path, new_val))
         
         if paths:
             self.worker.push_params(paths, values)
@@ -212,16 +258,7 @@ class ConfigApp(QMainWindow):
         for i in range(self.table.rowCount()):
             path = self.table.item(i, 0).text()
             val_str = self.table.item(i, 2).text()
-            
-            # 自动转换类型
-            if val_str.lower() == 'true': val = True
-            elif val_str.lower() == 'false': val = False
-            else:
-                try:
-                    val = float(val_str) if '.' in val_str else int(val_str)
-                except:
-                    val = val_str
-            flat_data[path] = val
+            flat_data[path] = self._infer_value_from_str(path, val_str)
         
         # 反展平
         nested_data = {}

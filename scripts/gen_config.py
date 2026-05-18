@@ -2,11 +2,13 @@ import json
 import os
 import sys
 
-def get_cpp_type(val):
+def get_cpp_type(val, path=""):
     if isinstance(val, bool):
         return "ParamType::BOOL", "bool"
     if isinstance(val, int):
-        return "ParamType::UINT32", "uint32_t"
+        if path.endswith("timeout_ms"):
+            return "ParamType::UINT32", "uint32_t"
+        return "ParamType::FLOAT", "float"
     if isinstance(val, float):
         return "ParamType::FLOAT", "float"
     if isinstance(val, str):
@@ -23,7 +25,7 @@ def collect_params(data, prefix=""):
         if isinstance(v, dict):
             params.extend(collect_params(v, path))
         else:
-            p_type, cpp_type = get_cpp_type(v)
+            p_type, cpp_type = get_cpp_type(v, path)
             if p_type:
                 params.append({
                     "path": path,
