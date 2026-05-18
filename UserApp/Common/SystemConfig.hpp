@@ -25,7 +25,8 @@ struct ParamMeta {
 // 传感器枚举定义
 enum class ZDataSource {
     USE_INS_INTEGRATED_Z,
-    USE_MS5837_Z
+    USE_MS5837_Z,
+    USE_INS_PRESSURE_Z
 };
 
 // --- 自动生成的配置结构体 ---

@@ -71,7 +71,8 @@ struct ParamMeta {
 // 传感器枚举定义
 enum class ZDataSource {
     USE_INS_INTEGRATED_Z,
-    USE_MS5837_Z
+    USE_MS5837_Z,
+    USE_INS_PRESSURE_Z
 };
 
 // --- 自动生成的配置结构体 ---
@@ -163,7 +164,7 @@ SystemConfig sys_config = {{
     }},
     .ins = {{ {config['ins']['init_lat']}, {config['ins']['init_lon']} }},
     .soft_watchdog = {{ {config['soft_watchdog']['timeout_ms']}, {str(config['soft_watchdog']['check_microros']).lower()}, {str(config['soft_watchdog']['check_ins']).lower()}, {str(config['soft_watchdog']['check_depth']).lower()} }},
-    .sensors = {{ ZDataSource::{ "USE_MS5837_Z" if config['z_data_sourse'] == 'use_ms5837_z' else "USE_INS_INTEGRATED_Z" } }},
+    .sensors = {{ ZDataSource::{ "USE_MS5837_Z" if config['z_data_sourse'] == 'use_ms5837_z' else ("USE_INS_PRESSURE_Z" if config['z_data_sourse'] == 'use_ins_pressure_z' else "USE_INS_INTEGRATED_Z") } }},
     .simulation = {{ {str(config['simulation']['hitl_enabled']).lower()}, {config['simulation']['mass']}, {config['simulation']['drag']}, {config['simulation']['thrust_k']} }}
 }};
 

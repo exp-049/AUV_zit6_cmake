@@ -131,6 +131,9 @@ auv::common::NavState ControlTask::updateNavigation() {
             taskEXIT_CRITICAL();
 
             nav.z = depth_snapshot;
+        } else if (auv::config::sys_config.sensors.z_data_source == auv::config::ZDataSource::USE_INS_PRESSURE_Z) {
+            // 使用惯导包中自带的压力计作为 Z 轴
+            nav.z = nav.ins_baro_z;
         }
         g_sim_inited = false; // 退出仿真时重置标记
     }

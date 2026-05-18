@@ -25,29 +25,35 @@ struct ParamMeta {
 // 传感器枚举定义
 enum class ZDataSource {
     USE_INS_INTEGRATED_Z,
-    USE_MS5837_Z
+    USE_MS5837_Z,
+    USE_INS_PRESSURE_Z
 };
 
 // --- 自动生成的配置结构体 ---
 
-struct PIDConfig {
-    float kp;
-    float ki;
-    float kd;
-    float i_limit;
-    float output_limit;
-    float dt;
-};
-
-struct ChassisProfile {
-    float default_max_v;
-    float default_max_a;
+struct AxisConfig {
+    float pos_kp;
+    float pos_ki;
+    float pos_kd;
+    float pos_i_limit;
+    float pos_output_limit;
+    float vel_kp;
+    float vel_ki;
+    float vel_kd;
+    float vel_i_limit;
+    float vel_output_limit;
+    float max_v;
+    float max_a;
+    float mass;
+    float drag;
 };
 
 struct ChassisConfig {
-    ChassisProfile profile;
-    PIDConfig pos_pid;
-    PIDConfig vel_pid;
+    bool planner_enabled;
+    AxisConfig x;
+    AxisConfig y;
+    AxisConfig z;
+    AxisConfig yaw;
 };
 
 struct SoftWatchdogConfig {

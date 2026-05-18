@@ -180,6 +180,8 @@ void INS_Driver::decodePacket(auv::common::NavState& s) {
     memcpy(&s.x, packet_buf_ + 99, 4);
     memcpy(&s.y, packet_buf_ + 103, 4);
 
+    // 惯导压力计深度值 (Offset 107) -> ins_baro_z
+    memcpy(&s.ins_baro_z, packet_buf_ + 107, 4);
 
     // 7. 模式与状态 (Offset 129 模式, Offset 115 状态)
     s.imu_state = packet_buf_[129]; 

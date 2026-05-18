@@ -3,6 +3,10 @@
 #include "main.h"
 #include <algorithm>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846f
+#endif
+
 namespace auv {
 namespace control {
 
@@ -191,8 +195,14 @@ std::array<float, 4> ChassisManager::update(const float actual_p[4],
       // v_actual_world)
       float actual_v_world_val = (i < 2) ? actual_v_world_now[i] : actual_v[i];
       float pos_derivative = d.v - actual_v_world_val;
+      // 计算位置误差，并对 Yaw 轴进行过零点最短路径处理 [-PI, PI]
+      float pos_error = d.p - actual_p[i];
+      if (i == 3) {
+        while (pos_error > M_PI) pos_error -= 2.0f * M_PI;
+        while (pos_error < -M_PI) pos_error += 2.0f * M_PI;
+      }
       v_target_world[i] =
-          pos_pids_[i].compute(d.p - actual_p[i], dt, pos_derivative) + d.v;
+          pos_pids_[i].compute(pos_error, dt, pos_derivative) + d.v;
     } else if (level_ == auv::common::ControlLevel::VELOCITY) {
       // 速度环规划器演进
       float target_v_world = 0.0f;
