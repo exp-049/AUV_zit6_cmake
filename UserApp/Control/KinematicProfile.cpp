@@ -1,6 +1,7 @@
 #include "KinematicProfile.hpp"
 #include <cmath>
 #include <algorithm>
+#include "CoordinateManager.hpp"
 
 namespace auv {
 namespace control {
@@ -49,6 +50,36 @@ ProfileState KinematicProfile::update(float target_p, float dt) {
 
     state_.v += state_.a * dt;
     state_.p += state_.v * dt;
+
+    return state_;
+}
+
+ProfileState KinematicProfile::updateAngle(float target_p, float dt) {
+    if (dt <= 0.0f || limits_.max_v <= 0.0f || limits_.max_a <= 0.0f) {
+        state_.a = 0.0f;
+        state_.v = 0.0f;
+        return state_;
+    }
+
+    // 关键：计算最短路径的角度差
+    float delta_p = CoordinateManager::normalizeAngle(target_p - state_.p);
+
+    float v_ideal = 0.0f;
+    if (std::abs(delta_p) > 1e-4f) {
+        v_ideal = std::sqrt(2.0f * limits_.max_a * std::abs(delta_p));
+        if (delta_p < 0) v_ideal = -v_ideal;
+    }
+
+    float v_cmd = std::max(-limits_.max_v, std::min(limits_.max_v, v_ideal));
+
+    float a_raw = (v_cmd - state_.v) / dt;
+    state_.a = std::max(-limits_.max_a, std::min(limits_.max_a, a_raw));
+
+    state_.v += state_.a * dt;
+    state_.p += state_.v * dt;
+    
+    // 演进后再次归一化位置，防止长期累加超出范围
+    state_.p = CoordinateManager::normalizeAngle(state_.p);
 
     return state_;
 }

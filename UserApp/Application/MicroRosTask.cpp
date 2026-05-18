@@ -180,6 +180,9 @@ void MicroRosTask::onZitSetpoint(const void *msgin) {
             }
         }
     }
+    
+    // 关键：对 Yaw 轴目标进行归一化，防止累加溢出或跳变
+    target_p[3] = auv::control::CoordinateManager::normalizeAngle(target_p[3]);
 
     float actual_p[4] = {nav.x, nav.y, nav.z, nav.yaw};
     float actual_v[4] = {nav.vx, nav.vy, nav.vz, nav.vyaw};

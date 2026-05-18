@@ -20,5 +20,13 @@ void CoordinateManager::bodyToWorld(float yaw, float body_x, float body_y, float
     world_y = body_x * sin_y + body_y * cos_y;
 }
 
+float CoordinateManager::normalizeAngle(float angle) {
+    const float PI = 3.1415926535f;
+    const float TWO_PI = 6.2831853071f;
+    float res = fmodf(angle + PI, TWO_PI);
+    if (res < 0) res += TWO_PI;
+    return res - PI;
+}
+
 } // namespace control
 } // namespace auv

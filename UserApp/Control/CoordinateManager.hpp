@@ -47,6 +47,12 @@ public:
      * @param[out] world_y 世界系 Y (东向) 向量分量
      */
     static void bodyToWorld(float yaw, float body_x, float body_y, float& world_x, float& world_y);
+    /**
+     * @brief 角度归一化到 [-PI, PI]
+     * @param angle 输入角度 (rad)
+     * @return 归一化后的角度 (rad)
+     */
+    static float normalizeAngle(float angle);
 };
 
 } // namespace control
