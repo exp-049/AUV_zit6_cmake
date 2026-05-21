@@ -6,6 +6,7 @@
 __attribute__((section(".dma_buffer"))) uint8_t ins_rx_buffer[512];
 __attribute__((section(".dma_buffer")))
 auv::device::MotionController_Driver::ThrustPacket motor_tx_packet;
+__attribute__((section(".dma_buffer"))) uint8_t usbl_rx_buffer[512];
 
 // --- 驱动实例定义 ---
 namespace auv {
@@ -13,6 +14,7 @@ namespace device {
 INS_Driver ins_driver(&huart7, &huart7, ins_rx_buffer, 512);
 MotionController_Driver motor_driver(&huart6, &motor_tx_packet);
 MS5837 depth_sensor(&hi2c1);
+USBL_Driver usbl_driver(&huart3);
 } // namespace device
 
 namespace control {
@@ -29,6 +31,9 @@ float last_dt_ms = 0.0f;
 uint32_t last_received_seq = 0;
 float current_depth_z = 0.0f;
 volatile bool planner_replan_flag = false;
+
+// --- USBL 共享状态 ---
+auv::UsblState shared_usbl_state{};
 
 bool is_system_armed = false;
 uint32_t arm_heartbeat_count = 0;

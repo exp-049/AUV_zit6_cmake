@@ -1,5 +1,5 @@
 {
-  "z_data_sourse": "use_ms5837_z",
+  "z_data_sourse": "use_ins_pressure_z",
   "soft_watchdog": {
     "timeout_ms": 3000,
     "check_microros": true,

@@ -18,8 +18,12 @@ def main():
         except Exception:
             cfg_text = json.dumps({
                 "chassis": {
-                    "pid": {"pos": {"kp": 0.02, "ki": 0.001}},
-                    "profile": {"default_max_v": 0.6}
+                    "x": {
+                        "pos_kp": 0.02,
+                        "pos_ki": 0.001,
+                        "max_v": 0.6,
+                        "max_a": 0.2
+                    }
                 }
             })
         req.json = cfg_text

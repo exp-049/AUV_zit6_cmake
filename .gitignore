@@ -22,5 +22,6 @@ log/
 # 备份文件
 *~
 *.bak
+config.json
 
 micro_ros_stm32cubemx_utils/microros_static_library_ide/libmicroro*

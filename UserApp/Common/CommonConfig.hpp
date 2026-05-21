@@ -42,7 +42,6 @@ struct NavState {
     uint8_t dvl_state = 0; ///< DVL有效性标志 (1:有效, 0:无效)
     double lat = 0.0;      ///< 纬度 (Latitude, deg)
     double lon = 0.0;      ///< 经度 (Longitude, deg)
-    float ins_baro_z = 0.0f; ///< INS携带的压力计深度值 (m)
     uint32_t timestamp = 0; ///< 系统毫秒时间戳
 };
 

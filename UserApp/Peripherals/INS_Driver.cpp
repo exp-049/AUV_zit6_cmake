@@ -6,216 +6,225 @@ namespace auv {
 namespace device {
 
 void INS_Driver::init() {
-    // 尝试启动 DMA 接收，如果失败则重试（防止上电初期串口噪声导致 ORE 锁死）
-    for (int i = 0; i < 5; i++) {
-        if (rx_port_.startReceive()) break;
-        HAL_Delay(10);
-    }
-    resetPosition();
+  // 尝试启动 DMA 接收，如果失败则重试（防止上电初期串口噪声导致 ORE 锁死）
+  for (int i = 0; i < 5; i++) {
+    if (rx_port_.startReceive())
+      break;
+    HAL_Delay(10);
+  }
+  resetPosition();
 }
 
 void INS_Driver::sendCommand(uint8_t cmd_id, uint8_t value) {
-    uint8_t data[8] = {value, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    sendCommand(cmd_id, data, 8);
+  uint8_t data[8] = {value, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  sendCommand(cmd_id, data, 8);
 }
 
-void INS_Driver::sendCommand(uint8_t cmd_id, const uint8_t* data, uint8_t data_len) {
-    uint8_t cmd[14] = {0xFC, 0xCF, cmd_id};
-    
-    // 拷贝负载数据（最多8字节）
-    uint8_t copy_len = (data_len > 8) ? 8 : data_len;
-    if (data != nullptr && copy_len > 0) {
-        memcpy(&cmd[3], data, copy_len);
-    }
-    
-    // 填充剩余字节为 0
-    for (uint8_t i = 3 + copy_len; i < 11; ++i) {
-        cmd[i] = 0x00;
-    }
-    
-    // 帧尾
-    cmd[12] = 0xFD;
-    cmd[13] = 0xDF;
+void INS_Driver::sendCommand(uint8_t cmd_id, const uint8_t *data,
+                             uint8_t data_len) {
+  uint8_t cmd[14] = {0xFC, 0xCF, cmd_id};
 
-    // 计算 XOR 校验和 (从 byte 0 到 byte 10)
-    uint8_t v = 0;
-    for (uint8_t i = 0; i < 11; ++i) {
-        v ^= cmd[i];
-    }
-    cmd[11] = v;
-    
-    // 发送到 tx_uart_ (尝试发送3次以确保可靠性)
-    for (int i = 0; i < 3; i++) {
-        HAL_UART_Transmit(tx_uart_, cmd, 14, 50);
-        if (i < 2) HAL_Delay(10); 
-    }
+  // 拷贝负载数据（最多8字节）
+  uint8_t copy_len = (data_len > 8) ? 8 : data_len;
+  if (data != nullptr && copy_len > 0) {
+    memcpy(&cmd[3], data, copy_len);
+  }
+
+  // 填充剩余字节为 0
+  for (uint8_t i = 3 + copy_len; i < 11; ++i) {
+    cmd[i] = 0x00;
+  }
+
+  // 帧尾
+  cmd[12] = 0xFD;
+  cmd[13] = 0xDF;
+
+  // 计算 XOR 校验和 (从 byte 0 到 byte 10)
+  uint8_t v = 0;
+  for (uint8_t i = 0; i < 11; ++i) {
+    v ^= cmd[i];
+  }
+  cmd[11] = v;
+
+  // 发送到 tx_uart_ (尝试发送3次以确保可靠性)
+  for (int i = 0; i < 3; i++) {
+    HAL_UART_Transmit(tx_uart_, cmd, 14, 50);
+    if (i < 2)
+      HAL_Delay(10);
+  }
 }
 
-void INS_Driver::resetPosition() {
-    sendCommand(0x02, 0x00);
-}
+void INS_Driver::resetPosition() { sendCommand(0x02, 0x00); }
 
 void INS_Driver::setDvlPower(bool on) {
-    // 手册：03 为 DVL 电源控制位, 01 为开, 00 为关
-    sendCommand(0x03, on ? 0x01 : 0x00);
+  // 手册：03 为 DVL 电源控制位, 01 为开, 00 为关
+  sendCommand(0x03, on ? 0x01 : 0x00);
 }
 
 void INS_Driver::restart() {
-    // 手册：04 为重启指令
-    sendCommand(0x04, 0x00);
+  // 手册：04 为重启指令
+  sendCommand(0x04, 0x00);
 }
 
 void INS_Driver::setInitialPosition(double lat, double lon) {
-    // 手册：纬度/经度 * 10^7, 强制转 int, 高位在前 (Big Endian)
-    int32_t lat_fixed = (int32_t)(lat * 1e7);
-    int32_t lon_fixed = (int32_t)(lon * 1e7);
-    
-    uint8_t data[8];
-    // 纬度 (Big Endian)
-    data[0] = (uint8_t)((lat_fixed >> 24) & 0xFF);
-    data[1] = (uint8_t)((lat_fixed >> 16) & 0xFF);
-    data[2] = (uint8_t)((lat_fixed >> 8) & 0xFF);
-    data[3] = (uint8_t)(lat_fixed & 0xFF);
-    
-    // 经度 (Big Endian)
-    data[4] = (uint8_t)((lon_fixed >> 24) & 0xFF);
-    data[5] = (uint8_t)((lon_fixed >> 16) & 0xFF);
-    data[6] = (uint8_t)((lon_fixed >> 8) & 0xFF);
-    data[7] = (uint8_t)(lon_fixed & 0xFF);
-    
-    sendCommand(0x20, data, 8);
+  // 手册：纬度/经度 * 10^7, 强制转 int, 高位在前 (Big Endian)
+  int32_t lat_fixed = (int32_t)(lat * 1e7);
+  int32_t lon_fixed = (int32_t)(lon * 1e7);
+
+  uint8_t data[8];
+  // 纬度 (Big Endian)
+  data[0] = (uint8_t)((lat_fixed >> 24) & 0xFF);
+  data[1] = (uint8_t)((lat_fixed >> 16) & 0xFF);
+  data[2] = (uint8_t)((lat_fixed >> 8) & 0xFF);
+  data[3] = (uint8_t)(lat_fixed & 0xFF);
+
+  // 经度 (Big Endian)
+  data[4] = (uint8_t)((lon_fixed >> 24) & 0xFF);
+  data[5] = (uint8_t)((lon_fixed >> 16) & 0xFF);
+  data[6] = (uint8_t)((lon_fixed >> 8) & 0xFF);
+  data[7] = (uint8_t)(lon_fixed & 0xFF);
+
+  sendCommand(0x20, data, 8);
 }
 
 bool INS_Driver::isDataFresh() const {
-    return (HAL_GetTick() - last_update_ms_ < 200);
+  return (HAL_GetTick() - last_update_ms_ < 200);
 }
 
-bool INS_Driver::update(auv::common::NavState& state) {
-    uint8_t temp_buf[256];
-    uint16_t len = rx_port_.read(temp_buf, 256);
-    bool has_new_frame = false;
+bool INS_Driver::update(auv::common::NavState &state) {
+  uint8_t temp_buf[256];
+  uint16_t len = rx_port_.read(temp_buf, 256);
+  bool has_new_frame = false;
 
-    for (int i = 0; i < len; i++) {
-        if (parseByte(temp_buf[i])) {
-            if (validateFrame()) {
-                decodePacket(state);
-                last_update_ms_ = HAL_GetTick(); // 刷新时间戳
-                has_new_frame = true;
-            }
-        }
+  for (int i = 0; i < len; i++) {
+    if (parseByte(temp_buf[i])) {
+      if (validateFrame()) {
+        decodePacket(state);
+        last_update_ms_ = HAL_GetTick(); // 刷新时间戳
+        has_new_frame = true;
+      }
     }
-    return has_new_frame;
+  }
+  return has_new_frame;
 }
 
 bool INS_Driver::parseByte(uint8_t b) {
-    if (frame_len_ == 0 && b != 0xFA) return false;
-    if (frame_len_ == 1 && b != 0xAF) {
-        frame_len_ = 0;
-        return false;
-    }
-    
-    if (frame_len_ < kMaxFrameSize) {
-        packet_buf_[frame_len_++] = b;
-    } else {
-        frame_len_ = 0;
-        return false;
-    }
-    
-    // UNAV-IP 133字节标准帧 (根据截图确认)
-    return frame_len_ == 133;
+  if (frame_len_ == 0 && b != 0xFA)
+    return false;
+  if (frame_len_ == 1 && b != 0xAF) {
+    frame_len_ = 0;
+    return false;
+  }
+
+  if (frame_len_ < kMaxFrameSize) {
+    packet_buf_[frame_len_++] = b;
+  } else {
+    frame_len_ = 0;
+    return false;
+  }
+
+  // UNAV-IP 133字节标准帧 (根据截图确认)
+  return frame_len_ == 133;
 }
 
 bool INS_Driver::validateFrame() {
-    if (frame_len_ != 133) {
-        frame_len_ = 0;
-        return false;
-    }
-    
-    // 异或校验位在 130，校验范围 0-129
-    uint8_t v = 0;
-    for (int i = 0; i < 130; i++) {
-        v ^= packet_buf_[i];
-    }
-    
-    if (v == packet_buf_[130]) {
-        // 检查帧尾 0xFB 0xBF
-        if (packet_buf_[131] == 0xFB && packet_buf_[132] == 0xBF) {
-            return true;
-        }
-    }
-    
+  if (frame_len_ != 133) {
     frame_len_ = 0;
     return false;
+  }
+
+  // 异或校验位在 130，校验范围 0-129
+  uint8_t v = 0;
+  for (int i = 0; i < 130; i++) {
+    v ^= packet_buf_[i];
+  }
+
+  if (v == packet_buf_[130]) {
+    // 检查帧尾 0xFB 0xBF
+    if (packet_buf_[131] == 0xFB && packet_buf_[132] == 0xBF) {
+      return true;
+    }
+  }
+
+  frame_len_ = 0;
+  return false;
 }
 
-void INS_Driver::decodePacket(auv::common::NavState& s) {
-    // 严格按照截图偏移量解析
-    
-    // 1. 姿态 (Offset 2, 6, 10)
-    memcpy(&s.roll,  packet_buf_ + 2, 4);
-    memcpy(&s.pitch, packet_buf_ + 6, 4);
-    memcpy(&s.yaw,   packet_buf_ + 10, 4);
-    
-    // 2. 角速度 (Offset 14, 18, 22)
-    memcpy(&s.vroll,  packet_buf_ + 14, 4);
-    memcpy(&s.vpitch, packet_buf_ + 18, 4);
-    memcpy(&s.vyaw,   packet_buf_ + 22, 4);
-    
-    // 3. 机体系线速度 (Offset 26, 30, 34) -> vx, vy, vz
-    memcpy(&s.vx, packet_buf_ + 26, 4);
-    memcpy(&s.vy, packet_buf_ + 30, 4);
-    memcpy(&s.vz, packet_buf_ + 34, 4);
+void INS_Driver::decodePacket(auv::common::NavState &s) {
+  // 严格按照截图偏移量解析
 
-    // 4. 经纬度 (Offset 38, 42, int32, 1e7)
-    int32_t lat_i, lon_i;
-    memcpy(&lat_i, packet_buf_ + 38, 4);
-    memcpy(&lon_i, packet_buf_ + 42, 4);
-    s.lat = lat_i * 1e-7;
-    s.lon = lon_i * 1e-7;
+  // 1. 姿态 (Offset 2, 6, 10)
+  memcpy(&s.roll, packet_buf_ + 2, 4);
+  memcpy(&s.pitch, packet_buf_ + 6, 4);
+  memcpy(&s.yaw, packet_buf_ + 10, 4);
 
-    // 5. 深度 (改为 Offset 46: 组合深度) -> z
-    memcpy(&s.z, packet_buf_ + 46, 4);
+  // 2. 角速度 (Offset 14, 18, 22)
+  memcpy(&s.vroll, packet_buf_ + 14, 4);
+  memcpy(&s.vpitch, packet_buf_ + 18, 4);
+  memcpy(&s.vyaw, packet_buf_ + 22, 4);
 
-    // 6. 位置增量 (Offset 99, 103, float) -> x, y
-    memcpy(&s.x, packet_buf_ + 99, 4);
-    memcpy(&s.y, packet_buf_ + 103, 4);
+  // 3. 机体系线速度 (Offset 26, 30, 34) -> vx, vy, vz
+  memcpy(&s.vx, packet_buf_ + 26, 4);
+  memcpy(&s.vy, packet_buf_ + 30, 4);
+  memcpy(&s.vz, packet_buf_ + 34, 4);
 
-    // 惯导压力计深度值 (Offset 107) -> ins_baro_z
-    memcpy(&s.ins_baro_z, packet_buf_ + 107, 4);
+  // 4. 经纬度 (Offset 38, 42, int32, 1e7)
+  int32_t lat_i, lon_i;
+  memcpy(&lat_i, packet_buf_ + 38, 4);
+  memcpy(&lon_i, packet_buf_ + 42, 4);
+  s.lat = lat_i * 1e-7;
+  s.lon = lon_i * 1e-7;
 
-    // 7. 模式与状态 (Offset 129 模式, Offset 115 状态)
-    s.imu_state = packet_buf_[129]; 
-    s.dvl_state = (packet_buf_[115] & 0x02) ? 1 : 0; 
-    
-    s.timestamp = HAL_GetTick();
-    auv::device::SoftWatchdog::getInstance().feed(auv::device::SoftWatchdog::Component::INS);
+  // 5. 深度 (改为 Offset 46: 组合深度) -> z
+  memcpy(&s.z, packet_buf_ + 46, 4);
 
-    // 更新内部缓存
-    state_ = s;
+  // 6. 位置增量 (Offset 99, 103, float) -> x, y
+  memcpy(&s.x, packet_buf_ + 99, 4);
+  memcpy(&s.y, packet_buf_ + 103, 4);
 
-    // 转换单位 (Deg -> Rad)
-    const float kDeg2Rad = 0.0174532925f;
-    s.roll *= kDeg2Rad;
-    s.pitch *= kDeg2Rad;
-    s.yaw *= kDeg2Rad;
-    s.vroll *= kDeg2Rad;
-    s.vpitch *= kDeg2Rad;
-    s.vyaw *= kDeg2Rad;
+  // 6.5 压力计深度 (Offset 107, float, m)
+  float manometer_z = 0.0f;
+  memcpy(&manometer_z, packet_buf_ + 107, 4);
 
-    // 应用软件偏置 (实现 Arm 时的归零逻辑)
-    // 注意：偏置值是在 Arm 瞬间以弧度/米记录的，因此需在转换后减去
-    if (use_offset_) {
-        s.x -= offset_x_;
-        s.y -= offset_y_;
-        s.z -= offset_z_;
-        s.yaw -= offset_yaw_;
-        
-        // 航向角归一化 [-PI, PI]
-        while (s.yaw > 3.14159265f) s.yaw -= 6.2831853f;
-        while (s.yaw < -3.14159265f) s.yaw += 6.2831853f;
-    }
+  // 7. 模式与状态 (Offset 129 模式, Offset 115 状态)
+  s.imu_state = packet_buf_[129];
+  s.dvl_state = (packet_buf_[115] & 0x02) ? 1 : 0;
 
-    frame_len_ = 0; 
+  s.timestamp = HAL_GetTick();
+  auv::device::SoftWatchdog::getInstance().feed(
+      auv::device::SoftWatchdog::Component::INS);
+
+  // 更新内部缓存
+  state_ = s;
+
+  // 转换单位 (Deg -> Rad)
+  const float kDeg2Rad = 0.0174532925f;
+  s.roll *= kDeg2Rad;
+  s.pitch *= kDeg2Rad;
+  s.yaw *= kDeg2Rad;
+  s.vroll *= kDeg2Rad;
+  s.vpitch *= kDeg2Rad;
+  s.vyaw *= kDeg2Rad;
+
+  // 应用软件偏置 (实现 Arm 时的归零逻辑)
+  // 注意：偏置值是在 Arm 瞬间以弧度/米记录的，因此需在转换后减去
+  if (use_offset_) {
+    s.x -= offset_x_;
+    s.y -= offset_y_;
+    s.z -= offset_z_;
+    s.yaw -= offset_yaw_;
+    manometer_z -= offset_z_;
+
+    // 航向角归一化 [-PI, PI]
+    while (s.yaw > 3.14159265f)
+      s.yaw -= 6.2831853f;
+    while (s.yaw < -3.14159265f)
+      s.yaw += 6.2831853f;
+  }
+
+  manometer_z_ = manometer_z;
+
+  frame_len_ = 0;
 }
 
 } // namespace device

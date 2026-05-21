@@ -6,6 +6,7 @@
 #include "MotionController_Driver.hpp"
 #include "ChassisManager.hpp"
 #include "MS5837_Class.hpp"
+#include "USBL_Driver.hpp"
 #include "SystemConfig.hpp"
 #include "stm32h7xx_hal.h"
 
@@ -29,6 +30,7 @@ namespace auv {
         extern INS_Driver ins_driver;
         extern MotionController_Driver motor_driver;
         extern MS5837 depth_sensor;
+        extern USBL_Driver usbl_driver;
     }
     
     namespace control {
@@ -43,6 +45,9 @@ extern float last_dt_ms;
 extern uint32_t last_received_seq;
 extern float current_depth_z;
 extern volatile bool planner_replan_flag;
+
+// --- USBL 共享状态 ---
+extern auv::UsblState shared_usbl_state;
 
 // --- 全局配置实例 ---
 namespace auv {
