@@ -14,7 +14,6 @@
 #include <std_msgs/msg/float32_multi_array.h>
 #include <std_msgs/msg/u_int32.h>
 #include <std_msgs/msg/u_int8.h>
-#include <zit6_interfaces/msg/zit_pid_status.h>
 #include <zit6_interfaces/msg/zit_setpoint.h>
 #include <zit6_interfaces/msg/zit_status.h>
 #include <zit6_interfaces/srv/get_params.h>
@@ -35,8 +34,7 @@ private:
   rclc_executor_t executor_;
   rcl_subscription_t setpoint_sub_, arm_sub_, ins_cmd_sub_, servo_sub_,
       led_sub_;
-  rcl_publisher_t pos_pub_, vel_pub_, thr_pub_, zithbt_pub_, status_pub_,
-      pid_status_pub_;
+  rcl_publisher_t pos_pub_, vel_pub_, thr_pub_, zithbt_pub_, status_pub_;
 
   // 消息 + 缓冲区
   std_msgs__msg__Float32 servo_msg_;
@@ -44,7 +42,6 @@ private:
   std_msgs__msg__Float32MultiArray pos_fb_msg_, vel_fb_msg_, thr_fb_msg_;
   zit6_interfaces__msg__ZitSetpoint setpoint_msg_;
   zit6_interfaces__msg__ZitStatus status_msg_;
-  zit6_interfaces__msg__ZitPidStatus pid_status_msg_;
   std_msgs__msg__UInt8 ins_cmd_msg_;
   std_msgs__msg__UInt32 arm_msg_, node_heartbeat_msg_;
 

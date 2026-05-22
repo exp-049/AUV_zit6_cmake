@@ -1,10 +1,12 @@
 #include "ControlTask.hpp"
-#include "AppMain.hpp"
+#include "MotionContext.hpp"
+#include "SystemContext.hpp"
 #include "AuvSimulator.hpp"
 #include "FreeRTOS.h"
 #include "SerialPort.hpp"
 #include "SoftWatchdog.hpp"
 #include "SystemConfig.hpp"
+#include "AppMain.hpp"
 #include "task.h"
 #include <cstdio>
 #include <string.h>
@@ -16,17 +18,12 @@ using namespace auv::control;
 static AuvSimulator g_hitl_sim(0.01f);
 static bool g_sim_inited = false;
 
-void ControlTask::fillActualState(const auv::common::NavState &nav,
+void ControlTask::fillActualState(const auv::motion::NavState &nav,
                                   float (&actual_p)[4], float (&actual_v)[4]) {
-  actual_p[0] = nav.x;
-  actual_p[1] = nav.y;
-  actual_p[2] = nav.z;
-  actual_p[3] = nav.yaw;
-
-  actual_v[0] = nav.vx;
-  actual_v[1] = nav.vy;
-  actual_v[2] = nav.vz;
-  actual_v[3] = nav.vyaw;
+  for (int i = 0; i < 4; ++i) {
+    actual_p[i] = nav.pos_world[i];
+    actual_v[i] = nav.vel_body[i];
+  }
 }
 
 void ControlTask::run() {
@@ -36,10 +33,10 @@ void ControlTask::run() {
     refreshHardwareWatchdogIfNeeded();
 
     const uint32_t now = HAL_GetTick();
-    last_dt_ms = static_cast<float>(now - last_tick_);
+    auv::motion::motion_context.last_dt_ms = static_cast<float>(now - last_tick_);
     last_tick_ = now;
 
-    auv::common::NavState nav = updateNavigation();
+    auv::motion::NavState nav = updateNavigation();
     handleArmState(nav, now);
     computeAndPublish(nav);
 
@@ -50,7 +47,7 @@ void ControlTask::run() {
       char dbgbuf[128];
       int n = std::snprintf(
           dbgbuf, sizeof(dbgbuf), "DBG t=%lu dt=%.1f z=%.2f armed=%d\r\n",
-          (unsigned long)now, last_dt_ms, nav.z, is_system_armed ? 1 : 0);
+          (unsigned long)now, auv::motion::motion_context.last_dt_ms, nav.pos_world[2], auv::system::system_context.is_system_armed ? 1 : 0);
       if (n > 0) {
         auv::porting::SerialPort::transmitDebug(
             reinterpret_cast<const uint8_t *>(dbgbuf),
@@ -100,12 +97,12 @@ void ControlTask::refreshHardwareWatchdogIfNeeded() {
   }
 }
 
-auv::common::NavState ControlTask::updateNavigation() {
-  auv::common::NavState nav;
+auv::motion::NavState ControlTask::updateNavigation() {
+  auv::motion::NavState nav;
 
   // 锁定逻辑：如果已经解锁，则根据当时是否触发了仿真初始化来决定数据源，不再受运行时
   // config 突变影响
-  bool use_sim = is_system_armed
+  bool use_sim = auv::system::system_context.is_system_armed
                      ? g_sim_inited
                      : auv::config::sys_config.simulation.hitl_enabled;
 
@@ -113,28 +110,24 @@ auv::common::NavState ControlTask::updateNavigation() {
   if (use_sim) {
     if (!g_sim_inited) {
       // 首次启动仿真，尝试对齐当前传感器位置（如果有的话）
-      auto hardware_nav = auv::shared::snapshotNavState();
-      float p0[4] = {hardware_nav.x, hardware_nav.y, hardware_nav.z,
-                     hardware_nav.yaw};
+      auto hardware_nav = auv::motion::motion_context.getNavState();
+      float p0[4] = {hardware_nav.pos_world[0], hardware_nav.pos_world[1], hardware_nav.pos_world[2],
+                     hardware_nav.pos_world[3]};
       g_hitl_sim.reset(p0);
       g_sim_inited = true;
     }
 
     auto p = g_hitl_sim.getPosition();
     auto v = g_hitl_sim.getVelocity();
-    nav.x = p[0];
-    nav.y = p[1];
-    nav.z = p[2];
-    nav.yaw = p[3];
-    nav.vx = v[0];
-    nav.vy = v[1];
-    nav.vz = v[2];
-    nav.vyaw = v[3];
-    nav.imu_state = 4; // 强制模拟为最优导航状态 (Mode 4)
-    nav.timestamp = HAL_GetTick();
+    for (int i = 0; i < 4; i++) {
+      nav.pos_world[i] = p[i];
+      nav.vel_body[i] = v[i];
+    }
+    auv::system::system_context.nav_status.imu_state = 4; // 强制模拟为最优导航状态 (Mode 4)
+    auv::system::system_context.nav_status.timestamp = HAL_GetTick();
   } else {
-    // 正常：读取原始硬件数据
-    nav = auv::shared::snapshotNavState();
+    // 正常：读取原始硬件 data
+    nav = auv::motion::motion_context.getNavState();
     ins_driver.update(nav);
 
     // 根据配置选择是否使用独立的 MS5837 深度覆盖融合深度
@@ -142,65 +135,59 @@ auv::common::NavState ControlTask::updateNavigation() {
         auv::config::ZDataSource::USE_MS5837_Z) {
       float depth_snapshot = 0.0f;
       taskENTER_CRITICAL();
-      depth_snapshot = current_depth_z;
+      depth_snapshot = auv::motion::motion_context.current_depth_z;
       taskEXIT_CRITICAL();
 
-      nav.z = depth_snapshot;
+      nav.pos_world[2] = depth_snapshot;
     } else if (auv::config::sys_config.sensors.z_data_source ==
                auv::config::ZDataSource::USE_INS_PRESSURE_Z) {
-      nav.z = ins_driver.getManometerZ();
+      nav.pos_world[2] = ins_driver.getManometerZ();
     }
     g_sim_inited = false; // 退出仿真时重置标记
   }
 
-  taskENTER_CRITICAL();
-  shared_nav_state = nav;
+  auv::motion::motion_context.nav_state = nav;
   taskEXIT_CRITICAL();
 
   return nav;
 }
 
-void ControlTask::setControlLevelNone(const auv::common::NavState &nav) {
-  float actual_p[4];
-  float actual_v[4];
-  fillActualState(nav, actual_p, actual_v);
-  chassis.setControlLevel(auv::common::ControlLevel::NONE, actual_p, actual_v);
+void ControlTask::setControlLevelNone() {
+  chassis.setControlLevel(auv::motion::ControlLevel::NONE);
 }
 
-void ControlTask::forceDisarmWithNeutralLevel(
-    const auv::common::NavState &nav) {
-  taskENTER_CRITICAL();
-  is_system_armed = false;
-  arm_heartbeat_count = 0;
+void ControlTask::forceDisarmWithNeutralLevel() {
+  auv::system::system_context.is_system_armed = false;
+  auv::system::system_context.arm_heartbeat_count = 0;
   auv::device::ins_driver.clearHomeOffset(); // 失锁时恢复原始坐标系
   taskEXIT_CRITICAL();
-  setControlLevelNone(nav);
+  setControlLevelNone();
 }
 
-void ControlTask::handleArmState(const auv::common::NavState &nav,
+void ControlTask::handleArmState(const auv::motion::NavState &nav,
                                  uint32_t now) {
   taskENTER_CRITICAL();
-  const bool armed_snapshot = is_system_armed;
-  const uint32_t heartbeat_snapshot = last_arm_heartbeat_ms;
-  const uint32_t heartbeat_count_snapshot = arm_heartbeat_count;
-  const uint32_t arm_start_snapshot = arm_start_ms;
+  const bool armed_snapshot = auv::system::system_context.is_system_armed;
+  const uint32_t heartbeat_snapshot = auv::system::system_context.last_arm_heartbeat_ms;
+  const uint32_t heartbeat_count_snapshot = auv::system::system_context.arm_heartbeat_count;
+  const uint32_t arm_start_snapshot = auv::system::system_context.arm_start_ms;
   taskEXIT_CRITICAL();
 
   if (armed_snapshot) {
     if (now - heartbeat_snapshot > kArmedHeartbeatTimeoutMs) {
-      forceDisarmWithNeutralLevel(nav);
+      forceDisarmWithNeutralLevel();
     }
     return;
   }
 
-  if (chassis.getControlLevel() != auv::common::ControlLevel::NONE) {
-    setControlLevelNone(nav);
+  if (chassis.getControlLevel() != auv::motion::ControlLevel::NONE) {
+    setControlLevelNone();
   }
 
   if (heartbeat_count_snapshot >= kArmMinHeartbeatCount &&
       (now - arm_start_snapshot >= kArmMinDurationMs)) {
     taskENTER_CRITICAL();
-    const uint32_t hbt_data = last_arm_heartbeat_data;
+    const uint32_t hbt_data = auv::system::system_context.last_arm_heartbeat_data;
     taskEXIT_CRITICAL();
 
     // 允许解锁逻辑：
@@ -208,12 +195,12 @@ void ControlTask::handleArmState(const auv::common::NavState &nav,
     // 2. 数据为 1 且 (导航有效 或 处于仿真模式)
     bool can_arm =
         (hbt_data == kRemoteModeHeartbeatData) ||
-        (hbt_data == 1 && (auv::shared::isNavigationValid(nav) ||
+        (hbt_data == 1 && (auv::system::system_context.getNavigationValid() ||
                            auv::config::sys_config.simulation.hitl_enabled));
 
     if (can_arm) {
       taskENTER_CRITICAL();
-      if (!is_system_armed) {
+      if (!auv::system::system_context.is_system_armed) {
         // 解锁瞬间的行为锁定：
         // 1. 锁定仿真模式状态：如果在此时开启了仿真，则整个 Arm
         // 周期都应维持仿真 (此处通过 g_sim_inited 标志位配合 sys_config
@@ -222,15 +209,16 @@ void ControlTask::handleArmState(const auv::common::NavState &nav,
         // 2. 注入驱动层偏移（建立“家”坐标系）
         // 注意：在仿真模式下，nav 已经是相对坐标，但 setHomeOffset
         // 会处理初始对齐
-        auv::device::ins_driver.setHomeOffset(nav.x, nav.y, nav.z, nav.yaw);
+        auv::device::ins_driver.setHomeOffset(nav.pos_world[0], nav.pos_world[1], nav.pos_world[2], nav.pos_world[3]);
 
         // 3. 锁定控制器目标为当前点（即新坐标系的 0 点）
-        target_p[0] = 0.0f;
-        target_p[1] = 0.0f;
-        target_p[2] = 0.0f;
-        target_p[3] = 0.0f;
+        for (int i = 0; i < 4; ++i) {
+          auv::motion::motion_context.current_setpoint.pos_world[i] = 0.0f;
+          auv::motion::motion_context.current_setpoint.vel_body[i] = 0.0f;
+          auv::motion::motion_context.current_setpoint.thrust_body[i] = 0.0f;
+        }
       }
-      is_system_armed = true;
+      auv::system::system_context.is_system_armed = true;
       taskEXIT_CRITICAL();
 
       const char amsg[] = "INFO: System ARMED\r\n";
@@ -238,7 +226,7 @@ void ControlTask::handleArmState(const auv::common::NavState &nav,
                                               sizeof(amsg) - 1);
     } else {
       // 如果是因为导航无效导致的无法解锁，打印提示
-      if (hbt_data == 1 && !(auv::shared::isNavigationValid(nav) ||
+      if (hbt_data == 1 && !(auv::system::system_context.getNavigationValid() ||
                              auv::config::sys_config.simulation.hitl_enabled)) {
         static uint32_t last_warn_ms = 0;
         if (now - last_warn_ms > 2000) {
@@ -249,34 +237,32 @@ void ControlTask::handleArmState(const auv::common::NavState &nav,
         }
       }
       taskENTER_CRITICAL();
-      arm_heartbeat_count = 0;
+      auv::system::system_context.arm_heartbeat_count = 0;
       taskEXIT_CRITICAL();
     }
   }
 
   if (now - heartbeat_snapshot > kDisarmedHeartbeatTimeoutMs) {
     taskENTER_CRITICAL();
-    arm_heartbeat_count = 0;
+    auv::system::system_context.arm_heartbeat_count = 0;
     taskEXIT_CRITICAL();
   }
 }
 
-void ControlTask::computeAndPublish(const auv::common::NavState &nav) {
+void ControlTask::computeAndPublish(const auv::motion::NavState &nav) {
   float actual_p[4];
   float actual_v[4];
   fillActualState(nav, actual_p, actual_v);
 
-  float target_snapshot[4];
+  auv::motion::TargetSetpoint target_snapshot;
   taskENTER_CRITICAL();
-  for (int i = 0; i < 4; ++i) {
-    target_snapshot[i] = target_p[i];
-  }
+  target_snapshot = auv::motion::motion_context.current_setpoint;
   taskEXIT_CRITICAL();
 
   auto forces = chassis.update(actual_p, actual_v, target_snapshot);
 
   // 如果满足仿真锁定状态，将计算出的推力喂回仿真引擎
-  bool use_sim = is_system_armed
+  bool use_sim = auv::system::system_context.is_system_armed
                      ? g_sim_inited
                      : auv::config::sys_config.simulation.hitl_enabled;
   if (use_sim && g_sim_inited) {
@@ -292,9 +278,9 @@ void ControlTask::computeAndPublish(const auv::common::NavState &nav) {
 
   taskENTER_CRITICAL();
   for (int i = 0; i < 4; ++i) {
-    last_output_forces[i] = forces[i];
+    auv::motion::motion_context.last_output_forces[i] = forces[i];
   }
-  const bool armed = is_system_armed;
+  const bool armed = auv::system::system_context.is_system_armed;
   taskEXIT_CRITICAL();
 
   if (armed) {

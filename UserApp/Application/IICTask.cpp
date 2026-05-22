@@ -1,5 +1,6 @@
 #include "IICTask.hpp"
-#include "GlobalContext.hpp"
+#include "MotionContext.hpp"
+#include "SystemContext.hpp"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "SoftWatchdog.hpp"
@@ -11,9 +12,10 @@ void UserApp_IICTask(void *argument) {
     // Validation state
     float last_valid_depth = 0.0f;
     int   bad_count = 0;
-    const int kMaxBadCount = 3;
+    const int kMaxBadCount = 5;
 
     for (;;) {
+        TickType_t last_wake = xTaskGetTickCount();
         if (auv::device::depth_sensor.is_connected) {
             int r = auv::device::depth_sensor.Read();
             if (r > 0) {
@@ -33,7 +35,7 @@ void UserApp_IICTask(void *argument) {
                 if (valid) {
                     bad_count = 0;
                     taskENTER_CRITICAL();
-                    current_depth_z = d;
+                    auv::motion::motion_context.current_depth_z = d;
                     taskEXIT_CRITICAL();
 
                     last_valid_depth = d;

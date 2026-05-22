@@ -1,7 +1,7 @@
 #include "MicroRosTask.hpp"
 #include "AppMain.hpp"
-#include "FreeRTOS.h"
-#include "GlobalContext.hpp"
+#include "MotionContext.hpp"
+#include "SystemContext.hpp"
 #include "SoftWatchdog.hpp"
 #include "task.h"
 #include <rcl/error_handling.h>
@@ -54,177 +54,158 @@ MicroRosTask *MicroRosTask::instance_ = nullptr;
 // --- 成员回调实现 ---
 void MicroRosTask::onZitSetpoint(const void *msgin) {
   const auto *msg = (const zit6_interfaces__msg__ZitSetpoint *)msgin;
-  last_received_seq = msg->seq;
+  auv::motion::motion_context.last_received_seq = msg->seq;
   if (!std::isfinite(msg->x) || !std::isfinite(msg->y) ||
       !std::isfinite(msg->z) || !std::isfinite(msg->yaw))
     return;
-  if (!is_system_armed)
+  if (!auv::system::system_context.is_system_armed)
     return;
 
   uint32_t level_idx = msg->control_key & 0x03;
   if (level_idx >= 3)
     return;
 
-  auv::common::ControlLevel new_level;
-  if (level_idx == 0)
-    new_level = auv::common::ControlLevel::POSITION;
-  else if (level_idx == 1)
-    new_level = auv::common::ControlLevel::VELOCITY;
-  else
-    new_level = auv::common::ControlLevel::ACTUATOR;
+  auv::motion::ControlLevel new_level;
+  switch (level_idx) {
+    case 0:
+      new_level = auv::motion::ControlLevel::POSITION;
+      break;
+    case 1:
+      new_level = auv::motion::ControlLevel::VELOCITY;
+      break;
+    case 2:
+      new_level = auv::motion::ControlLevel::ACTUATOR;
+      break;
+    default:
+      return;
+  }
 
   bool is_body = (msg->control_key & 0x10) != 0;
   bool is_inc = (msg->control_key & 0x20) != 0;
   uint32_t mask = msg->type_mask;
   float val[4] = {msg->x, msg->y, msg->z, msg->yaw};
 
-  auto nav = auv::shared::snapshotNavState();
-  bool nav_valid = auv::shared::isNavigationValid(nav) ||
+  auto nav = auv::motion::motion_context.getNavState();
+  bool nav_valid = auv::system::system_context.getNavigationValid() ||
                    auv::config::sys_config.simulation.hitl_enabled;
-  if ((new_level == auv::common::ControlLevel::POSITION ||
-       new_level == auv::common::ControlLevel::VELOCITY) &&
+  if ((new_level == auv::motion::ControlLevel::POSITION ||
+       new_level == auv::motion::ControlLevel::VELOCITY) &&
       !nav_valid)
     return;
 
   taskENTER_CRITICAL();
 
-  // 1. 模式切换对齐 (Bumpless Transition / Anti-Leakage)
+  // 1. 记录原始 AGX 设定值快照
+  auv::motion::motion_context.raw_setpoint.level = new_level;
+  auv::motion::motion_context.raw_setpoint.data[0] = val[0];
+  auv::motion::motion_context.raw_setpoint.data[1] = val[1];
+  auv::motion::motion_context.raw_setpoint.data[2] = val[2];
+  auv::motion::motion_context.raw_setpoint.data[3] = val[3];
+  auv::motion::motion_context.raw_setpoint.type_mask = mask;
+  auv::motion::motion_context.raw_setpoint.is_body = is_body;
+  auv::motion::motion_context.raw_setpoint.is_incremental = is_inc;
+
+  // 2. 模式切换对齐 (Bumpless Transition / Anti-Leakage)
   if (new_level != auv::control::chassis.getControlLevel()) {
-    if (new_level == auv::common::ControlLevel::POSITION) {
-      target_p[0] = nav.x;
-      target_p[1] = nav.y;
-      target_p[2] = nav.z;
-      target_p[3] = nav.yaw;
-    } else if (new_level == auv::common::ControlLevel::VELOCITY) {
-      if (is_body) {
-        target_p[0] = nav.vx;
-        target_p[1] = nav.vy;
-        target_p[2] = nav.vz;
-        target_p[3] = nav.vyaw;
-      } else {
-        float wx, wy;
-        auv::control::CoordinateManager::bodyToWorld(nav.yaw, nav.vx, nav.vy,
-                                                     wx, wy);
-        target_p[0] = wx;
-        target_p[1] = wy;
-        target_p[2] = nav.vz;
-        target_p[3] = nav.vyaw;
+    if (new_level == auv::motion::ControlLevel::POSITION) {
+      for (int i = 0; i < 4; i++) {
+        auv::motion::motion_context.current_setpoint.pos_world[i] = nav.pos_world[i];
       }
-      auv::control::chassis.setVelocityTargetFrame(is_body);
+    } else if (new_level == auv::motion::ControlLevel::VELOCITY) {
+      for (int i = 0; i < 4; i++) {
+        auv::motion::motion_context.current_setpoint.vel_body[i] = nav.vel_body[i];
+      }
     }
   }
 
-  // 2. 执行具体指令逻辑
-  if (new_level == auv::common::ControlLevel::ACTUATOR) {
-    float fx, fy;
+  // 3. 执行坐标变换与目标值计算
+  if (new_level == auv::motion::ControlLevel::POSITION) {
+    float converted_val[4];
     if (is_body) {
-      fx = val[0];
-      fy = val[1];
-    } else {
-      auv::control::CoordinateManager::worldToBody(nav.yaw, val[0], val[1], fx,
-                                                   fy);
-    }
-
-    static float last_forces[4] = {0};
-    static auv::common::ControlLevel last_l = auv::common::ControlLevel::NONE;
-
-    // 如果是刚切入 ACTUATOR 模式，清空之前的手动推力缓存
-    if (last_l != auv::common::ControlLevel::ACTUATOR) {
-      for (int i = 0; i < 4; i++)
-        last_forces[i] = 0.0f;
-    }
-    last_l = auv::common::ControlLevel::ACTUATOR;
-
-    if (!(mask & 1))
-      last_forces[0] = fx;
-    if (!(mask & 2))
-      last_forces[1] = fy;
-    if (!(mask & 4))
-      last_forces[2] = val[2];
-    if (!(mask & 8))
-      last_forces[3] = val[3];
-
-    auv::control::chassis.setActuatorForces(last_forces);
-  } else if (new_level == auv::common::ControlLevel::VELOCITY) {
-    // 确保下次切回 ACTUATOR 时重置
-    static auv::common::ControlLevel last_l = auv::common::ControlLevel::NONE;
-    last_l = new_level;
-
-    auv::control::chassis.setVelocityTargetFrame(is_body);
-    for (int i = 0; i < 4; i++) {
-      if (!(mask & (1 << i))) {
-        if (is_inc) {
-          // 速度增量模式：在当前目标速度基础上叠加
-          target_p[i] += val[i];
-        } else {
-          target_p[i] = val[i];
-        }
-      }
-    }
-  } else if (new_level == auv::common::ControlLevel::POSITION) {
-    // 确保下次切回 ACTUATOR 时重置
-    static auv::common::ControlLevel last_l = auv::common::ControlLevel::NONE;
-    last_l = new_level;
-
-    // 预处理机体系分量：X/Y 必须作为矢量整体旋转
-    float dx_world = 0.0f, dy_world = 0.0f;
-    if (is_body) {
-      float bx = (mask & 1) ? 0.0f : val[0];
-      float by = (mask & 2) ? 0.0f : val[1];
-      auv::control::CoordinateManager::bodyToWorld(nav.yaw, bx, by, dx_world,
-                                                   dy_world);
+      // 传入机体系位置设定（转换为世界系绝对或增量目标）
+      auv::motion::motion_context.transformBodyToWorld(new_level, val, converted_val, is_inc);
     }
 
     for (int i = 0; i < 4; i++) {
       if (!(mask & (1 << i))) {
         if (is_inc) {
-          if (is_body && i < 2) {
-            // 机体系位置增量：使用预计算好的世界系分量
-            if (i == 0)
-              target_p[0] += dx_world;
-            if (i == 1)
-              target_p[1] += dy_world;
-          } else {
-            // 世界系位置/深度/偏航增量：直接累加到当前目标上
-            target_p[i] += val[i];
-          }
-        } else {
-          // 非增量模式
           if (is_body) {
-            if (i < 2) {
-              // 机体系绝对位置：相对于当前“实时位置”的偏移 (Snapshot Relative)
-              if (i == 0)
-                target_p[0] = nav.x + dx_world;
-              if (i == 1)
-                target_p[1] = nav.y + dy_world;
-            } else {
-              // Z 和 Yaw 同样相对于当前实时位置
-              target_p[i] = (i == 2 ? nav.z : nav.yaw) + val[i];
-            }
+            auv::motion::motion_context.current_setpoint.pos_world[i] += converted_val[i];
           } else {
-            // 世界系绝对位置
-            target_p[i] = val[i];
+            auv::motion::motion_context.current_setpoint.pos_world[i] += val[i];
+          }
+        } else {
+          if (is_body) {
+            auv::motion::motion_context.current_setpoint.pos_world[i] = converted_val[i];
+          } else {
+            auv::motion::motion_context.current_setpoint.pos_world[i] = val[i];
+          }
+        }
+      }
+    }
+  } else if (new_level == auv::motion::ControlLevel::VELOCITY) {
+    float converted_val[4];
+    if (!is_body) {
+      // 传入世界系速度目标（转换为机体系绝对或增量目标）
+      auv::motion::motion_context.transformWorldToBody(new_level, val, converted_val, is_inc);
+    }
+
+    for (int i = 0; i < 4; i++) {
+      if (!(mask & (1 << i))) {
+        if (is_inc) {
+          if (is_body) {
+            auv::motion::motion_context.current_setpoint.vel_body[i] += val[i];
+          } else {
+            auv::motion::motion_context.current_setpoint.vel_body[i] += converted_val[i];
+          }
+        } else {
+          if (is_body) {
+            auv::motion::motion_context.current_setpoint.vel_body[i] = val[i];
+          } else {
+            auv::motion::motion_context.current_setpoint.vel_body[i] = converted_val[i];
+          }
+        }
+      }
+    }
+  } else if (new_level == auv::motion::ControlLevel::ACTUATOR) {
+    float converted_val[4];
+    if (!is_body) {
+      // 传入世界系推力目标（转换为机体系绝对或增量目标）
+      auv::motion::motion_context.transformWorldToBody(new_level, val, converted_val, is_inc);
+    }
+
+    for (int i = 0; i < 4; i++) {
+      if (!(mask & (1 << i))) {
+        if (is_inc) {
+          if (is_body) {
+            auv::motion::motion_context.current_setpoint.thrust_body[i] += val[i];
+          } else {
+            auv::motion::motion_context.current_setpoint.thrust_body[i] += converted_val[i];
+          }
+        } else {
+          if (is_body) {
+            auv::motion::motion_context.current_setpoint.thrust_body[i] = val[i];
+          } else {
+            auv::motion::motion_context.current_setpoint.thrust_body[i] = converted_val[i];
           }
         }
       }
     }
   }
 
-  float actual_p[4] = {nav.x, nav.y, nav.z, nav.yaw};
-  float actual_v[4] = {nav.vx, nav.vy, nav.vz, nav.vyaw};
-  auv::control::chassis.setControlLevel(new_level, actual_p, actual_v);
+  auv::control::chassis.setControlLevel(new_level);
   taskEXIT_CRITICAL();
 }
 
 void MicroRosTask::onArmHeartbeat(const void *msgin) {
   const auto *msg = (const std_msgs__msg__UInt32 *)msgin;
   taskENTER_CRITICAL();
-  last_arm_heartbeat_ms = HAL_GetTick();
-  last_arm_heartbeat_data = msg->data;
-  if (!is_system_armed) {
-    if (arm_heartbeat_count == 0)
-      arm_start_ms = last_arm_heartbeat_ms;
-    arm_heartbeat_count++;
+  auv::system::system_context.last_arm_heartbeat_ms = HAL_GetTick();
+  auv::system::system_context.last_arm_heartbeat_data = msg->data;
+  if (!auv::system::system_context.is_system_armed) {
+    if (auv::system::system_context.arm_heartbeat_count == 0)
+      auv::system::system_context.arm_start_ms = auv::system::system_context.last_arm_heartbeat_ms;
+    auv::system::system_context.arm_heartbeat_count++;
   }
   taskEXIT_CRITICAL();
 }
@@ -338,6 +319,28 @@ void MicroRosTask::cleanupMicroRos() {
     update_req_.json.capacity = 0;
     update_req_.json.size = 0;
   }
+  if (update_req_.paths.data) {
+    for (size_t _i = 0; _i < update_req_.paths.capacity; ++_i) {
+      if (update_req_.paths.data[_i].data) {
+        microros_deallocate(update_req_.paths.data[_i].data, NULL);
+        update_req_.paths.data[_i].data = NULL;
+        update_req_.paths.data[_i].capacity = 0;
+        update_req_.paths.data[_i].size = 0;
+      }
+    }
+    rosidl_runtime_c__String__Sequence__fini(&update_req_.paths);
+  }
+  if (update_req_.values.data) {
+    for (size_t _i = 0; _i < update_req_.values.capacity; ++_i) {
+      if (update_req_.values.data[_i].data) {
+        microros_deallocate(update_req_.values.data[_i].data, NULL);
+        update_req_.values.data[_i].data = NULL;
+        update_req_.values.data[_i].capacity = 0;
+        update_req_.values.data[_i].size = 0;
+      }
+    }
+    rosidl_runtime_c__String__Sequence__fini(&update_req_.values);
+  }
   if (get_res_.config_json.data) {
     microros_deallocate(get_res_.config_json.data, NULL);
     get_res_.config_json.data = NULL;
@@ -351,7 +354,6 @@ void MicroRosTask::cleanupMicroRos() {
   rcl_publisher_fini(&thr_pub_, &node_);
   rcl_publisher_fini(&zithbt_pub_, &node_);
   rcl_publisher_fini(&status_pub_, &node_);
-  rcl_publisher_fini(&pid_status_pub_, &node_);
   rcl_subscription_fini(&setpoint_sub_, &node_);
   rcl_subscription_fini(&arm_sub_, &node_);
   rcl_subscription_fini(&ins_cmd_sub_, &node_);
@@ -390,6 +392,8 @@ void MicroRosTask::run() {
 
   for (;;) {
     uint32_t now_ms = HAL_GetTick();
+    auv::device::SoftWatchdog::getInstance().feed(
+        auv::device::SoftWatchdog::Component::MICROROS);
     if (state == WAITING_AGENT) {
       if (RCL_RET_OK == rmw_uros_ping_agent(200, 1)) {
         if (RCL_RET_OK ==
@@ -435,10 +439,6 @@ void MicroRosTask::run() {
               &status_pub_, &node_,
               ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitStatus),
               "/zit6/state/status");
-          rclc_publisher_init_default(
-              &pid_status_pub_, &node_,
-              ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitPidStatus),
-              "/zit6/state/pid_status");
 
           rclc_subscription_init_default(
               &led_sub_, &node_,
@@ -543,14 +543,11 @@ void MicroRosTask::run() {
       } else
         vTaskDelay(pdMS_TO_TICKS(100));
     } else {
-      static uint32_t last_pid_pub_tick = 0;
       // Robust ping: 500ms timeout, 3 failures
       if (RCL_RET_OK != rmw_uros_ping_agent(500, 3)) {
         cleanupMicroRos();
         state = WAITING_AGENT;
       } else {
-        auv::device::SoftWatchdog::getInstance().feed(
-            auv::device::SoftWatchdog::Component::MICROROS);
         rclc_executor_spin_some(&executor_, RCL_MS_TO_NS(1));
         if (now_ms - last_hbt_pub_tick >= 1000) {
           last_hbt_pub_tick = now_ms;
@@ -559,65 +556,47 @@ void MicroRosTask::run() {
         }
         if (now_ms - last_vel_pub_tick >= 20) {
           last_vel_pub_tick = now_ms;
-          auto nav = auv::shared::snapshotNavState();
-          vel_buf_[0] = nav.vx;
-          vel_buf_[1] = nav.vy;
-          vel_buf_[2] = nav.vz;
-          vel_buf_[3] = nav.vyaw;
+          auto nav = auv::motion::motion_context.getNavState();
+          for (int i = 0; i < 4; i++) {
+            vel_buf_[i] = nav.vel_body[i];
+          }
           rcl_publish(&vel_pub_, &vel_fb_msg_, NULL);
         }
         if (now_ms - last_thr_pub_tick >= 33) {
           last_thr_pub_tick = now_ms;
           taskENTER_CRITICAL();
           for (int i = 0; i < 4; i++)
-            thr_buf_[i] = last_output_forces[i];
+            thr_buf_[i] = auv::motion::motion_context.last_output_forces[i];
           taskEXIT_CRITICAL();
           rcl_publish(&thr_pub_, &thr_fb_msg_, NULL);
         }
         if (now_ms - last_pos_pub_tick >= 33) {
           last_pos_pub_tick = now_ms;
-          auto nav = auv::shared::snapshotNavState();
-          pos_buf_[0] = nav.x;
-          pos_buf_[1] = nav.y;
-          pos_buf_[2] = nav.z;
-          pos_buf_[3] = nav.yaw;
+          auto nav = auv::motion::motion_context.getNavState();
+          for (int i = 0; i < 4; i++) {
+            pos_buf_[i] = nav.pos_world[i];
+          }
           rcl_publish(&pos_pub_, &pos_fb_msg_, NULL);
         }
         if (now_ms - last_status_pub_tick >= 100) {
           last_status_pub_tick = now_ms;
-          auv::common::NavState nav = auv::shared::snapshotNavState();
+          auv::motion::NavState nav = auv::motion::motion_context.getNavState();
           taskENTER_CRITICAL();
-          status_msg_.is_armed = is_system_armed;
-          status_msg_.arm_mode = (uint8_t)last_arm_heartbeat_data;
+          status_msg_.is_armed = auv::system::system_context.is_system_armed;
+          status_msg_.arm_mode = (uint8_t)auv::system::system_context.last_arm_heartbeat_data;
           status_msg_.control_level =
               (uint8_t)auv::control::chassis.getControlLevel();
-          status_msg_.ins_state = nav.imu_state;
-          status_msg_.navigation_ready = auv::shared::isNavigationValid(nav);
+          status_msg_.ins_state = auv::system::system_context.nav_status.imu_state;
+          status_msg_.navigation_ready = auv::system::system_context.getNavigationValid();
           for (int i = 0; i < 4; i++)
-            status_msg_.forces[i] = last_output_forces[i];
-          status_msg_.cycle_time_ms = (float)last_dt_ms;
+            status_msg_.forces[i] = auv::motion::motion_context.last_output_forces[i];
+          status_msg_.cycle_time_ms = (float)auv::motion::motion_context.last_dt_ms;
           status_msg_.battery_voltage = 0.0f;
           status_msg_.error_flags = 0;
           taskEXIT_CRITICAL();
           rcl_publish(&status_pub_, &status_msg_, NULL);
         }
-        if (now_ms - last_pid_pub_tick >= 1000) {
-          last_pid_pub_tick = now_ms;
-          for (int i = 0; i < 4; i++) {
-            auto p_cfg = auv::control::chassis.getPIDConfig(i, true);
-            pid_status_msg_.pos_kp[i] = p_cfg.kp;
-            auv::control::chassis.getProfileLimits(
-                i, pid_status_msg_.pos_max_v[i], pid_status_msg_.pos_max_a[i]);
-            pid_status_msg_.pos_out_limit[i] = p_cfg.output_limit;
-            auto v_cfg = auv::control::chassis.getPIDConfig(i, false);
-            pid_status_msg_.vel_kp[i] = v_cfg.kp;
-            pid_status_msg_.vel_ki[i] = v_cfg.ki;
-            pid_status_msg_.vel_kd[i] = v_cfg.kd;
-            pid_status_msg_.vel_i_limit[i] = v_cfg.i_limit;
-            pid_status_msg_.vel_out_limit[i] = v_cfg.output_limit;
-          }
-          rcl_publish(&pid_status_pub_, &pid_status_msg_, NULL);
-        }
+
       }
     }
     vTaskDelay(pdMS_TO_TICKS(1));

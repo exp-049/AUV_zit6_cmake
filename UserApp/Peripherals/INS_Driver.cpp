@@ -1,4 +1,5 @@
 #include "INS_Driver.hpp"
+#include "SystemContext.hpp"
 #include "SoftWatchdog.hpp"
 #include <cmath>
 
@@ -91,7 +92,7 @@ bool INS_Driver::isDataFresh() const {
   return (HAL_GetTick() - last_update_ms_ < 200);
 }
 
-bool INS_Driver::update(auv::common::NavState &state) {
+bool INS_Driver::update(auv::motion::NavState &state) {
   uint8_t temp_buf[256];
   uint16_t len = rx_port_.read(temp_buf, 256);
   bool has_new_frame = false;
@@ -150,47 +151,47 @@ bool INS_Driver::validateFrame() {
   return false;
 }
 
-void INS_Driver::decodePacket(auv::common::NavState &s) {
+void INS_Driver::decodePacket(auv::motion::NavState &s) {
   // 严格按照截图偏移量解析
 
   // 1. 姿态 (Offset 2, 6, 10)
   memcpy(&s.roll, packet_buf_ + 2, 4);
   memcpy(&s.pitch, packet_buf_ + 6, 4);
-  memcpy(&s.yaw, packet_buf_ + 10, 4);
+  memcpy(&s.pos_world[3], packet_buf_ + 10, 4);
 
   // 2. 角速度 (Offset 14, 18, 22)
   memcpy(&s.vroll, packet_buf_ + 14, 4);
   memcpy(&s.vpitch, packet_buf_ + 18, 4);
-  memcpy(&s.vyaw, packet_buf_ + 22, 4);
+  memcpy(&s.vel_body[3], packet_buf_ + 22, 4);
 
   // 3. 机体系线速度 (Offset 26, 30, 34) -> vx, vy, vz
-  memcpy(&s.vx, packet_buf_ + 26, 4);
-  memcpy(&s.vy, packet_buf_ + 30, 4);
-  memcpy(&s.vz, packet_buf_ + 34, 4);
+  memcpy(&s.vel_body[0], packet_buf_ + 26, 4);
+  memcpy(&s.vel_body[1], packet_buf_ + 30, 4);
+  memcpy(&s.vel_body[2], packet_buf_ + 34, 4);
 
   // 4. 经纬度 (Offset 38, 42, int32, 1e7)
   int32_t lat_i, lon_i;
   memcpy(&lat_i, packet_buf_ + 38, 4);
   memcpy(&lon_i, packet_buf_ + 42, 4);
-  s.lat = lat_i * 1e-7;
-  s.lon = lon_i * 1e-7;
+  auv::system::system_context.nav_status.lat = lat_i * 1e-7;
+  auv::system::system_context.nav_status.lon = lon_i * 1e-7;
 
   // 5. 深度 (改为 Offset 46: 组合深度) -> z
-  memcpy(&s.z, packet_buf_ + 46, 4);
+  memcpy(&s.pos_world[2], packet_buf_ + 46, 4);
 
   // 6. 位置增量 (Offset 99, 103, float) -> x, y
-  memcpy(&s.x, packet_buf_ + 99, 4);
-  memcpy(&s.y, packet_buf_ + 103, 4);
+  memcpy(&s.pos_world[0], packet_buf_ + 99, 4);
+  memcpy(&s.pos_world[1], packet_buf_ + 103, 4);
 
   // 6.5 压力计深度 (Offset 107, float, m)
   float manometer_z = 0.0f;
   memcpy(&manometer_z, packet_buf_ + 107, 4);
 
   // 7. 模式与状态 (Offset 129 模式, Offset 115 状态)
-  s.imu_state = packet_buf_[129];
-  s.dvl_state = (packet_buf_[115] & 0x02) ? 1 : 0;
+  auv::system::system_context.nav_status.imu_state = packet_buf_[129];
+  auv::system::system_context.nav_status.dvl_state = (packet_buf_[115] & 0x02) ? 1 : 0;
+  auv::system::system_context.nav_status.timestamp = HAL_GetTick();
 
-  s.timestamp = HAL_GetTick();
   auv::device::SoftWatchdog::getInstance().feed(
       auv::device::SoftWatchdog::Component::INS);
 
@@ -201,25 +202,25 @@ void INS_Driver::decodePacket(auv::common::NavState &s) {
   const float kDeg2Rad = 0.0174532925f;
   s.roll *= kDeg2Rad;
   s.pitch *= kDeg2Rad;
-  s.yaw *= kDeg2Rad;
+  s.pos_world[3] *= kDeg2Rad;
   s.vroll *= kDeg2Rad;
   s.vpitch *= kDeg2Rad;
-  s.vyaw *= kDeg2Rad;
+  s.vel_body[3] *= kDeg2Rad;
 
   // 应用软件偏置 (实现 Arm 时的归零逻辑)
   // 注意：偏置值是在 Arm 瞬间以弧度/米记录的，因此需在转换后减去
   if (use_offset_) {
-    s.x -= offset_x_;
-    s.y -= offset_y_;
-    s.z -= offset_z_;
-    s.yaw -= offset_yaw_;
+    s.pos_world[0] -= offset_x_;
+    s.pos_world[1] -= offset_y_;
+    s.pos_world[2] -= offset_z_;
+    s.pos_world[3] -= offset_yaw_;
     manometer_z -= offset_z_;
 
     // 航向角归一化 [-PI, PI]
-    while (s.yaw > 3.14159265f)
-      s.yaw -= 6.2831853f;
-    while (s.yaw < -3.14159265f)
-      s.yaw += 6.2831853f;
+    while (s.pos_world[3] > 3.14159265f)
+      s.pos_world[3] -= 6.2831853f;
+    while (s.pos_world[3] < -3.14159265f)
+      s.pos_world[3] += 6.2831853f;
   }
 
   manometer_z_ = manometer_z;

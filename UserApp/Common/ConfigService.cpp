@@ -1,6 +1,7 @@
 #include "ConfigService.hpp"
 #include "FreeRTOS.h"
-#include "GlobalContext.hpp"
+#include "MotionContext.hpp"
+#include "SystemContext.hpp"
 #include "SoftWatchdog.hpp"
 #include "SystemConfig.hpp"
 #include "cJSON.h"
@@ -198,7 +199,7 @@ bool ConfigService::updateParams(const char *json, const char **paths,
     auv::control::chassis.applyConfig(auv::config::sys_config.chassis);
     auv::device::SoftWatchdog::getInstance().init(
         auv::config::sys_config.soft_watchdog);
-    planner_replan_flag = true;
+    auv::system::system_context.planner_replan_flag = true;
     if (out_buf)
       strncpy(out_buf, "ok", out_size - 1);
   } else {

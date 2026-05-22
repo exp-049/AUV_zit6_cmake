@@ -2,9 +2,8 @@
 
 #include "PID_Controller.hpp"
 #include "KinematicProfile.hpp"
-#include "CoordinateManager.hpp"
 #include "SystemConfig.hpp"
-#include "CommonConfig.hpp"
+#include "MotionContext.hpp"
 #include <array>
 
 namespace auv {
@@ -27,16 +26,16 @@ public:
     /**
      * @brief 获取当前控制层级
      */
-    auv::common::ControlLevel getControlLevel() const;
+    auv::motion::ControlLevel getControlLevel() const;
 
     /**
      * @brief 执行 100Hz 级联控制演进 (自动计算 dt)
      * @param actual_p 当前位姿 (NED)
      * @param actual_v 当前速度 (Body)
-     * @param target_p 目标位姿 (NED)
+     * @param target 目标设定值 (包含位置、速度、推力等)
      * @return std::array<float, 4> 计算出的 4-DOF 归一化力矢量
      */
-    std::array<float, 4> update(const float actual_p[4], const float actual_v[4], const float target_p[4]);
+    std::array<float, 4> update(const float actual_p[4], const float actual_v[4], const auv::motion::TargetSetpoint& target);
 
     /**
      * @brief 配置指定轴的 PID 参数
@@ -67,31 +66,16 @@ public:
     /**
      * @brief 切换控制层级 (Bumpless Transfer)
      * @param new_level 目标控制层级
-     * @param actual_p 当前真实位置（用于对齐）
-     * @param actual_v 当前真实速度（用于对齐）
      */
-    void setControlLevel(auv::common::ControlLevel new_level, const float actual_p[4], const float actual_v[4]);
-
-    /**
-     * @brief 直接设置执行器输出力 (作为 ACTUATOR 输出或闭环 Bias)
-     * @param forces 归一化力矢量 [Fx, Fy, Fz, Mz]
-     */
-    void setActuatorForces(const float forces[4]);
-
-    /**
-     * @brief 设置速度环目标是否为机体系锁定
-     */
-    void setVelocityTargetFrame(bool is_body) { target_v_is_body_ = is_body; }
+    void setControlLevel(auv::motion::ControlLevel new_level);
 
 private:
-    auv::common::ControlLevel level_ = auv::common::ControlLevel::NONE;
-    bool target_v_is_body_ = false; ///< 速度环目标是否为机体系
+    auv::motion::ControlLevel level_ = auv::motion::ControlLevel::NONE;
     
     std::array<KinematicProfile, 4> profiles_; ///< 4轴影子平滑器矩阵
     std::array<PID_Controller, 4> pos_pids_;  ///< 位置环 (P控制)
     std::array<PID_Controller, 4> vel_pids_;  ///< 速度环 (PI控制)
     
-    std::array<float, 4> target_forces_  = {0}; ///< 压入推力环的直接力/偏置
     std::array<float, 4> last_output_forces_ = {0}; ///< 记录上周期的最终输出，用于无扰切换
     float last_z_thrust_ = 0.0f;               ///< 记录上周期的 Z 轴推力，用于 Trim Pre-loading
     std::array<float, 4> last_v_body_ = {0};   ///< 上周期机体系实际速度，用于计算加速度（用于 D 项）

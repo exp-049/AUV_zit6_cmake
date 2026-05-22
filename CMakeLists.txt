@@ -85,7 +85,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     UserApp/Application/ControlTask.cpp
     UserApp/Application/MicroRosTask.cpp
     UserApp/Application/IICTask.cpp
-    UserApp/Common/GlobalContext.cpp
+    UserApp/Common/MotionContext.cpp
+    UserApp/Common/SystemContext.cpp
     UserApp/Common/SystemConfig.cpp
     UserApp/Common/ConfigService.cpp
     UserApp/Peripherals/SoftWatchdog.cpp
@@ -97,7 +98,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     UserApp/Control/ChassisManager.cpp
     UserApp/Control/PID_Controller.cpp
     UserApp/Control/KinematicProfile.cpp
-    UserApp/Control/CoordinateManager.cpp
     micro_ros_stm32cubemx_utils/extra_sources/microros_transports/dma_transport.c
 )
 

@@ -58,9 +58,9 @@ public:
     float compute(float error, float dt, float derivative = 0.0f);
 
     /**
-     * @brief 复位积分状态和历史误差
+     * @brief 复位积分状态
      */
-    void reset();
+    void reset_i();
 
     /**
      * @brief 手动设置积分值

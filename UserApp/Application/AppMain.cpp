@@ -4,6 +4,7 @@
  *        - ControlTask.cpp
  *        - MicroRosTask.cpp
  *        - IICTask.cpp
- *        - GlobalContext.cpp
+ *        - MotionContext.cpp
+ *        - SystemContext.cpp
  */
 #include "AppMain.hpp"

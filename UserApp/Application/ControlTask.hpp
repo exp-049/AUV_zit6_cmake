@@ -1,7 +1,8 @@
 #ifndef __CONTROL_TASK_HPP
 #define __CONTROL_TASK_HPP
 
-#include "GlobalContext.hpp"
+#include "MotionContext.hpp"
+#include "SystemContext.hpp"
 #include "FreeRTOS.h"
 #include <stdint.h>
 
@@ -11,7 +12,7 @@ public:
 	void run();
 
 private:
-	static void fillActualState(const auv::common::NavState &nav, float (&actual_p)[4], float (&actual_v)[4]);
+	static void fillActualState(const auv::motion::NavState &nav, float (&actual_p)[4], float (&actual_v)[4]);
 
 	static constexpr uint32_t kLoopPeriodMs = 10;
 	static constexpr uint32_t kArmedHeartbeatTimeoutMs = 500; // 恢复：短阈值，快速 disarm
@@ -25,11 +26,11 @@ private:
 
 	void init();
 	void refreshHardwareWatchdogIfNeeded();
-	auv::common::NavState updateNavigation();
-	void setControlLevelNone(const auv::common::NavState &nav);
-	void forceDisarmWithNeutralLevel(const auv::common::NavState &nav);
-	void handleArmState(const auv::common::NavState &nav, uint32_t now);
-	void computeAndPublish(const auv::common::NavState &nav);
+	auv::motion::NavState updateNavigation();
+	void setControlLevelNone();
+	void forceDisarmWithNeutralLevel();
+	void handleArmState(const auv::motion::NavState &nav, uint32_t now);
+	void computeAndPublish(const auv::motion::NavState &nav);
 };
 
 #endif // __CONTROL_TASK_HPP

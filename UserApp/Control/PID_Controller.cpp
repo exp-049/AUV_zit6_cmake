@@ -27,7 +27,7 @@ float PID_Controller::compute(float error, float dt, float derivative) {
     return std::max(-cfg_.output_limit, std::min(cfg_.output_limit, total));
 }
 
-void PID_Controller::reset() {
+void PID_Controller::reset_i() {
     integral_ = 0.0f;
 }
 

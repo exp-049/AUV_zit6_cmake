@@ -6,7 +6,7 @@
 #ifndef __INS_DRIVER_HPP
 #define __INS_DRIVER_HPP
 
-#include "CommonConfig.hpp"
+#include "MotionContext.hpp"
 #include "SerialPort.hpp"
 #include <cstdint>
 #include <cstring>
@@ -33,8 +33,8 @@ public:
       : rx_port_(rx_uart, 512), tx_uart_(tx_uart) {}
 
   void init();
-  bool update(auv::common::NavState &state);
-  auv::common::NavState getNavState() const { return state_; }
+  bool update(auv::motion::NavState &state);
+  auv::motion::NavState getNavState() const { return state_; }
   float getManometerZ() const { return manometer_z_; }
 
   /**
@@ -83,7 +83,7 @@ public:
     offset_y_ = y;
     offset_z_ = z;
     // offset_yaw_ = yaw;
-    offset_yaw = 0;
+    offset_yaw_ = 0;
   }
 
   void clearHomeOffset() { use_offset_ = false; }
@@ -99,8 +99,8 @@ private:
   uint8_t packet_buf_[kMaxFrameSize] = {0}; ///< 帧解析临时缓冲区
   uint16_t frame_len_ = 0;                  ///< 当前解析长度
 
-  auv::common::NavState state_{};      ///< 缓存的最新有效位姿状态
-  auv::common::NavState prev_state_{}; ///< 上一帧状态，用于速度差分估计
+  auv::motion::NavState state_{};      ///< 缓存的最新有效位姿状态
+  auv::motion::NavState prev_state_{}; ///< 上一帧状态，用于速度差分估计
   bool has_prev_state_ = false;
 
   // 坐标偏置变量
@@ -114,7 +114,7 @@ private:
   uint8_t checkData(const uint8_t *data, uint8_t size);
   bool parseByte(uint8_t b);
   bool validateFrame();
-  void decodePacket(auv::common::NavState &state);
+  void decodePacket(auv::motion::NavState &state);
 };
 
 } // namespace device
