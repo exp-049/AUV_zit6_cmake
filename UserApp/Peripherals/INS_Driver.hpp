@@ -82,7 +82,8 @@ public:
     offset_x_ = x;
     offset_y_ = y;
     offset_z_ = z;
-    offset_yaw_ = yaw;
+    // offset_yaw_ = yaw;
+    offset_yaw = 0;
   }
 
   void clearHomeOffset() { use_offset_ = false; }
