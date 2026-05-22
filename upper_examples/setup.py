@@ -24,10 +24,13 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'pid_setter = upper_examples.pidset:main',
-            'pid_getter = upper_examples.pidget:main',
-            'config_gui = upper_examples.config_gui:main',
+            'config_setter = upper_examples.config_setter:main',
             'xbox_control = upper_examples.xbox_control:main',
+            'image_viewer = upper_examples.image_viewer:main',
+            'image_publisher = upper_examples.image_publisher:main',
+            'heartbeat = upper_examples.heartbeat:main',
+            'motion_control = upper_examples.motion_control:main',
+            'gui = upper_examples.gui:main',
         ],
     },
 )

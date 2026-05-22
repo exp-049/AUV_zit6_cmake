@@ -1,79 +1,44 @@
 #!/usr/bin/env python3
-import sys
-import json
-import os
-from typing import Dict, Any
+# -*- coding: utf-8 -*-
 
-# Qt & ROS
-try:
-    from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                                 QTableWidget, QTableWidgetItem, QPushButton, QLabel, QHeaderView, QMessageBox)
-    from PyQt5.QtCore import Qt, QThread, pyqtSignal
-except ImportError:
-    from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                                   QTableWidget, QTableWidgetItem, QPushButton, QLabel, QHeaderView, QMessageBox)
-    from PySide6.QtCore import Qt, QThread, Signal as pyqtSignal
+import os
+import sys
+import argparse
+import json
+import threading
 
 import rclpy
 from rclpy.node import Node
 from zit6_interfaces.srv import GetParams, UpdateParams
 
-class RosWorker(QThread):
+# 导入共享的浮动心跳面板
+from .heartbeat import FloatingHeartbeatPanel
+
+# Qt imports
+try:
+    from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+                                 QTableWidget, QTableWidgetItem, QPushButton, QLabel, QHeaderView, QMessageBox)
+    from PyQt5.QtCore import Qt, pyqtSignal, QTimer
+except ImportError:
+    from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+                                   QTableWidget, QTableWidgetItem, QPushButton, QLabel, QHeaderView, QMessageBox)
+    from PySide6.QtCore import Qt, Signal as pyqtSignal, QTimer
+
+class ConfigWidget(QWidget):
+    """
+    参数配置组件，支持在主控制台中嵌入或在独立窗口中显示
+    """
     get_signal = pyqtSignal(dict)
     update_signal = pyqtSignal(bool, str)
 
-    def __init__(self):
+    def __init__(self, node):
         super().__init__()
-        self.node = None
-        self.get_client = None
-        self.update_client = None
-
-    def run(self):
-        rclpy.init()
-        self.node = Node('config_gui_node')
+        self.node = node
+        
         self.get_client = self.node.create_client(GetParams, '/zit6/get_params')
         self.update_client = self.node.create_client(UpdateParams, '/zit6/update_params')
-        rclpy.spin(self.node)
-
-    def fetch_params(self, paths=[]):
-        if not self.get_client.wait_for_service(timeout_sec=1.0):
-            return
-        req = GetParams.Request()
-        req.paths = paths
-        future = self.get_client.call_async(req)
-        future.add_done_callback(self._fetch_done)
-
-    def _fetch_done(self, future):
-        try:
-            res = future.result()
-            if res.success:
-                data = json.loads(res.config_json)
-                self.get_signal.emit(data)
-        except Exception as e:
-            print(f"Fetch failed: {e}")
-
-    def push_params(self, paths, values):
-        if not self.update_client.wait_for_service(timeout_sec=1.0):
-            return
-        req = UpdateParams.Request()
-        req.paths = paths
-        req.values = [str(v) for v in values]
-        future = self.update_client.call_async(req)
-        future.add_done_callback(self._update_done)
-
-    def _update_done(self, future):
-        try:
-            res = future.result()
-            self.update_signal.emit(res.success, res.message)
-        except Exception as e:
-            self.update_signal.emit(False, str(e))
-
-class ConfigApp(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Zit6 AUV Parameter Tuner")
-        self.resize(900, 700)
-        self.params_map = {} # path -> row_idx
+        
+        self.params_map = {}
         self.config_path = os.path.join(os.getcwd(), 'config.json')
         self._int_paths = {"soft_watchdog.timeout_ms"}
         self._bool_paths = {
@@ -96,62 +61,68 @@ class ConfigApp(QMainWindow):
             "use_manometer_z": "use_ins_pressure_z",
         }
         self._types_map = {}
+        
+        self.init_ui()
+        self.get_signal.connect(self.update_table_values)
+        self.update_signal.connect(self.show_update_result)
+        
+        self.load_structure()
+        QTimer.singleShot(1000, lambda: self.fetch_params([]))
 
-        # UI Layout
-        main_widget = QWidget()
-        self.setCentralWidget(main_widget)
-        layout = QVBoxLayout(main_widget)
-
-        # Header
-        header = QLabel("Zit6 System Configuration")
-        header.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px;")
-        layout.addWidget(header)
-
-        # Table
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+        
         self.table = QTableWidget()
         self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Parameter Path", "Current Value", "New Value"])
+        self.table.setHorizontalHeaderLabels(["参数路径 (Path)", "当前值 (Current)", "新值 (New)"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.setStyleSheet("gridline-color: #444; background-color: #2b2b2b; color: #eee;")
+        self.table.setStyleSheet("""
+            QTableWidget {
+                gridline-color: #333333; 
+                background-color: #1e1e1e; 
+                color: #e0e0e0;
+                border: 1px solid #333333;
+                border-radius: 6px;
+            }
+            QHeaderView::section {
+                background-color: #2b2b2b;
+                color: #ffffff;
+                padding: 6px;
+                border: 1px solid #333333;
+            }
+        """)
         layout.addWidget(self.table)
-
-        # Buttons
+        
         btn_layout = QHBoxLayout()
-        self.btn_get = QPushButton("Fetch from AUV")
-        self.btn_set = QPushButton("Apply to AUV")
-        self.btn_save = QPushButton("Save to Local JSON")
+        self.btn_get = QPushButton("从 AUV 获取")
+        self.btn_set = QPushButton("应用到 AUV")
+        self.btn_save = QPushButton("保存到本地 JSON")
         
         for btn in [self.btn_get, self.btn_set, self.btn_save]:
-            btn.setFixedHeight(40)
-            btn.setStyleSheet("font-weight: bold; border-radius: 5px;")
+            btn.setFixedHeight(38)
+            btn.setStyleSheet("""
+                QPushButton {
+                    font-weight: bold; 
+                    border-radius: 5px;
+                    border: none;
+                    padding: 0 15px;
+                }
+            """)
         
         self.btn_get.setStyleSheet("background-color: #0d47a1; color: white;")
         self.btn_set.setStyleSheet("background-color: #1b5e20; color: white;")
         self.btn_save.setStyleSheet("background-color: #455a64; color: white;")
         
+        self.btn_get.clicked.connect(lambda: self.fetch_params([]))
+        self.btn_set.clicked.connect(self.on_apply)
+        self.btn_save.clicked.connect(self.on_save_json)
+        
         btn_layout.addWidget(self.btn_get)
         btn_layout.addWidget(self.btn_set)
         btn_layout.addWidget(self.btn_save)
         layout.addLayout(btn_layout)
-
-        # Logic
-        self.worker = RosWorker()
-        self.worker.get_signal.connect(self.update_table_values)
-        self.worker.update_signal.connect(self.show_update_result)
-        self.worker.start()
-
-        self.btn_get.clicked.connect(lambda: self.worker.fetch_params([]))
-        self.btn_set.clicked.connect(self.on_apply)
-        self.btn_save.clicked.connect(self.on_save_json)
-
-        # 启动后自动执行一次全量获取
-        try:
-            from PyQt5.QtCore import QTimer
-        except ImportError:
-            from PySide6.QtCore import QTimer 
-        QTimer.singleShot(1000, lambda: self.worker.fetch_params([]))
-
-        self.load_structure()
 
     def flatten_json(self, data, prefix=""):
         res = {}
@@ -228,15 +199,13 @@ class ConfigApp(QMainWindow):
             return s
 
     def load_structure(self):
-        # 优化：优先使用 ROS 2 路径查找，其次是当前工作目录
         from ament_index_python.packages import get_package_share_directory
         search_paths = [
             os.path.join(os.getcwd(), 'config.json'),
-            os.path.join(os.path.dirname(__file__), '../../config.json'), # 源码路径
-            self.config_path # 默认路径
+            os.path.join(os.path.dirname(__file__), '../../config.json'), 
+            self.config_path
         ]
         
-        # 如果在 ROS 环境运行，添加 share 目录（如果 config.json 被安装了）
         try:
             share_dir = get_package_share_directory('upper_examples')
             search_paths.insert(0, os.path.join(share_dir, 'config.json'))
@@ -274,6 +243,24 @@ class ConfigApp(QMainWindow):
         except Exception as e:
             print(f"Failed to load config.json: {e}")
 
+    def fetch_params(self, paths=[]):
+        if not self.get_client.wait_for_service(timeout_sec=1.0):
+            print("GetParams service not available.")
+            return
+        req = GetParams.Request()
+        req.paths = paths
+        future = self.get_client.call_async(req)
+        future.add_done_callback(self._fetch_done)
+
+    def _fetch_done(self, future):
+        try:
+            res = future.result()
+            if res.success:
+                data = json.loads(res.config_json)
+                self.get_signal.emit(data)
+        except Exception as e:
+            print(f"Fetch failed: {e}")
+
     def update_table_values(self, data):
         for path, val in data.items():
             if path in self.params_map:
@@ -300,22 +287,44 @@ class ConfigApp(QMainWindow):
 
         if invalid_enums:
             lines = "\n".join([f"{p}: {v}" for p, v in invalid_enums])
-            QMessageBox.warning(self, "Invalid Enum", f"Invalid enum values:\n{lines}")
+            QMessageBox.warning(self, "非法Enum值", f"参数包含未被允许的Enum项:\n{lines}")
         
         if paths:
-            self.worker.push_params(paths, values)
+            self.push_params(paths, values)
         else:
-            QMessageBox.information(self, "No Changes", "No parameters modified.")
+            QMessageBox.information(self, "提示", "参数未发生任何修改。")
+
+    def push_params(self, paths, values):
+        if not self.update_client.wait_for_service(timeout_sec=1.0):
+            QMessageBox.critical(self, "连接错误", "无法连接到参数更新服务！")
+            return
+        req = UpdateParams.Request()
+        req.paths = paths
+        req.values = [str(v) for v in values]
+        future = self.update_client.call_async(req)
+        future.add_done_callback(self._update_done)
+
+    def _update_done(self, future):
+        try:
+            res = future.result()
+            self.update_signal.emit(res.success, res.message)
+        except Exception as e:
+            self.update_signal.emit(False, str(e))
+
+    def show_update_result(self, success, message):
+        if success:
+            QMessageBox.information(self, "成功", f"参数更新成功!\n{message}")
+            self.fetch_params([])
+        else:
+            QMessageBox.critical(self, "失败", f"更新失败:\n{message}")
 
     def on_save_json(self):
-        # 收集当前表格中的所有“新值”并还原为 JSON
         flat_data = {}
         for i in range(self.table.rowCount()):
             path = self.table.item(i, 0).text()
             val_str = self.table.item(i, 2).text()
             flat_data[path] = self._infer_value_from_str(path, val_str)
         
-        # 反展平
         nested_data = {}
         for path, val in flat_data.items():
             parts = path.split('.')
@@ -331,23 +340,124 @@ class ConfigApp(QMainWindow):
         try:
             with open(self.config_path, 'w') as f:
                 json.dump(nested_data, f, indent=2)
-            QMessageBox.information(self, "Saved", f"Configuration saved to:\n{self.config_path}")
+            QMessageBox.information(self, "保存成功", f"配置已保存到:\n{self.config_path}")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save JSON:\n{e}")
+            QMessageBox.critical(self, "错误", f"保存 JSON 失败:\n{e}")
 
-    def show_update_result(self, success, message):
-        if success:
-            QMessageBox.information(self, "Success", f"Parameters updated successfully!\n{message}")
-            self.worker.fetch_params([]) # Refresh
-        else:
-            QMessageBox.critical(self, "Error", f"Failed to update parameters:\n{message}")
+    def close(self):
+        pass
 
-def main():
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    window = ConfigApp()
-    window.show()
-    sys.exit(app.exec_())
 
-if __name__ == "__main__":
+class ConfigApp(QMainWindow):
+    """
+    配置参数独立 GUI 窗口
+    """
+    def __init__(self, node, spinner):
+        super().__init__()
+        self.node = node
+        self.spinner = spinner
+        self.setWindowTitle("Zit6 AUV 参数调试器")
+        self.resize(900, 780)
+        self.setStyleSheet("QMainWindow { background-color: #121212; }")
+        
+        self.widget = ConfigWidget(self.node)
+        self.setCentralWidget(self.widget)
+        
+        # 统一的浮动心跳下发面板
+        self.floating_hbt = FloatingHeartbeatPanel(self.node, self)
+        self.floating_hbt.show()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.floating_hbt.setGeometry(self.width() - 280, 15, 260, 42)
+        self.floating_hbt.raise_()
+
+    def closeEvent(self, event):
+        self.widget.close()
+        self.floating_hbt.close()
+        super().closeEvent(event)
+
+
+def main(args=None):
+    parser = argparse.ArgumentParser(description="Zit6 参数配置命令行工具")
+    parser.add_argument("--get", nargs="*", metavar="PATH", help="从 AUV 中获取指定路径的参数，缺省表示获取所有")
+    parser.add_argument("--set", nargs="+", metavar="PATH=VALUE", help="设置 AUV 的参数，格式为 path=value")
+    
+    parsed_args, unknown = parser.parse_known_args(args=args)
+
+    if parsed_args.get is not None or parsed_args.set is not None:
+        rclpy.init(args=args)
+        node = Node('config_setter_cli')
+        
+        get_client = node.create_client(GetParams, '/zit6/get_params')
+        update_client = node.create_client(UpdateParams, '/zit6/update_params')
+        
+        if parsed_args.get is not None:
+            if not get_client.wait_for_service(timeout_sec=2.0):
+                print("Error: /zit6/get_params service is not available.")
+                sys.exit(1)
+            req = GetParams.Request()
+            req.paths = parsed_args.get
+            future = get_client.call_async(req)
+            rclpy.spin_until_future_complete(node, future, timeout_sec=3.0)
+            
+            try:
+                res = future.result()
+                if res.success:
+                    print(res.config_json)
+                else:
+                    print("Error: Failed to fetch parameters.")
+            except Exception as e:
+                print(f"Service call failed: {e}")
+                
+        elif parsed_args.set is not None:
+            paths, values = [], []
+            for pair in parsed_args.set:
+                if '=' not in pair:
+                    print(f"Error: Invalid set argument format '{pair}'. Expected path=value.")
+                    sys.exit(1)
+                p, v = pair.split('=', 1)
+                paths.append(p.strip())
+                values.append(v.strip())
+                
+            if not update_client.wait_for_service(timeout_sec=2.0):
+                print("Error: /zit6/update_params service is not available.")
+                sys.exit(1)
+            req = UpdateParams.Request()
+            req.paths = paths
+            req.values = values
+            future = update_client.call_async(req)
+            rclpy.spin_until_future_complete(node, future, timeout_sec=3.0)
+            
+            try:
+                res = future.result()
+                if res.success:
+                    print(f"Success: {res.message}")
+                else:
+                    print(f"Failed: {res.message}")
+            except Exception as e:
+                print(f"Service call failed: {e}")
+                
+        node.destroy_node()
+        rclpy.shutdown()
+    else:
+        rclpy.init(args=args)
+        node = Node('config_gui_node')
+        
+        spinner = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+        spinner.start()
+        
+        app = QApplication(sys.argv)
+        app.setStyle("Fusion")
+        
+        window = ConfigApp(node, spinner)
+        window.show()
+        
+        exit_code = app.exec_()
+        
+        node.destroy_node()
+        rclpy.shutdown()
+        sys.exit(exit_code)
+
+if __name__ == '__main__':
     main()
