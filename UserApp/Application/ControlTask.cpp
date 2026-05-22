@@ -217,10 +217,18 @@ void ControlTask::handleArmState(const auv::common::NavState &nav,
     // 允许解锁逻辑：
     // 1. 数据为 kRemoteModeHeartbeatData (3)
     // 2. 数据为 1 且 (导航有效 或 处于仿真模式)
+    // 只有导航模式 >= 4 (SINS/DVL) 或仿真模式时，yaw 才足够稳定允许 Arm
+    bool nav_ready = false;
+    if (auv::config::sys_config.simulation.hitl_enabled) {
+        nav_ready = true;
+    } else {
+        // imu_state: 4=SINS/DVL, 5=MRU（纯姿态无位置增量）
+        nav_ready = (nav.imu_state >= 4);
+    }
+
     bool can_arm =
         (hbt_data == kRemoteModeHeartbeatData) ||
-        (hbt_data == 1 && (auv::shared::isNavigationValid(nav) ||
-                           auv::config::sys_config.simulation.hitl_enabled));
+        (hbt_data == 1 && nav_ready);
 
     if (can_arm) {
       taskENTER_CRITICAL();

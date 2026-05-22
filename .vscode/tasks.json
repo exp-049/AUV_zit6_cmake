@@ -13,7 +13,7 @@
         {
             "label": "Flash Firmware (OpenOCD)",
             "type": "shell",
-            "command": "openocd -f interface/stlink.cfg -c 'transport select hla_swd' -c 'adapter speed 100' -f target/stm32h7x.cfg -c 'program build/Debug/AUV_zit6.elf verify reset exit'",
+            "command": "openocd -f interface/stlink.cfg -c 'transport select hla_swd' -c 'adapter speed 100' -f target/stm32h7x.cfg -c 'reset_config none' -c 'program build/Debug/AUV_zit6.elf verify reset exit'",
             "group": "build",
             "problemMatcher": []
         }

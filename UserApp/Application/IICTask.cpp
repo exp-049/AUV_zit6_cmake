@@ -12,8 +12,11 @@ void UserApp_IICTask(void *argument) {
     float last_valid_depth = 0.0f;
     int   bad_count = 0;
     const int kMaxBadCount = 3;
+    uint32_t last_init_attempt_ms = 0;
+    const uint32_t kInitRetryIntervalMs = 500; // 初始化失败后等500ms再重试
 
     for (;;) {
+        uint32_t now = HAL_GetTick();
         if (auv::device::depth_sensor.is_connected) {
             int r = auv::device::depth_sensor.Read();
             if (r > 0) {
@@ -57,8 +60,11 @@ void UserApp_IICTask(void *argument) {
                 // r == 0 -> conversion in progress, nothing to do this cycle
             }
         } else {
-            // Not connected, try to init
-            auv::device::depth_sensor.Init();
+            // Not connected, retry init with delay to avoid flooding I2C bus
+            if (now - last_init_attempt_ms >= kInitRetryIntervalMs) {
+                last_init_attempt_ms = now;
+                auv::device::depth_sensor.Init();
+            }
         }
         // Aim for ~60Hz sampling calls to the non-blocking Read()
         vTaskDelay(pdMS_TO_TICKS(8)); // ~125Hz loop; with 2-step conversion yields ~62.5Hz samples
