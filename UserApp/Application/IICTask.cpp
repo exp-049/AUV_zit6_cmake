@@ -34,9 +34,7 @@ void UserApp_IICTask(void *argument) {
 
                 if (valid) {
                     bad_count = 0;
-                    taskENTER_CRITICAL();
-                    auv::motion::motion_context.current_depth_z = d;
-                    taskEXIT_CRITICAL();
+                    auv::motion::motion_context.setMS5837Z(d);
 
                     last_valid_depth = d;
                     auv::device::SoftWatchdog::getInstance().feed(auv::device::SoftWatchdog::Component::DEPTH);

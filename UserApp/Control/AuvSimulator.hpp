@@ -54,6 +54,21 @@ public:
         while (position_[3] < -3.14159265f) position_[3] += 6.2831853f;
     }
 
+    /**
+     * @brief 推进物理引擎一步 (自动从全局配置中加载物理参数)
+     * @param forces 4-DOF 归一化控制力矢量
+     */
+    void step(const std::array<float, 4>& forces) {
+        float k = auv::config::sys_config.simulation.thrust_k;
+        float sim_m = auv::config::sys_config.simulation.mass;
+        float sim_d = auv::config::sys_config.simulation.drag;
+
+        // 对各轴分配合理的物理质量与阻力，避免使用非常小的前馈质量导致发散
+        std::array<float, 4> masses = {sim_m, sim_m, sim_m, sim_m * 0.1f};
+        std::array<float, 4> drags = {sim_d, sim_d, sim_d, sim_d * 0.1f};
+        step(forces, masses, drags, k);
+    }
+
     const std::array<float, 4>& getPosition() const { return position_; }
     
     /**

@@ -195,9 +195,6 @@ void INS_Driver::decodePacket(auv::motion::NavState &s) {
   auv::device::SoftWatchdog::getInstance().feed(
       auv::device::SoftWatchdog::Component::INS);
 
-  // 更新内部缓存
-  state_ = s;
-
   // 转换单位 (Deg -> Rad)
   const float kDeg2Rad = 0.0174532925f;
   s.roll *= kDeg2Rad;
@@ -207,21 +204,8 @@ void INS_Driver::decodePacket(auv::motion::NavState &s) {
   s.vpitch *= kDeg2Rad;
   s.vel_body[3] *= kDeg2Rad;
 
-  // 应用软件偏置 (实现 Arm 时的归零逻辑)
-  // 注意：偏置值是在 Arm 瞬间以弧度/米记录的，因此需在转换后减去
-  if (use_offset_) {
-    s.pos_world[0] -= offset_x_;
-    s.pos_world[1] -= offset_y_;
-    s.pos_world[2] -= offset_z_;
-    s.pos_world[3] -= offset_yaw_;
-    manometer_z -= offset_z_;
-
-    // 航向角归一化 [-PI, PI]
-    while (s.pos_world[3] > 3.14159265f)
-      s.pos_world[3] -= 6.2831853f;
-    while (s.pos_world[3] < -3.14159265f)
-      s.pos_world[3] += 6.2831853f;
-  }
+  // 更新内部缓存（保存为弧度制状态）
+  state_ = s;
 
   manometer_z_ = manometer_z;
 

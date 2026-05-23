@@ -61,5 +61,121 @@ NavState MotionContext::getNavState() const {
     return nav;
 }
 
+void MotionContext::setHomeOffset(float x, float y, float z, float yaw) {
+    use_offset_ = true;
+    offset_x_ = x;
+    offset_y_ = y;
+    offset_z_ = z;
+    offset_yaw_ = yaw;
+}
+
+void MotionContext::clearHomeOffset() {
+    use_offset_ = false;
+}
+
+float MotionContext::getMS5837Z() const {
+    float z = 0.0f;
+    taskENTER_CRITICAL();
+    z = current_depth_z_;
+    taskEXIT_CRITICAL();
+    return z;
+}
+
+void MotionContext::setMS5837Z(float z) {
+    taskENTER_CRITICAL();
+    current_depth_z_ = z;
+    taskEXIT_CRITICAL();
+}
+
+TargetSetpoint MotionContext::getCurrentSetpoint() const {
+    TargetSetpoint sp;
+    taskENTER_CRITICAL();
+    sp = current_setpoint;
+    taskEXIT_CRITICAL();
+    return sp;
+}
+
+void MotionContext::setNavState(const NavState& state) {
+    taskENTER_CRITICAL();
+    nav_state = state;
+    taskEXIT_CRITICAL();
+}
+
+void MotionContext::updateSetpoint(const TargetSetpoint& sp) {
+    taskENTER_CRITICAL();
+    current_setpoint = sp;
+    taskEXIT_CRITICAL();
+}
+
+void MotionContext::resetSetpoint() {
+    taskENTER_CRITICAL();
+    for (int i = 0; i < 4; ++i) {
+        current_setpoint.pos_world[i] = 0.0f;
+        current_setpoint.vel_body[i] = 0.0f;
+        current_setpoint.thrust_body[i] = 0.0f;
+    }
+    taskEXIT_CRITICAL();
+}
+
+RawSetpoint MotionContext::getRawSetpoint() const {
+    RawSetpoint sp;
+    taskENTER_CRITICAL();
+    sp = raw_setpoint;
+    taskEXIT_CRITICAL();
+    return sp;
+}
+
+void MotionContext::setRawSetpoint(const RawSetpoint& sp) {
+    taskENTER_CRITICAL();
+    raw_setpoint = sp;
+    taskEXIT_CRITICAL();
+}
+
+float MotionContext::getLastDtMs() const {
+    float dt;
+    taskENTER_CRITICAL();
+    dt = last_dt_ms;
+    taskEXIT_CRITICAL();
+    return dt;
+}
+
+void MotionContext::setLastDtMs(float dt) {
+    taskENTER_CRITICAL();
+    last_dt_ms = dt;
+    taskEXIT_CRITICAL();
+}
+
+uint32_t MotionContext::getLastReceivedSeq() const {
+    uint32_t seq;
+    taskENTER_CRITICAL();
+    seq = last_received_seq;
+    taskEXIT_CRITICAL();
+    return seq;
+}
+
+void MotionContext::setLastReceivedSeq(uint32_t seq) {
+    taskENTER_CRITICAL();
+    last_received_seq = seq;
+    taskEXIT_CRITICAL();
+}
+
+std::array<float, 4> MotionContext::getLastOutputForces() const {
+    std::array<float, 4> forces;
+    taskENTER_CRITICAL();
+    for (int i = 0; i < 4; ++i) {
+        forces[i] = last_output_forces[i];
+    }
+    taskEXIT_CRITICAL();
+    return forces;
+}
+
+void MotionContext::setLastOutputForces(const std::array<float, 4>& forces) {
+    taskENTER_CRITICAL();
+    for (int i = 0; i < 4; ++i) {
+        last_output_forces[i] = forces[i];
+    }
+    taskEXIT_CRITICAL();
+}
+
 } // namespace motion
 } // namespace auv

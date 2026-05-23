@@ -16,15 +16,8 @@ using namespace auv::control;
 
 // 仿真引擎实例 (HITL 模式)
 static AuvSimulator g_hitl_sim(0.01f);
-static bool g_sim_inited = false;
 
-void ControlTask::fillActualState(const auv::motion::NavState &nav,
-                                  float (&actual_p)[4], float (&actual_v)[4]) {
-  for (int i = 0; i < 4; ++i) {
-    actual_p[i] = nav.pos_world[i];
-    actual_v[i] = nav.vel_body[i];
-  }
-}
+
 
 void ControlTask::run() {
   init();
@@ -33,12 +26,12 @@ void ControlTask::run() {
     refreshHardwareWatchdogIfNeeded();
 
     const uint32_t now = HAL_GetTick();
-    auv::motion::motion_context.last_dt_ms = static_cast<float>(now - last_tick_);
+    auv::motion::motion_context.setLastDtMs(static_cast<float>(now - last_tick_));
     last_tick_ = now;
 
     auv::motion::NavState nav = updateNavigation();
-    handleArmState(nav, now);
-    computeAndPublish(nav);
+    handleArmState(now);
+    computeAndPublish();
 
     // 周期性调试信息（非阻塞，通过 UART5 DMA，忙时丢弃）
     static uint32_t last_log_ms = 0;
@@ -47,7 +40,7 @@ void ControlTask::run() {
       char dbgbuf[128];
       int n = std::snprintf(
           dbgbuf, sizeof(dbgbuf), "DBG t=%lu dt=%.1f z=%.2f armed=%d\r\n",
-          (unsigned long)now, auv::motion::motion_context.last_dt_ms, nav.pos_world[2], auv::system::system_context.is_system_armed ? 1 : 0);
+          (unsigned long)now, auv::motion::motion_context.getLastDtMs(), nav.pos_world[2], auv::system::system_context.is_system_armed ? 1 : 0);
       if (n > 0) {
         auv::porting::SerialPort::transmitDebug(
             reinterpret_cast<const uint8_t *>(dbgbuf),
@@ -98,58 +91,61 @@ void ControlTask::refreshHardwareWatchdogIfNeeded() {
 }
 
 auv::motion::NavState ControlTask::updateNavigation() {
-  auv::motion::NavState nav;
+  auv::motion::NavState state;
 
-  // 锁定逻辑：如果已经解锁，则根据当时是否触发了仿真初始化来决定数据源，不再受运行时
-  // config 突变影响
-  bool use_sim = auv::system::system_context.is_system_armed
-                     ? g_sim_inited
-                     : auv::config::sys_config.simulation.hitl_enabled;
-
-  // 检查是否启用 HITL 仿真模式
-  if (use_sim) {
-    if (!g_sim_inited) {
-      // 首次启动仿真，尝试对齐当前传感器位置（如果有的话）
-      auto hardware_nav = auv::motion::motion_context.getNavState();
-      float p0[4] = {hardware_nav.pos_world[0], hardware_nav.pos_world[1], hardware_nav.pos_world[2],
-                     hardware_nav.pos_world[3]};
-      g_hitl_sim.reset(p0);
-      g_sim_inited = true;
-    }
-
+  // 1. 获取原始导航输入（仿真 vs 真实硬件）
+  if (auv::config::sys_config.simulation.hitl_enabled) {
     auto p = g_hitl_sim.getPosition();
     auto v = g_hitl_sim.getVelocity();
     for (int i = 0; i < 4; i++) {
-      nav.pos_world[i] = p[i];
-      nav.vel_body[i] = v[i];
+      state.pos_world[i] = p[i];
+      state.vel_body[i] = v[i];
     }
     auv::system::system_context.nav_status.imu_state = 4; // 强制模拟为最优导航状态 (Mode 4)
     auv::system::system_context.nav_status.timestamp = HAL_GetTick();
   } else {
-    // 正常：读取原始硬件 data
-    nav = auv::motion::motion_context.getNavState();
-    ins_driver.update(nav);
+    // 正常：从硬件读取原始导航数据
+    state = ins_driver.getNavState();
+    ins_driver.update(state);
 
-    // 根据配置选择是否使用独立的 MS5837 深度覆盖融合深度
-    if (auv::config::sys_config.sensors.z_data_source ==
-        auv::config::ZDataSource::USE_MS5837_Z) {
-      float depth_snapshot = 0.0f;
-      taskENTER_CRITICAL();
-      depth_snapshot = auv::motion::motion_context.current_depth_z;
-      taskEXIT_CRITICAL();
-
-      nav.pos_world[2] = depth_snapshot;
-    } else if (auv::config::sys_config.sensors.z_data_source ==
-               auv::config::ZDataSource::USE_INS_PRESSURE_Z) {
-      nav.pos_world[2] = ins_driver.getManometerZ();
+    // 根据配置覆盖 Z 轴深度数据源
+    if (auv::config::sys_config.sensors.z_data_source == auv::config::ZDataSource::USE_MS5837_Z) {
+      state.pos_world[2] = auv::motion::motion_context.getMS5837Z();
+    } else if (auv::config::sys_config.sensors.z_data_source == auv::config::ZDataSource::USE_INS_PRESSURE_Z) {
+      state.pos_world[2] = ins_driver.getManometerZ();
     }
-    g_sim_inited = false; // 退出仿真时重置标记
   }
 
-  auv::motion::motion_context.nav_state = nav;
+  // 2. 应用解锁原点平移与偏航旋转变换
+  taskENTER_CRITICAL();
+  bool use_offset = auv::motion::motion_context.use_offset_;
+  float offset_x = auv::motion::motion_context.offset_x_;
+  float offset_y = auv::motion::motion_context.offset_y_;
+  float offset_z = auv::motion::motion_context.offset_z_;
+  float offset_yaw = auv::motion::motion_context.offset_yaw_;
   taskEXIT_CRITICAL();
 
-  return nav;
+  if (use_offset) {
+    float dx = state.pos_world[0] - offset_x;
+    float dy = state.pos_world[1] - offset_y;
+    float cos_h = std::cos(offset_yaw);
+    float sin_h = std::sin(offset_yaw);
+    state.pos_world[0] = dx * cos_h + dy * sin_h;
+    state.pos_world[1] = -dx * sin_h + dy * cos_h;
+    state.pos_world[2] -= offset_z;
+    state.pos_world[3] -= offset_yaw;
+
+    // 航向角归一化
+    while (state.pos_world[3] > 3.14159265f)
+      state.pos_world[3] -= 6.2831853f;
+    while (state.pos_world[3] < -3.14159265f)
+      state.pos_world[3] += 6.2831853f;
+  }
+
+  // 3. 将融合后的位姿写入全局的 MotionContext
+  auv::motion::motion_context.setNavState(state);
+
+  return state;
 }
 
 void ControlTask::setControlLevelNone() {
@@ -157,15 +153,15 @@ void ControlTask::setControlLevelNone() {
 }
 
 void ControlTask::forceDisarmWithNeutralLevel() {
+  taskENTER_CRITICAL();
   auv::system::system_context.is_system_armed = false;
   auv::system::system_context.arm_heartbeat_count = 0;
-  auv::device::ins_driver.clearHomeOffset(); // 失锁时恢复原始坐标系
+  auv::motion::motion_context.clearHomeOffset(); // 失锁时恢复原始坐标系
   taskEXIT_CRITICAL();
   setControlLevelNone();
 }
 
-void ControlTask::handleArmState(const auv::motion::NavState &nav,
-                                 uint32_t now) {
+void ControlTask::handleArmState(uint32_t now) {
   taskENTER_CRITICAL();
   const bool armed_snapshot = auv::system::system_context.is_system_armed;
   const uint32_t heartbeat_snapshot = auv::system::system_context.last_arm_heartbeat_ms;
@@ -206,17 +202,13 @@ void ControlTask::handleArmState(const auv::motion::NavState &nav,
         // 周期都应维持仿真 (此处通过 g_sim_inited 标志位配合 sys_config
         // 实现逻辑锁定)
 
-        // 2. 注入驱动层偏移（建立“家”坐标系）
-        // 注意：在仿真模式下，nav 已经是相对坐标，但 setHomeOffset
-        // 会处理初始对齐
-        auv::device::ins_driver.setHomeOffset(nav.pos_world[0], nav.pos_world[1], nav.pos_world[2], nav.pos_world[3]);
+        // 2. 注入偏移以建立“家”坐标系
+        // 注意：在仿真模式下，nav 已经是相对坐标，但 setHomeOffset 会处理初始对齐
+        auto nav_state = auv::motion::motion_context.getNavState();
+        auv::motion::motion_context.setHomeOffset(nav_state.pos_world[0], nav_state.pos_world[1], nav_state.pos_world[2], nav_state.pos_world[3]);
 
         // 3. 锁定控制器目标为当前点（即新坐标系的 0 点）
-        for (int i = 0; i < 4; ++i) {
-          auv::motion::motion_context.current_setpoint.pos_world[i] = 0.0f;
-          auv::motion::motion_context.current_setpoint.vel_body[i] = 0.0f;
-          auv::motion::motion_context.current_setpoint.thrust_body[i] = 0.0f;
-        }
+        auv::motion::motion_context.resetSetpoint();
       }
       auv::system::system_context.is_system_armed = true;
       taskEXIT_CRITICAL();
@@ -249,37 +241,16 @@ void ControlTask::handleArmState(const auv::motion::NavState &nav,
   }
 }
 
-void ControlTask::computeAndPublish(const auv::motion::NavState &nav) {
-  float actual_p[4];
-  float actual_v[4];
-  fillActualState(nav, actual_p, actual_v);
-
-  auv::motion::TargetSetpoint target_snapshot;
-  taskENTER_CRITICAL();
-  target_snapshot = auv::motion::motion_context.current_setpoint;
-  taskEXIT_CRITICAL();
-
-  auto forces = chassis.update(actual_p, actual_v, target_snapshot);
+void ControlTask::computeAndPublish() {
+  auto forces = chassis.update();
 
   // 如果满足仿真锁定状态，将计算出的推力喂回仿真引擎
-  bool use_sim = auv::system::system_context.is_system_armed
-                     ? g_sim_inited
-                     : auv::config::sys_config.simulation.hitl_enabled;
-  if (use_sim && g_sim_inited) {
-    float k = auv::config::sys_config.simulation.thrust_k;
-    float sim_m = auv::config::sys_config.simulation.mass;
-    float sim_d = auv::config::sys_config.simulation.drag;
-    
-    // 对各轴分配合理的物理质量与阻力，避免使用非常小的前馈质量导致发散
-    std::array<float, 4> masses = {sim_m, sim_m, sim_m, sim_m * 0.1f};
-    std::array<float, 4> drags = {sim_d, sim_d, sim_d, sim_d * 0.1f};
-    g_hitl_sim.step(forces, masses, drags, k);
+  if (auv::config::sys_config.simulation.hitl_enabled) {
+    g_hitl_sim.step(forces);
   }
 
+  auv::motion::motion_context.setLastOutputForces(forces);
   taskENTER_CRITICAL();
-  for (int i = 0; i < 4; ++i) {
-    auv::motion::motion_context.last_output_forces[i] = forces[i];
-  }
   const bool armed = auv::system::system_context.is_system_armed;
   taskEXIT_CRITICAL();
 

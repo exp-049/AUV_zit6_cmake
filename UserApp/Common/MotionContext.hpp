@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <cmath>
+#include <array>
 
 namespace auv {
 namespace motion {
@@ -75,25 +76,52 @@ struct Constants {
     static constexpr float RAD2DEG = 57.2957795f;      ///< 弧度转角度
 };
 
-/**
- * @class MotionContext
- * @brief 实时运动状态与设定值上下文，集成机体系-世界系双向变换方法
- */
 class MotionContext {
 public:
+    void transformBodyToWorld(ControlLevel level, const float body_in[4], float world_out[4], bool is_inc) const;
+    void transformWorldToBody(ControlLevel level, const float world_in[4], float body_out[4], bool is_inc) const;
+
+    // 线程安全存取接口
+    NavState getNavState() const;
+    void setNavState(const NavState& state);
+
+    TargetSetpoint getCurrentSetpoint() const;
+    void updateSetpoint(const TargetSetpoint& sp);
+    void resetSetpoint();
+
+    RawSetpoint getRawSetpoint() const;
+    void setRawSetpoint(const RawSetpoint& sp);
+
+    float getLastDtMs() const;
+    void setLastDtMs(float dt);
+
+    uint32_t getLastReceivedSeq() const;
+    void setLastReceivedSeq(uint32_t seq);
+
+    std::array<float, 4> getLastOutputForces() const;
+    void setLastOutputForces(const std::array<float, 4>& forces);
+
+    // 坐标偏置变量及设置接口
+    bool use_offset_ = false;
+    float offset_x_ = 0.0f;
+    float offset_y_ = 0.0f;
+    float offset_z_ = 0.0f;
+    float offset_yaw_ = 0.0f;
+
+    void setHomeOffset(float x, float y, float z, float yaw);
+    void clearHomeOffset();
+
+    float getMS5837Z() const;
+    void setMS5837Z(float z);
+
+private:
     NavState nav_state{};               ///< 实时真实位姿速度状态
     TargetSetpoint current_setpoint{};  ///< 当前控制目标设定值
     RawSetpoint raw_setpoint{};         ///< 原始 AGX 设定值快照
-
+    float current_depth_z_ = 0.0f;
     float last_dt_ms = 0.0f;
     uint32_t last_received_seq = 0;
-    float current_depth_z = 0.0f;
     float last_output_forces[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-
-
-    void transformBodyToWorld(ControlLevel level, const float body_in[4], float world_out[4], bool is_inc) const;
-    void transformWorldToBody(ControlLevel level, const float world_in[4], float body_out[4], bool is_inc) const;
-    NavState getNavState() const;
 };
 
 extern MotionContext motion_context;

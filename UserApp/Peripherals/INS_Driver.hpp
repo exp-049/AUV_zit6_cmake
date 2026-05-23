@@ -76,17 +76,7 @@ public:
    */
   void setInitialPosition(double lat, double lon);
 
-  // 新增：手动注入“家坐标”，实现软件层面的坐标系偏置
-  void setHomeOffset(float x, float y, float z, float yaw) {
-    use_offset_ = true;
-    offset_x_ = x;
-    offset_y_ = y;
-    offset_z_ = z;
-    // offset_yaw_ = yaw;
-    offset_yaw_ = 0;
-  }
 
-  void clearHomeOffset() { use_offset_ = false; }
 
 private:
   porting::SerialPort rx_port_; ///< 串口接收驱动
@@ -103,9 +93,7 @@ private:
   auv::motion::NavState prev_state_{}; ///< 上一帧状态，用于速度差分估计
   bool has_prev_state_ = false;
 
-  // 坐标偏置变量
-  bool use_offset_ = false;
-  float offset_x_ = 0, offset_y_ = 0, offset_z_ = 0, offset_yaw_ = 0;
+
 
   // 压力计深度 (m)
   float manometer_z_ = 0.0f;

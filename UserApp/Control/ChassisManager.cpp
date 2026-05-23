@@ -1,6 +1,8 @@
 #include "ChassisManager.hpp"
 #include "SystemConfig.hpp"
 #include "main.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include <algorithm>
 #include <cmath>
 
@@ -93,17 +95,11 @@ void ChassisManager::configurePID(int axis, bool is_pos_ring, float kp,
   // 获取当前配置，用于增量修改
   PID_Controller::Config cfg = getPIDConfig(axis, is_pos_ring);
 
-  if (kp >= 0.0f)
-    cfg.kp = kp;
-  if (ki >= 0.0f)
-    cfg.ki = ki;
-  if (kd >= 0.0f)
-    cfg.kd = kd;
-  if (i_limit >= 0.0f)
-    cfg.i_limit = i_limit;
-  if (out_limit >= 0.0f)
-    cfg.output_limit = out_limit;
-
+  if (kp >= 0.0f) cfg.kp = kp;
+  if (ki >= 0.0f) cfg.ki = ki;
+  if (kd >= 0.0f) cfg.kd = kd;
+  if (i_limit >= 0.0f) cfg.i_limit = i_limit;
+  if (out_limit >= 0.0f) cfg.output_limit = out_limit;
   cfg.dt = 0.01f; // 步长固定
 
   if (is_pos_ring)
@@ -114,16 +110,17 @@ void ChassisManager::configurePID(int axis, bool is_pos_ring, float kp,
 
 void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level, const float val[4], uint32_t mask, bool is_body, bool is_inc) {
   auto nav = auv::motion::motion_context.getNavState();
+  auto sp = auv::motion::motion_context.getCurrentSetpoint();
 
   // 1. 模式切换对齐 (Bumpless Transition / Anti-Leakage)
   if (new_level != level_) {
     if (new_level == auv::motion::ControlLevel::POSITION) {
       for (int i = 0; i < 4; i++) {
-        auv::motion::motion_context.current_setpoint.pos_world[i] = nav.pos_world[i];
+        sp.pos_world[i] = nav.pos_world[i];
       }
     } else if (new_level == auv::motion::ControlLevel::VELOCITY) {
       for (int i = 0; i < 4; i++) {
-        auv::motion::motion_context.current_setpoint.vel_body[i] = nav.vel_body[i];
+        sp.vel_body[i] = nav.vel_body[i];
       }
     }
   }
@@ -141,9 +138,9 @@ void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level, const f
     for (int i = 0; i < 4; i++) {
       if (!(mask & (1 << i))) {
         if (is_inc) {
-          auv::motion::motion_context.current_setpoint.pos_world[i] += target_val[i];
+          sp.pos_world[i] += target_val[i];
         } else {
-          auv::motion::motion_context.current_setpoint.pos_world[i] = target_val[i];
+          sp.pos_world[i] = target_val[i];
         }
       }
     }
@@ -159,9 +156,9 @@ void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level, const f
     for (int i = 0; i < 4; i++) {
       if (!(mask & (1 << i))) {
         if (is_inc) {
-          auv::motion::motion_context.current_setpoint.vel_body[i] += target_val[i];
+          sp.vel_body[i] += target_val[i];
         } else {
-          auv::motion::motion_context.current_setpoint.vel_body[i] = target_val[i];
+          sp.vel_body[i] = target_val[i];
         }
       }
     }
@@ -177,14 +174,15 @@ void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level, const f
     for (int i = 0; i < 4; i++) {
       if (!(mask & (1 << i))) {
         if (is_inc) {
-          auv::motion::motion_context.current_setpoint.thrust_body[i] += target_val[i];
+          sp.thrust_body[i] += target_val[i];
         } else {
-          auv::motion::motion_context.current_setpoint.thrust_body[i] = target_val[i];
+          sp.thrust_body[i] = target_val[i];
         }
       }
     }
   }
 
+  auv::motion::motion_context.updateSetpoint(sp);
   setControlLevel(new_level);
 }
 
@@ -217,9 +215,7 @@ void ChassisManager::setControlLevel(auv::motion::ControlLevel new_level) {
   level_ = new_level;
 }
 
-std::array<float, 4> ChassisManager::update(const float actual_p[4],
-                                            const float actual_v[4],
-                                            const auv::motion::TargetSetpoint &target) {
+std::array<float, 4> ChassisManager::update() {
   std::array<float, 4> output_forces = {0};
   uint32_t now = HAL_GetTick();
   float dt = (last_update_tick_ == 0)
@@ -228,13 +224,17 @@ std::array<float, 4> ChassisManager::update(const float actual_p[4],
   last_update_tick_ = now;
 
   // 防止 dt 异常：限定在 [1ms, 100ms] 范围
-  if (dt > 0.1f)
-    dt = 0.1f;
-  if (dt <= 0.0f)
-    dt = 0.001f;
+  dt = std::clamp(dt, 0.001f, 0.1f);
 
   if (level_ == auv::motion::ControlLevel::NONE)
     return output_forces;
+
+  // 从全局上下文获取最新的反馈状态与设定值目标
+  auto nav = auv::motion::motion_context.getNavState();
+  auto target = auv::motion::motion_context.getCurrentSetpoint();
+
+  const float *actual_p = nav.pos_world;
+  const float *actual_v = nav.vel_body;
 
   // 计算世界系下的实际速度（用于位置环微分项）
   float actual_v_world_now[4];

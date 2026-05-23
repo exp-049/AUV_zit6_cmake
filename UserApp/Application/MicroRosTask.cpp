@@ -54,7 +54,7 @@ MicroRosTask *MicroRosTask::instance_ = nullptr;
 // --- 成员回调实现 ---
 void MicroRosTask::onZitSetpoint(const void *msgin) {
   const auto *msg = (const zit6_interfaces__msg__ZitSetpoint *)msgin;
-  auv::motion::motion_context.last_received_seq = msg->seq;
+  auv::motion::motion_context.setLastReceivedSeq(msg->seq);
   if (!std::isfinite(msg->x) || !std::isfinite(msg->y) ||
       !std::isfinite(msg->z) || !std::isfinite(msg->yaw))
     return;
@@ -96,14 +96,16 @@ void MicroRosTask::onZitSetpoint(const void *msgin) {
   taskENTER_CRITICAL();
 
   // 1. 记录原始 AGX 设定值快照
-  auv::motion::motion_context.raw_setpoint.level = new_level;
-  auv::motion::motion_context.raw_setpoint.data[0] = val[0];
-  auv::motion::motion_context.raw_setpoint.data[1] = val[1];
-  auv::motion::motion_context.raw_setpoint.data[2] = val[2];
-  auv::motion::motion_context.raw_setpoint.data[3] = val[3];
-  auv::motion::motion_context.raw_setpoint.type_mask = mask;
-  auv::motion::motion_context.raw_setpoint.is_body = is_body;
-  auv::motion::motion_context.raw_setpoint.is_incremental = is_inc;
+  auv::motion::RawSetpoint raw_sp;
+  raw_sp.level = new_level;
+  raw_sp.data[0] = val[0];
+  raw_sp.data[1] = val[1];
+  raw_sp.data[2] = val[2];
+  raw_sp.data[3] = val[3];
+  raw_sp.type_mask = mask;
+  raw_sp.is_body = is_body;
+  raw_sp.is_incremental = is_inc;
+  auv::motion::motion_context.setRawSetpoint(raw_sp);
 
   // 2. 更新底盘目标设定值并切换控制层级
   auv::control::chassis.updateSetpoint(new_level, val, mask, is_body, is_inc);
@@ -478,10 +480,9 @@ void MicroRosTask::run() {
         }
         if (now_ms - last_thr_pub_tick >= 33) {
           last_thr_pub_tick = now_ms;
-          taskENTER_CRITICAL();
+          auto forces = auv::motion::motion_context.getLastOutputForces();
           for (int i = 0; i < 4; i++)
-            thr_buf_[i] = auv::motion::motion_context.last_output_forces[i];
-          taskEXIT_CRITICAL();
+            thr_buf_[i] = forces[i];
           rcl_publish(&thr_pub_, &thr_fb_msg_, NULL);
         }
         if (now_ms - last_pos_pub_tick >= 33) {
@@ -494,7 +495,8 @@ void MicroRosTask::run() {
         }
         if (now_ms - last_status_pub_tick >= 100) {
           last_status_pub_tick = now_ms;
-          auv::motion::NavState nav = auv::motion::motion_context.getNavState();
+          auto forces = auv::motion::motion_context.getLastOutputForces();
+          float cycle_time = auv::motion::motion_context.getLastDtMs();
           taskENTER_CRITICAL();
           status_msg_.is_armed = auv::system::system_context.is_system_armed;
           status_msg_.arm_mode =
@@ -506,10 +508,8 @@ void MicroRosTask::run() {
           status_msg_.navigation_ready =
               auv::system::system_context.getNavigationValid();
           for (int i = 0; i < 4; i++)
-            status_msg_.forces[i] =
-                auv::motion::motion_context.last_output_forces[i];
-          status_msg_.cycle_time_ms =
-              (float)auv::motion::motion_context.last_dt_ms;
+            status_msg_.forces[i] = forces[i];
+          status_msg_.cycle_time_ms = cycle_time;
           status_msg_.battery_voltage = 0.0f;
           status_msg_.error_flags = 0;
           taskEXIT_CRITICAL();

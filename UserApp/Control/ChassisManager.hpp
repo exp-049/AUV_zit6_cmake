@@ -35,7 +35,7 @@ public:
      * @param target 目标设定值 (包含位置、速度、推力等)
      * @return std::array<float, 4> 计算出的 4-DOF 归一化力矢量
      */
-    std::array<float, 4> update(const float actual_p[4], const float actual_v[4], const auv::motion::TargetSetpoint& target);
+    std::array<float, 4> update();
 
     /**
      * @brief 配置指定轴的 PID 参数
