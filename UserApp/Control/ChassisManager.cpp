@@ -112,6 +112,82 @@ void ChassisManager::configurePID(int axis, bool is_pos_ring, float kp,
     vel_pids_[axis].setConfig(cfg);
 }
 
+void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level, const float val[4], uint32_t mask, bool is_body, bool is_inc) {
+  auto nav = auv::motion::motion_context.getNavState();
+
+  // 1. 模式切换对齐 (Bumpless Transition / Anti-Leakage)
+  if (new_level != level_) {
+    if (new_level == auv::motion::ControlLevel::POSITION) {
+      for (int i = 0; i < 4; i++) {
+        auv::motion::motion_context.current_setpoint.pos_world[i] = nav.pos_world[i];
+      }
+    } else if (new_level == auv::motion::ControlLevel::VELOCITY) {
+      for (int i = 0; i < 4; i++) {
+        auv::motion::motion_context.current_setpoint.vel_body[i] = nav.vel_body[i];
+      }
+    }
+  }
+
+  // 2. 执行坐标变换与目标值计算
+  if (new_level == auv::motion::ControlLevel::POSITION) {
+    float converted_val[4];
+    if (is_body) {
+      // 传入机体系位置设定（转换为世界系绝对或增量目标）
+      auv::motion::motion_context.transformBodyToWorld(new_level, val,
+                                                       converted_val, is_inc);
+    }
+    const float *target_val = is_body ? converted_val : val;
+
+    for (int i = 0; i < 4; i++) {
+      if (!(mask & (1 << i))) {
+        if (is_inc) {
+          auv::motion::motion_context.current_setpoint.pos_world[i] += target_val[i];
+        } else {
+          auv::motion::motion_context.current_setpoint.pos_world[i] = target_val[i];
+        }
+      }
+    }
+  } else if (new_level == auv::motion::ControlLevel::VELOCITY) {
+    float converted_val[4];
+    if (!is_body) {
+      // 传入世界系速度目标（转换为机体系绝对或增量目标）
+      auv::motion::motion_context.transformWorldToBody(new_level, val,
+                                                       converted_val, is_inc);
+    }
+    const float *target_val = is_body ? val : converted_val;
+
+    for (int i = 0; i < 4; i++) {
+      if (!(mask & (1 << i))) {
+        if (is_inc) {
+          auv::motion::motion_context.current_setpoint.vel_body[i] += target_val[i];
+        } else {
+          auv::motion::motion_context.current_setpoint.vel_body[i] = target_val[i];
+        }
+      }
+    }
+  } else if (new_level == auv::motion::ControlLevel::ACTUATOR) {
+    float converted_val[4];
+    if (!is_body) {
+      // 传入世界系推力目标（转换为机体系绝对或增量目标）
+      auv::motion::motion_context.transformWorldToBody(new_level, val,
+                                                       converted_val, is_inc);
+    }
+    const float *target_val = is_body ? val : converted_val;
+
+    for (int i = 0; i < 4; i++) {
+      if (!(mask & (1 << i))) {
+        if (is_inc) {
+          auv::motion::motion_context.current_setpoint.thrust_body[i] += target_val[i];
+        } else {
+          auv::motion::motion_context.current_setpoint.thrust_body[i] = target_val[i];
+        }
+      }
+    }
+  }
+
+  setControlLevel(new_level);
+}
+
 void ChassisManager::setControlLevel(auv::motion::ControlLevel new_level) {
   if (new_level == level_)
     return;

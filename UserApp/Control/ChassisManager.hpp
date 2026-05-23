@@ -64,10 +64,21 @@ public:
     void configureProfile(int axis, float max_v, float max_a);
 
     /**
-     * @brief 切换控制层级 (Bumpless Transfer)
+     * @brief 更新底盘目标设定值并切换控制层级
+     * @param new_level 目标控制层级
+     * @param val 设定值数组 [X, Y, Z, Yaw]
+     * @param mask 掩码
+     * @param is_body 是否为机体系
+     * @param is_inc 是否为增量设定
+     */
+    void updateSetpoint(auv::motion::ControlLevel new_level, const float val[4], uint32_t mask, bool is_body, bool is_inc);
+
+    /**
+     * @brief 切换控制层级 (Bumpless Transition)
      * @param new_level 目标控制层级
      */
     void setControlLevel(auv::motion::ControlLevel new_level);
+
 
 private:
     auv::motion::ControlLevel level_ = auv::motion::ControlLevel::NONE;

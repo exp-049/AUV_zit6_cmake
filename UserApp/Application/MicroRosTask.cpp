@@ -1,8 +1,8 @@
 #include "MicroRosTask.hpp"
 #include "AppMain.hpp"
 #include "MotionContext.hpp"
-#include "SystemContext.hpp"
 #include "SoftWatchdog.hpp"
+#include "SystemContext.hpp"
 #include "task.h"
 #include <rcl/error_handling.h>
 #include <rcl/rcl.h>
@@ -67,17 +67,17 @@ void MicroRosTask::onZitSetpoint(const void *msgin) {
 
   auv::motion::ControlLevel new_level;
   switch (level_idx) {
-    case 0:
-      new_level = auv::motion::ControlLevel::POSITION;
-      break;
-    case 1:
-      new_level = auv::motion::ControlLevel::VELOCITY;
-      break;
-    case 2:
-      new_level = auv::motion::ControlLevel::ACTUATOR;
-      break;
-    default:
-      return;
+  case 0:
+    new_level = auv::motion::ControlLevel::POSITION;
+    break;
+  case 1:
+    new_level = auv::motion::ControlLevel::VELOCITY;
+    break;
+  case 2:
+    new_level = auv::motion::ControlLevel::ACTUATOR;
+    break;
+  default:
+    return;
   }
 
   bool is_body = (msg->control_key & 0x10) != 0;
@@ -105,95 +105,8 @@ void MicroRosTask::onZitSetpoint(const void *msgin) {
   auv::motion::motion_context.raw_setpoint.is_body = is_body;
   auv::motion::motion_context.raw_setpoint.is_incremental = is_inc;
 
-  // 2. 模式切换对齐 (Bumpless Transition / Anti-Leakage)
-  if (new_level != auv::control::chassis.getControlLevel()) {
-    if (new_level == auv::motion::ControlLevel::POSITION) {
-      for (int i = 0; i < 4; i++) {
-        auv::motion::motion_context.current_setpoint.pos_world[i] = nav.pos_world[i];
-      }
-    } else if (new_level == auv::motion::ControlLevel::VELOCITY) {
-      for (int i = 0; i < 4; i++) {
-        auv::motion::motion_context.current_setpoint.vel_body[i] = nav.vel_body[i];
-      }
-    }
-  }
-
-  // 3. 执行坐标变换与目标值计算
-  if (new_level == auv::motion::ControlLevel::POSITION) {
-    float converted_val[4];
-    if (is_body) {
-      // 传入机体系位置设定（转换为世界系绝对或增量目标）
-      auv::motion::motion_context.transformBodyToWorld(new_level, val, converted_val, is_inc);
-    }
-
-    for (int i = 0; i < 4; i++) {
-      if (!(mask & (1 << i))) {
-        if (is_inc) {
-          if (is_body) {
-            auv::motion::motion_context.current_setpoint.pos_world[i] += converted_val[i];
-          } else {
-            auv::motion::motion_context.current_setpoint.pos_world[i] += val[i];
-          }
-        } else {
-          if (is_body) {
-            auv::motion::motion_context.current_setpoint.pos_world[i] = converted_val[i];
-          } else {
-            auv::motion::motion_context.current_setpoint.pos_world[i] = val[i];
-          }
-        }
-      }
-    }
-  } else if (new_level == auv::motion::ControlLevel::VELOCITY) {
-    float converted_val[4];
-    if (!is_body) {
-      // 传入世界系速度目标（转换为机体系绝对或增量目标）
-      auv::motion::motion_context.transformWorldToBody(new_level, val, converted_val, is_inc);
-    }
-
-    for (int i = 0; i < 4; i++) {
-      if (!(mask & (1 << i))) {
-        if (is_inc) {
-          if (is_body) {
-            auv::motion::motion_context.current_setpoint.vel_body[i] += val[i];
-          } else {
-            auv::motion::motion_context.current_setpoint.vel_body[i] += converted_val[i];
-          }
-        } else {
-          if (is_body) {
-            auv::motion::motion_context.current_setpoint.vel_body[i] = val[i];
-          } else {
-            auv::motion::motion_context.current_setpoint.vel_body[i] = converted_val[i];
-          }
-        }
-      }
-    }
-  } else if (new_level == auv::motion::ControlLevel::ACTUATOR) {
-    float converted_val[4];
-    if (!is_body) {
-      // 传入世界系推力目标（转换为机体系绝对或增量目标）
-      auv::motion::motion_context.transformWorldToBody(new_level, val, converted_val, is_inc);
-    }
-
-    for (int i = 0; i < 4; i++) {
-      if (!(mask & (1 << i))) {
-        if (is_inc) {
-          if (is_body) {
-            auv::motion::motion_context.current_setpoint.thrust_body[i] += val[i];
-          } else {
-            auv::motion::motion_context.current_setpoint.thrust_body[i] += converted_val[i];
-          }
-        } else {
-          if (is_body) {
-            auv::motion::motion_context.current_setpoint.thrust_body[i] = val[i];
-          } else {
-            auv::motion::motion_context.current_setpoint.thrust_body[i] = converted_val[i];
-          }
-        }
-      }
-    }
-  }
-
-  auv::control::chassis.setControlLevel(new_level);
+  // 2. 更新底盘目标设定值并切换控制层级
+  auv::control::chassis.updateSetpoint(new_level, val, mask, is_body, is_inc);
   taskEXIT_CRITICAL();
 }
 
@@ -204,7 +117,8 @@ void MicroRosTask::onArmHeartbeat(const void *msgin) {
   auv::system::system_context.last_arm_heartbeat_data = msg->data;
   if (!auv::system::system_context.is_system_armed) {
     if (auv::system::system_context.arm_heartbeat_count == 0)
-      auv::system::system_context.arm_start_ms = auv::system::system_context.last_arm_heartbeat_ms;
+      auv::system::system_context.arm_start_ms =
+          auv::system::system_context.last_arm_heartbeat_ms;
     auv::system::system_context.arm_heartbeat_count++;
   }
   taskEXIT_CRITICAL();
@@ -583,20 +497,24 @@ void MicroRosTask::run() {
           auv::motion::NavState nav = auv::motion::motion_context.getNavState();
           taskENTER_CRITICAL();
           status_msg_.is_armed = auv::system::system_context.is_system_armed;
-          status_msg_.arm_mode = (uint8_t)auv::system::system_context.last_arm_heartbeat_data;
+          status_msg_.arm_mode =
+              (uint8_t)auv::system::system_context.last_arm_heartbeat_data;
           status_msg_.control_level =
               (uint8_t)auv::control::chassis.getControlLevel();
-          status_msg_.ins_state = auv::system::system_context.nav_status.imu_state;
-          status_msg_.navigation_ready = auv::system::system_context.getNavigationValid();
+          status_msg_.ins_state =
+              auv::system::system_context.nav_status.imu_state;
+          status_msg_.navigation_ready =
+              auv::system::system_context.getNavigationValid();
           for (int i = 0; i < 4; i++)
-            status_msg_.forces[i] = auv::motion::motion_context.last_output_forces[i];
-          status_msg_.cycle_time_ms = (float)auv::motion::motion_context.last_dt_ms;
+            status_msg_.forces[i] =
+                auv::motion::motion_context.last_output_forces[i];
+          status_msg_.cycle_time_ms =
+              (float)auv::motion::motion_context.last_dt_ms;
           status_msg_.battery_voltage = 0.0f;
           status_msg_.error_flags = 0;
           taskEXIT_CRITICAL();
           rcl_publish(&status_pub_, &status_msg_, NULL);
         }
-
       }
     }
     vTaskDelay(pdMS_TO_TICKS(1));
