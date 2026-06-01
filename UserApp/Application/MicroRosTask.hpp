@@ -18,6 +18,7 @@
 #include <zit6_interfaces/msg/zit_status.h>
 #include <zit6_interfaces/srv/get_params.h>
 #include <zit6_interfaces/srv/update_params.h>
+#include <rcl_interfaces/msg/log.h>
 
 class MicroRosTask {
 public:
@@ -34,7 +35,7 @@ private:
   rclc_executor_t executor_;
   rcl_subscription_t setpoint_sub_, arm_sub_, ins_cmd_sub_, servo_sub_,
       led_sub_;
-  rcl_publisher_t pos_pub_, vel_pub_, thr_pub_, zithbt_pub_, status_pub_;
+  rcl_publisher_t pos_pub_, vel_pub_, thr_pub_, zithbt_pub_, status_pub_, log_pub_;
 
   // 消息 + 缓冲区
   std_msgs__msg__Float32 servo_msg_;
@@ -44,6 +45,7 @@ private:
   zit6_interfaces__msg__ZitStatus status_msg_;
   std_msgs__msg__UInt8 ins_cmd_msg_;
   std_msgs__msg__UInt32 arm_msg_, node_heartbeat_msg_;
+  rcl_interfaces__msg__Log log_msg_;
 
   // services
   rcl_service_t update_params_srv_, get_params_srv_;

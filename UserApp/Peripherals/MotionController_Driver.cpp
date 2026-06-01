@@ -9,11 +9,23 @@ MotionController_Driver::MotionController_Driver(UART_HandleTypeDef *huart,
                                                  ThrustPacket *ext_pkt)
     : huart_(huart), thrust_pkt_ptr_(ext_pkt) {
   initPacket(thrust_pkt_ptr_, 0x01);
+  thrust_pkt_ptr_->Fx = 0.0f;
+  thrust_pkt_ptr_->Fy = 0.0f;
+  thrust_pkt_ptr_->Fz = 0.0f;
+  thrust_pkt_ptr_->Fyaw = 0.0f;
+  thrust_pkt_ptr_->Fpitch = 0.0f;
+  thrust_pkt_ptr_->Froll = 0.0f;
 }
 
 MotionController_Driver::MotionController_Driver(UART_HandleTypeDef *huart)
     : huart_(huart), thrust_pkt_ptr_(&thrust_pkt_internal_) {
   initPacket(thrust_pkt_ptr_, 0x01);
+  thrust_pkt_ptr_->Fx = 0.0f;
+  thrust_pkt_ptr_->Fy = 0.0f;
+  thrust_pkt_ptr_->Fz = 0.0f;
+  thrust_pkt_ptr_->Fyaw = 0.0f;
+  thrust_pkt_ptr_->Fpitch = 0.0f;
+  thrust_pkt_ptr_->Froll = 0.0f;
 }
 
 void MotionController_Driver::publishThrust(float fx, float fy, float fz,

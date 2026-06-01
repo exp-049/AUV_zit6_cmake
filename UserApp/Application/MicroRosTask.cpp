@@ -3,6 +3,7 @@
 #include "MotionContext.hpp"
 #include "SoftWatchdog.hpp"
 #include "SystemContext.hpp"
+#include "RosLogger.hpp"
 #include "task.h"
 #include <rcl/error_handling.h>
 #include <rcl/rcl.h>
@@ -270,6 +271,8 @@ void MicroRosTask::cleanupMicroRos() {
   rcl_publisher_fini(&thr_pub_, &node_);
   rcl_publisher_fini(&zithbt_pub_, &node_);
   rcl_publisher_fini(&status_pub_, &node_);
+  rcl_publisher_fini(&log_pub_, &node_);
+
   rcl_subscription_fini(&setpoint_sub_, &node_);
   rcl_subscription_fini(&arm_sub_, &node_);
   rcl_subscription_fini(&ins_cmd_sub_, &node_);
@@ -355,6 +358,28 @@ void MicroRosTask::run() {
               &status_pub_, &node_,
               ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitStatus),
               "/zit6/state/status");
+
+          // Initialize log publisher and pre-configure message static buffers to avoid dynamic allocation at runtime
+          rcl_interfaces__msg__Log__init(&log_msg_);
+          static char log_msg_buf[128];
+          log_msg_.msg.data = log_msg_buf;
+          log_msg_.msg.capacity = sizeof(log_msg_buf);
+          log_msg_.msg.size = 0;
+          log_msg_.name.data = const_cast<char *>("zit6_node");
+          log_msg_.name.size = 9;
+          log_msg_.name.capacity = 0;
+          log_msg_.file.data = const_cast<char *>("");
+          log_msg_.file.size = 0;
+          log_msg_.file.capacity = 0;
+          log_msg_.function.data = const_cast<char *>("");
+          log_msg_.function.size = 0;
+          log_msg_.function.capacity = 0;
+          log_msg_.line = 0;
+
+          rclc_publisher_init_default(
+              &log_pub_, &node_,
+              ROSIDL_GET_MSG_TYPE_SUPPORT(rcl_interfaces, msg, Log),
+              "/zit6/log");
 
           rclc_subscription_init_default(
               &led_sub_, &node_,
@@ -459,12 +484,33 @@ void MicroRosTask::run() {
       } else
         vTaskDelay(pdMS_TO_TICKS(100));
     } else {
-      // Robust ping: 500ms timeout, 3 failures
-      if (RCL_RET_OK != rmw_uros_ping_agent(500, 3)) {
+      static uint32_t last_ping_ms = 0;
+      bool ping_ok = true;
+      if (now_ms - last_ping_ms >= 2000) {
+        last_ping_ms = now_ms;
+        if (RCL_RET_OK != rmw_uros_ping_agent(100, 1)) {
+          ping_ok = false;
+        }
+      }
+
+      if (!ping_ok) {
         cleanupMicroRos();
         state = WAITING_AGENT;
       } else {
         rclc_executor_spin_some(&executor_, RCL_MS_TO_NS(1));
+
+        // Publish at most one log message per loop iteration to save bandwidth
+        auv::device::RosLogger::LogEntry log_entry;
+        if (auv::device::RosLogger::getInstance().popLog(log_entry)) {
+          std::strncpy(log_msg_.msg.data, log_entry.msg, log_msg_.msg.capacity - 1);
+          log_msg_.msg.data[log_msg_.msg.capacity - 1] = '\0';
+          log_msg_.msg.size = std::strlen(log_msg_.msg.data);
+          log_msg_.level = log_entry.level;
+          log_msg_.stamp.sec = now_ms / 1000;
+          log_msg_.stamp.nanosec = (now_ms % 1000) * 1000000;
+          rcl_publish(&log_pub_, &log_msg_, NULL);
+        }
+
         if (now_ms - last_hbt_pub_tick >= 1000) {
           last_hbt_pub_tick = now_ms;
           node_heartbeat_msg_.data = now_ms;

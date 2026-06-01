@@ -30,10 +30,6 @@ public:
     // 发送数据 (DMA 方式)
     bool transmit(const uint8_t* data, uint16_t len);
 
-    // 调试专用：通过 UART5 使用 DMA 非阻塞发送。
-    // 如果 `huart5.gState` 非 `HAL_UART_STATE_READY` 则直接丢弃并返回 false。
-    static bool transmitDebug(const uint8_t* data, uint16_t len);
-
     // 从循环缓冲区读取新数据，返回读取到的字节数
     uint16_t read(uint8_t* out_buf, uint16_t max_len);
 

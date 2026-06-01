@@ -6,20 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace {
-constexpr float kPi = 3.14159265f;
-constexpr float kTwoPi = 6.2831853f;
-
-float wrapAngle(float angle) {
-  if (angle > kPi || angle < -kPi) {
-    angle = std::fmod(angle + kPi, kTwoPi);
-    if (angle < 0.0f)
-      angle += kTwoPi;
-    angle -= kPi;
-  }
-  return angle;
-}
-} // namespace
+// Empty anonymous namespace
 
 namespace auv {
 namespace control {
@@ -144,6 +131,7 @@ void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level, const f
         }
       }
     }
+    sp.pos_world[3] = auv::motion::MotionContext::wrapAngle(sp.pos_world[3]);
   } else if (new_level == auv::motion::ControlLevel::VELOCITY) {
     float converted_val[4];
     if (!is_body) {
@@ -245,32 +233,28 @@ std::array<float, 4> ChassisManager::update() {
 
   for (int i = 0; i < 4; i++) {
     if (level_ == auv::motion::ControlLevel::POSITION) {
-      ProfileState d;
+      ProfileState profile_target;
       if (config_.planner_enabled) {
         if (i == 3) {
           float current = profiles_[i].getState().p;
-          float target_yaw = current + wrapAngle(target.pos_world[i] - current);
-          d = profiles_[i].update(target_yaw, dt);
+          float target_yaw = current + auv::motion::MotionContext::wrapAngle(target.pos_world[i] - current);
+          profile_target = profiles_[i].update(target_yaw, dt);
         } else {
-          d = profiles_[i].update(target.pos_world[i], dt);
+          profile_target = profiles_[i].update(target.pos_world[i], dt);
         }
       } else {
-        d.p = target.pos_world[i];
-        d.v = 0.0f;
-        d.a = 0.0f;
-        if (i == 3) {
-          float actual_yaw = actual_p[i];
-          d.p = actual_yaw + wrapAngle(target.pos_world[i] - actual_yaw);
-        }
+        profile_target.p = target.pos_world[i];
+        profile_target.v = 0.0f;
+        profile_target.a = 0.0f;
       }
 
       // 位置环的导数项应使用世界系下的速度误差 (v_ref_world - v_actual_world)
       float actual_v_world_val = (i < 2) ? actual_v_world_now[i] : actual_v[i];
-      float pos_derivative = d.v - actual_v_world_val;
-      float pos_error = d.p - actual_p[i];
+      float pos_derivative = profile_target.v - actual_v_world_val;
+      float pos_error = profile_target.p - actual_p[i];
       if (i == 3)
-        pos_error = wrapAngle(pos_error);
-      float v_target_world_val = pos_pids_[i].compute(pos_error, dt, pos_derivative) + d.v;
+        pos_error = auv::motion::MotionContext::wrapAngle(pos_error);
+      float v_target_world_val = pos_pids_[i].compute(pos_error, dt, pos_derivative) + profile_target.v;
 
       if (i >= 2) {
         v_target_body[i] = v_target_world_val;

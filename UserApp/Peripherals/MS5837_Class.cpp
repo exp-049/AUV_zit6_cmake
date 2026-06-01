@@ -268,5 +268,18 @@ MS5837::~MS5837()
 {
 }
 
+float MS5837::getMS5837Z() {
+    float z = 0.0f;
+    Depth(&z);
+    return z;
+}
+
+void MS5837::setMS5837Z(float z) {
+    taskENTER_CRITICAL();
+    last_valid_depth = z;
+    has_valid_depth = true;
+    taskEXIT_CRITICAL();
+}
+
 } // namespace device
 } // namespace auv

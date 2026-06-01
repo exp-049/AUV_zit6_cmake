@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <cmath>
 #include <array>
+#include "FreeRTOS.h"
+#include "task.h"
 
 namespace auv {
 namespace motion {
@@ -78,28 +80,109 @@ struct Constants {
 
 class MotionContext {
 public:
+    static float wrapAngle(float angle);
+
     void transformBodyToWorld(ControlLevel level, const float body_in[4], float world_out[4], bool is_inc) const;
     void transformWorldToBody(ControlLevel level, const float world_in[4], float body_out[4], bool is_inc) const;
 
     // 线程安全存取接口
-    NavState getNavState() const;
-    void setNavState(const NavState& state);
+    NavState getNavState() const {
+        NavState state;
+        taskENTER_CRITICAL();
+        state = nav_state;
+        taskEXIT_CRITICAL();
+        return state;
+    }
 
-    TargetSetpoint getCurrentSetpoint() const;
-    void updateSetpoint(const TargetSetpoint& sp);
-    void resetSetpoint();
+    void setNavState(const NavState& state) {
+        taskENTER_CRITICAL();
+        nav_state = state;
+        taskEXIT_CRITICAL();
+    }
 
-    RawSetpoint getRawSetpoint() const;
-    void setRawSetpoint(const RawSetpoint& sp);
+    TargetSetpoint getCurrentSetpoint() const {
+        TargetSetpoint sp;
+        taskENTER_CRITICAL();
+        sp = current_setpoint;
+        taskEXIT_CRITICAL();
+        return sp;
+    }
 
-    float getLastDtMs() const;
-    void setLastDtMs(float dt);
+    void updateSetpoint(const TargetSetpoint& sp) {
+        taskENTER_CRITICAL();
+        current_setpoint = sp;
+        taskEXIT_CRITICAL();
+    }
 
-    uint32_t getLastReceivedSeq() const;
-    void setLastReceivedSeq(uint32_t seq);
+    void resetSetpoint() {
+        taskENTER_CRITICAL();
+        for (int i = 0; i < 4; ++i) {
+            current_setpoint.pos_world[i] = 0.0f;
+            current_setpoint.vel_body[i] = 0.0f;
+            current_setpoint.thrust_body[i] = 0.0f;
+        }
+        taskEXIT_CRITICAL();
+    }
 
-    std::array<float, 4> getLastOutputForces() const;
-    void setLastOutputForces(const std::array<float, 4>& forces);
+    RawSetpoint getRawSetpoint() const {
+        RawSetpoint sp;
+        taskENTER_CRITICAL();
+        sp = raw_setpoint;
+        taskEXIT_CRITICAL();
+        return sp;
+    }
+
+    void setRawSetpoint(const RawSetpoint& sp) {
+        taskENTER_CRITICAL();
+        raw_setpoint = sp;
+        taskEXIT_CRITICAL();
+    }
+
+    float getLastDtMs() const {
+        float dt;
+        taskENTER_CRITICAL();
+        dt = last_dt_ms;
+        taskEXIT_CRITICAL();
+        return dt;
+    }
+
+    void setLastDtMs(float dt) {
+        taskENTER_CRITICAL();
+        last_dt_ms = dt;
+        taskEXIT_CRITICAL();
+    }
+
+    uint32_t getLastReceivedSeq() const {
+        uint32_t seq;
+        taskENTER_CRITICAL();
+        seq = last_received_seq;
+        taskEXIT_CRITICAL();
+        return seq;
+    }
+
+    void setLastReceivedSeq(uint32_t seq) {
+        taskENTER_CRITICAL();
+        last_received_seq = seq;
+        taskEXIT_CRITICAL();
+    }
+
+    std::array<float, 4> getLastOutputForces() const {
+        std::array<float, 4> forces;
+        taskENTER_CRITICAL();
+        for (int i = 0; i < 4; ++i) {
+            forces[i] = last_output_forces[i];
+        }
+        taskEXIT_CRITICAL();
+        return forces;
+    }
+
+    void setLastOutputForces(const std::array<float, 4>& forces) {
+        taskENTER_CRITICAL();
+        for (int i = 0; i < 4; ++i) {
+            last_output_forces[i] = forces[i];
+        }
+        taskEXIT_CRITICAL();
+    }
 
     // 坐标偏置变量及设置接口
     bool use_offset_ = false;
@@ -111,14 +194,10 @@ public:
     void setHomeOffset(float x, float y, float z, float yaw);
     void clearHomeOffset();
 
-    float getMS5837Z() const;
-    void setMS5837Z(float z);
-
 private:
     NavState nav_state{};               ///< 实时真实位姿速度状态
     TargetSetpoint current_setpoint{};  ///< 当前控制目标设定值
     RawSetpoint raw_setpoint{};         ///< 原始 AGX 设定值快照
-    float current_depth_z_ = 0.0f;
     float last_dt_ms = 0.0f;
     uint32_t last_received_seq = 0;
     float last_output_forces[4] = {0.0f, 0.0f, 0.0f, 0.0f};

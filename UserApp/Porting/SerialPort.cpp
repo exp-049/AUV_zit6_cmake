@@ -28,13 +28,6 @@ bool SerialPort::transmit(const uint8_t* data, uint16_t len) {
     return HAL_UART_Transmit_DMA(huart_, const_cast<uint8_t*>(data), len) == HAL_OK;
 }
 
-bool SerialPort::transmitDebug(const uint8_t* data, uint16_t len) {
-    if (huart5.gState != HAL_UART_STATE_READY) {
-        return false;
-    }
-    return HAL_UART_Transmit_DMA(&huart5, const_cast<uint8_t*>(data), len) == HAL_OK;
-}
-
 uint16_t SerialPort::read(uint8_t* out_buf, uint16_t max_len) {
     // Invalidate D-Cache to ensure the CPU reads the data actually written by DMA to RAM
     SCB_InvalidateDCache_by_Addr((uint32_t*)rx_buffer_ptr_, rx_buf_size_);

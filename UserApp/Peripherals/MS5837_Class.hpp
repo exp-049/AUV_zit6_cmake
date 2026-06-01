@@ -70,6 +70,8 @@ public:
     // Lower value -> higher sample rate but may risk conversion not finished.
     void setConversionDelay(uint16_t ms) { conv_delay_ms = ms; }
     void Depth(float *p);
+    float getMS5837Z();
+    void setMS5837Z(float z);
     
     inline void altitude(float *p);
     // Internal non-blocking conversion state

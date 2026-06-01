@@ -93,6 +93,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     UserApp/Peripherals/INS_Driver.cpp
     UserApp/Peripherals/MotionController_Driver.cpp
     UserApp/Peripherals/MS5837_Class.cpp
+    UserApp/Peripherals/RosLogger.cpp
     UserApp/Porting/SerialPort.cpp
     UserApp/Porting/cJSON.c
     UserApp/Control/ChassisManager.cpp
