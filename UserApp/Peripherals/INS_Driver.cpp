@@ -1,6 +1,7 @@
 #include "INS_Driver.hpp"
 #include "SystemContext.hpp"
 #include "SoftWatchdog.hpp"
+#include "RosLogger.hpp"
 #include <cmath>
 
 namespace auv {
@@ -89,7 +90,16 @@ void INS_Driver::setInitialPosition(double lat, double lon) {
 }
 
 bool INS_Driver::isDataFresh() const {
-  return (HAL_GetTick() - last_update_ms_ < 200);
+  bool fresh = (HAL_GetTick() - last_update_ms_ < 200);
+  if (!fresh) {
+    static uint32_t last_warn_ms = 0;
+    uint32_t now = HAL_GetTick();
+    if (now - last_warn_ms >= 2000) {
+      last_warn_ms = now;
+      ROS_LOG_WARN("INS data timeout! last update was %lu ms ago", (unsigned long)(now - last_update_ms_));
+    }
+  }
+  return fresh;
 }
 
 bool INS_Driver::update(auv::motion::NavState &state) {

@@ -221,26 +221,28 @@ std::array<float, 4> ChassisManager::update() {
   auto nav = auv::motion::motion_context.getNavState();
   auto target = auv::motion::motion_context.getCurrentSetpoint();
 
-  const float *actual_p = nav.pos_world;
-  const float *actual_v = nav.vel_body;
+  const float *actual_p_world = nav.pos_world;
+  const float *actual_v_body = nav.vel_body;
 
   // 计算世界系下的实际速度（用于位置环微分项）
-  float actual_v_world_now[4];
+  float actual_v_world[4];
   auv::motion::motion_context.transformBodyToWorld(
-      auv::motion::ControlLevel::VELOCITY, actual_v, actual_v_world_now, false);
+      auv::motion::ControlLevel::VELOCITY, actual_v_body, actual_v_world, false);
 
   float v_target_body[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  //pos->vel  
+  if (level_ == auv::motion::ControlLevel::POSITION) {
+    float v_target_world[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
-  for (int i = 0; i < 4; i++) {
-    if (level_ == auv::motion::ControlLevel::POSITION) {
+    for (int i = 0; i < 4; i++) {
       ProfileState profile_target;
       if (config_.planner_enabled) {
         if (i == 3) {
           float current = profiles_[i].getState().p;
-          float target_yaw = current + auv::motion::MotionContext::wrapAngle(target.pos_world[i] - current);
-          profile_target = profiles_[i].update(target_yaw, dt);
+          float target_yaw = current + auv::motion::MotionContext::wrapAngle(target.pos_world[i] - current);//启用规划器时，航向采用最短旋转路径目标值
+          profile_target = profiles_[i].updatePosition(target_yaw, dt);
         } else {
-          profile_target = profiles_[i].update(target.pos_world[i], dt);
+          profile_target = profiles_[i].updatePosition(target.pos_world[i], dt);
         }
       } else {
         profile_target.p = target.pos_world[i];
@@ -249,49 +251,27 @@ std::array<float, 4> ChassisManager::update() {
       }
 
       // 位置环的导数项应使用世界系下的速度误差 (v_ref_world - v_actual_world)
-      float actual_v_world_val = (i < 2) ? actual_v_world_now[i] : actual_v[i];
-      float pos_derivative = profile_target.v - actual_v_world_val;
-      float pos_error = profile_target.p - actual_p[i];
+      float pos_derivative = profile_target.v - actual_v_world[i];
+      float pos_error = profile_target.p - actual_p_world[i];
       if (i == 3)
         pos_error = auv::motion::MotionContext::wrapAngle(pos_error);
-      float v_target_world_val = pos_pids_[i].compute(pos_error, dt, pos_derivative) + profile_target.v;
+      v_target_world[i] = pos_pids_[i].compute(pos_error, dt, pos_derivative) + profile_target.v;
+    }
 
-      if (i >= 2) {
-        v_target_body[i] = v_target_world_val;
-      }
-      
-      // 临时保存 X/Y 的世界系目标速度，并在算完 Y 后整体旋转至机体系
-      static float temp_v_target_world[2];
-      if (i < 2) {
-        temp_v_target_world[i] = v_target_world_val;
-      }
-      if (i == 1) {
-        float temp_v_w[4] = {temp_v_target_world[0], temp_v_target_world[1], 0.0f, 0.0f};
-        float temp_v_b[4];
-        auv::motion::motion_context.transformWorldToBody(
-            auv::motion::ControlLevel::VELOCITY, temp_v_w, temp_v_b, false);
-        v_target_body[0] = temp_v_b[0];
-        v_target_body[1] = temp_v_b[1];
-      }
-    } else if (level_ == auv::motion::ControlLevel::VELOCITY) {
-      // 速度环：直接跟踪机体系目标
-      ProfileState d;
+    auv::motion::motion_context.transformWorldToBody(
+        auv::motion::ControlLevel::VELOCITY, v_target_world, v_target_body, false);
+
+  } else if (level_ == auv::motion::ControlLevel::VELOCITY) {
+    // 速度环：直接跟踪机体系目标
+    for (int i = 0; i < 4; i++) {
       if (config_.planner_enabled) {
-        d = profiles_[i].updateVelocity(target.vel_body[i], dt);
+        v_target_body[i] = profiles_[i].updateVelocity(target.vel_body[i], dt).v;
       } else {
-        d.p = 0.0f;
-        d.v = target.vel_body[i];
-        d.a = 0.0f;
+        v_target_body[i] = target.vel_body[i];
       }
-      v_target_body[i] = d.v;
     }
   }
-
-  // 获取当前机体系下的实际速度（用于速度环计算）
-  float actual_v_body[4];
-  for (int i = 0; i < 4; i++)
-    actual_v_body[i] = actual_v[i];
-
+  //vel->thr
   for (int i = 0; i < 4; i++) {
     float f_base = 0.0f;
     if (level_ == auv::motion::ControlLevel::POSITION ||
@@ -312,10 +292,12 @@ std::array<float, 4> ChassisManager::update() {
       f_base = vel_pids_[i].compute(v_target_body[i] - actual_v_body[i], dt,
                                     vel_derivative);
 
-      // 前馈补偿：F_ff = mass * a_ref + drag * v_ref
-      float f_ff_accel = axis_cfg.mass * a_ref;
-      float f_ff_drag = axis_cfg.drag * v_target_body[i];
-      f_base += (f_ff_accel + f_ff_drag);
+      if (config_.planner_enabled) {
+        // 前馈补偿：F_ff = mass * a_ref + drag * v_ref
+        float f_ff_accel = axis_cfg.mass * a_ref;
+        float f_ff_drag = axis_cfg.drag * v_target_body[i];
+        f_base += (f_ff_accel + f_ff_drag);
+      }
     }
     output_forces[i] = f_base + target.thrust_body[i];
     // 强制截断到绝对物理极限 [-1.0, 1.0]

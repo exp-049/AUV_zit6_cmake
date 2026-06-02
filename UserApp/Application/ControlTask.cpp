@@ -31,14 +31,6 @@ void ControlTask::run() {
     handleArmState(now);
     computeAndPublish();
 
-    static uint32_t last_log_ms = 0;
-    if (now - last_log_ms >= 1000) {
-      last_log_ms = now;
-      ROS_LOG_DEBUG("t=%lu dt=%.1f z=%.2f armed=%d",
-                    (unsigned long)now, auv::motion::motion_context.getLastDtMs(),
-                    nav.pos_world[2],
-                    auv::system::system_context.is_system_armed ? 1 : 0);
-    }
     vTaskDelayUntil(&last_wake_time_, pdMS_TO_TICKS(kLoopPeriodMs));
   }
 }
@@ -115,10 +107,7 @@ auv::motion::NavState ControlTask::updateNavigation() {
     state.pos_world[3] -= offset_yaw;
 
     // 航向角归一化
-    while (state.pos_world[3] > 3.14159265f)
-      state.pos_world[3] -= 6.2831853f;
-    while (state.pos_world[3] < -3.14159265f)
-      state.pos_world[3] += 6.2831853f;
+    state.pos_world[3] = auv::motion::MotionContext::wrapAngle(state.pos_world[3]);
   }
 
   // 3. 将融合后的位姿写入全局的 MotionContext
@@ -153,6 +142,7 @@ void ControlTask::handleArmState(uint32_t now) {
   if (armed_snapshot) {
     if (now - heartbeat_snapshot > kArmedHeartbeatTimeoutMs) {
       forceDisarmWithNeutralLevel();
+      ROS_LOG_INFO("System DISARMED - Heartbeat timeout");
     }
     return;
   }
@@ -180,14 +170,7 @@ void ControlTask::handleArmState(uint32_t now) {
     if (can_arm) {
       taskENTER_CRITICAL();
       if (!auv::system::system_context.is_system_armed) {
-        // 解锁瞬间的行为锁定：
-        // 1. 锁定仿真模式状态：如果在此时开启了仿真，则整个 Arm
-        // 周期都应维持仿真 (此处通过 g_sim_inited 标志位配合 sys_config
-        // 实现逻辑锁定)
 
-        // 2. 注入偏移以建立“家”坐标系
-        // 注意：在仿真模式下，nav 已经是相对坐标，但 setHomeOffset
-        // 会处理初始对齐
         auto nav_state = auv::motion::motion_context.getNavState();
         auv::motion::motion_context.setHomeOffset(
             nav_state.pos_world[0], nav_state.pos_world[1],
@@ -201,7 +184,6 @@ void ControlTask::handleArmState(uint32_t now) {
 
       ROS_LOG_INFO("System ARMED");
     } else {
-      // 如果是因为导航无效导致的无法解锁，打印提示
       if (hbt_data == 1 && !(auv::system::system_context.getNavigationValid() ||
                              auv::config::sys_config.simulation.hitl_enabled)) {
         static uint32_t last_warn_ms = 0;

@@ -111,6 +111,9 @@ void MicroRosTask::onZitSetpoint(const void *msgin) {
   // 2. 更新底盘目标设定值并切换控制层级
   auv::control::chassis.updateSetpoint(new_level, val, mask, is_body, is_inc);
   taskEXIT_CRITICAL();
+
+  ROS_LOG_INFO("Setpoint rec: seq=%lu x=%.2f y=%.2f z=%.2f yaw=%.2f",
+               (unsigned long)msg->seq, msg->x, msg->y, msg->z, msg->yaw);
 }
 
 void MicroRosTask::onArmHeartbeat(const void *msgin) {
@@ -134,20 +137,28 @@ void MicroRosTask::onInsCommand(const void *msgin) {
   switch (message->data) {
   case 1:
     auv::device::ins_driver.setDvlPower(true);
+    ROS_LOG_INFO("INS Cmd: DVL Power ON");
     break;
   case 2:
     auv::device::ins_driver.setDvlPower(false);
+    ROS_LOG_INFO("INS Cmd: DVL Power OFF");
     break;
   case 3:
     auv::device::ins_driver.restart();
+    ROS_LOG_INFO("INS Cmd: INS Restart");
     break;
   case 4:
     auv::device::ins_driver.resetPosition();
+    ROS_LOG_INFO("INS Cmd: Reset Position");
     break;
   case 5:
     auv::device::ins_driver.setInitialPosition(
         auv::config::sys_config.ins.init_lat,
         auv::config::sys_config.ins.init_lon);
+    ROS_LOG_INFO("INS Cmd: Set Initial Position");
+    break;
+  default:
+    ROS_LOG_WARN("INS Cmd: Unknown cmd %d", message->data);
     break;
   }
 }
@@ -155,11 +166,13 @@ void MicroRosTask::onInsCommand(const void *msgin) {
 void MicroRosTask::onServoCmd(const void *msgin) {
   const auto *msg = (const std_msgs__msg__Float32 *)msgin;
   auv::device::motor_driver.setServoAngle(msg->data);
+  ROS_LOG_INFO("Servo Cmd: angle=%.2f", msg->data);
 }
 
 void MicroRosTask::onLedCmd(const void *msgin) {
   const auto *msg = (const std_msgs__msg__UInt8 *)msgin;
   auv::device::motor_driver.setLightState(msg->data);
+  ROS_LOG_INFO("LED Cmd: state=%d", msg->data);
 }
 
 void MicroRosTask::onUpdateParams(const void *reqin, rmw_request_id_t *req_id,
@@ -187,6 +200,9 @@ void MicroRosTask::onUpdateParams(const void *reqin, rmw_request_id_t *req_id,
   // 如果参数中有 PID 相关修改，同步到控制算法
   if (res->success) {
     auv::control::chassis.applyConfig(auv::config::sys_config.chassis);
+    ROS_LOG_INFO("Params updated: %s", out_buf);
+  } else {
+    ROS_LOG_WARN("Params update failed: %s", out_buf);
   }
 
   rosidl_runtime_c__String__assign(&res->message, out_buf);
@@ -214,9 +230,11 @@ void MicroRosTask::onGetParams(const void *reqin, rmw_request_id_t *req_id,
   res->success = true;
   rosidl_runtime_c__String__assign(&res->config_json, json_res);
   rosidl_runtime_c__String__assign(&res->message, "ok");
+  ROS_LOG_INFO("Params queried: count=%d", (int)count);
 }
 
 void MicroRosTask::cleanupMicroRos() {
+  ROS_LOG_INFO("micro-ROS resources cleaned up (Agent disconnected)");
   rclc_executor_fini(&executor_);
   // free pre-allocated request/response buffers
   if (get_req_.paths.data) {
@@ -359,7 +377,6 @@ void MicroRosTask::run() {
               ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitStatus),
               "/zit6/state/status");
 
-          // Initialize log publisher and pre-configure message static buffers to avoid dynamic allocation at runtime
           rcl_interfaces__msg__Log__init(&log_msg_);
           static char log_msg_buf[128];
           log_msg_.msg.data = log_msg_buf;
@@ -448,7 +465,6 @@ void MicroRosTask::run() {
             (void)rc;
           }
 
-          // Initialize get_params service and check return codes
           {
             rcl_ret_t rc = rclc_service_init_default(
                 &get_params_srv_, &node_,
@@ -456,11 +472,7 @@ void MicroRosTask::run() {
                 "/zit6/get_params");
             (void)rc;
             zit6_interfaces__srv__GetParams_Request__init(&get_req_);
-            // pre-initialize paths sequence to avoid NULL data pointer on
-            // incoming requests
             rosidl_runtime_c__String__Sequence__init(&get_req_.paths, 8);
-            // allocate per-element string buffers to give rmw a place to write
-            // incoming path strings
             if (get_req_.paths.data) {
               for (size_t _i = 0; _i < get_req_.paths.capacity; ++_i) {
                 get_req_.paths.data[_i].data =

@@ -68,7 +68,7 @@ public:
      * @param dt 积分步长 (0.01s)
      * @return 最新的演进状态
      */
-    ProfileState update(float target_p, float dt);
+    ProfileState updatePosition(float target_p, float dt);
 
     /**
      * @brief 速度跟踪演进

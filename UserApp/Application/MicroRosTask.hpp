@@ -26,7 +26,6 @@ public:
   void run();
 
 private:
-  // 单例指针，用于把 C 风格回调转发到当前对象
   static MicroRosTask *instance_;
 
   // micro-ROS 实体

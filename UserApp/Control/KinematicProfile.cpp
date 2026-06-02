@@ -27,7 +27,7 @@ ProfileState KinematicProfile::updateVelocity(float target_v, float dt) {
 
     return state_;
 }
-ProfileState KinematicProfile::update(float target_p, float dt) {
+ProfileState KinematicProfile::updatePosition(float target_p, float dt) {
     if (dt <= 0.0f || limits_.max_v <= 0.0f || limits_.max_a <= 0.0f) {
         state_.a = 0.0f;
         state_.v = 0.0f;
