@@ -104,10 +104,12 @@ auv::motion::NavState ControlTask::updateNavigation() {
     state.pos_world[0] = dx * cos_h + dy * sin_h;
     state.pos_world[1] = -dx * sin_h + dy * cos_h;
     state.pos_world[2] -= offset_z;
-    state.pos_world[3] -= offset_yaw;
+    state.pos_world[5] -= offset_yaw;  // Yaw 偏移
 
-    // 航向角归一化
-    state.pos_world[3] = auv::motion::MotionContext::wrapAngle(state.pos_world[3]);
+    // 角度归一化（Roll/Pitch/Yaw）
+    for (int i = 3; i < 6; i++) {
+      state.pos_world[i] = auv::motion::MotionContext::wrapAngle(state.pos_world[i]);
+    }
   }
 
   // 3. 将融合后的位姿写入全局的 MotionContext
@@ -174,7 +176,10 @@ void ControlTask::handleArmState(uint32_t now) {
         auto nav_state = auv::motion::motion_context.getNavState();
         auv::motion::motion_context.setHomeOffset(
             nav_state.pos_world[0], nav_state.pos_world[1],
-            nav_state.pos_world[2], nav_state.pos_world[3]);
+            nav_state.pos_world[2],
+            nav_state.pos_world[3],  // Roll
+            nav_state.pos_world[4],  // Pitch
+            nav_state.pos_world[5]); // Yaw
 
         // 3. 锁定控制器目标为当前点（即新坐标系的 0 点）
         auv::motion::motion_context.resetSetpoint();
@@ -206,21 +211,27 @@ void ControlTask::handleArmState(uint32_t now) {
 }
 
 void ControlTask::computeAndPublish() {
-  auto forces = auv::control::chassis.update();
+  auto forces4 = auv::control::chassis.update();
 
   // 如果满足仿真锁定状态，将计算出的推力喂回仿真引擎
   if (auv::config::sys_config.simulation.hitl_enabled) {
-    g_hitl_sim.step(forces);
+    g_hitl_sim.step(forces4);
   }
 
-  auv::motion::motion_context.setLastOutputForces(forces);
+  // 4DOF → 6DOF 转换（Step 5 后 chassis.update() 将直接返回 6DOF）
+  std::array<float, 6> forces6;
+  for (int i = 0; i < 4; i++) forces6[i] = forces4[i];
+  forces6[4] = 0.0f;  // Pitch 推力暂为 0
+  forces6[5] = 0.0f;  // Roll 推力暂为 0
+  auv::motion::motion_context.setLastOutputForces(forces6);
+
   taskENTER_CRITICAL();
   const bool armed = auv::system::system_context.is_system_armed;
   taskEXIT_CRITICAL();
 
   if (armed) {
-    auv::device::motor_driver.publishThrust(forces[0], forces[1], forces[2],
-                                            forces[3]);
+    auv::device::motor_driver.publishThrust(forces4[0], forces4[1], forces4[2],
+                                            forces4[3]);
   } else {
     auv::device::motor_driver.publishThrust(0, 0, 0, 0);
   }

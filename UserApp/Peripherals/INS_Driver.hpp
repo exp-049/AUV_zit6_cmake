@@ -86,7 +86,8 @@ private:
 
   static constexpr uint16_t kMaxFrameSize = 256;
   static constexpr uint16_t kMinFrameSize = 133;
-  uint8_t packet_buf_[kMaxFrameSize] = {0}; ///< 帧解析临时缓冲区
+  /// 帧解析临时缓冲区（4 字节对齐，确保 memmove/memcpy 使用 32 位总线）
+  __attribute__((aligned(4))) uint8_t packet_buf_[kMaxFrameSize] = {0};
   uint16_t frame_len_ = 0;                  ///< 当前解析长度
 
   auv::motion::NavState state_{};      ///< 缓存的最新有效位姿状态

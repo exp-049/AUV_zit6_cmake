@@ -7,6 +7,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "RosLogger.hpp"
+#include "MathUtils.hpp"
 
 
 namespace auv {
@@ -25,26 +26,27 @@ enum class ControlLevel : uint8_t {
 
 /**
  * @struct NavState
- * @brief 6-DOF 导航状态结构体，字段排列与 TargetSetpoint 格式对齐
+ * @brief 6-DOF 导航状态结构体
+ *
+ * 索引约定（与 MathUtils::Axis 一致）：
+ *   [0]=X, [1]=Y, [2]=Z, [3]=Roll, [4]=Pitch, [5]=Yaw
+ *
+ * 世界系坐标采用 NED (North-East-Down) 惯例。
+ * 机体系坐标采用 FRD (Front-Right-Down) 惯例。
  */
 struct NavState {
-    float pos_world[4] = {0.0f, 0.0f, 0.0f, 0.0f};  ///< 世界系位置/角度 [X, Y, Z, Yaw]
-    float roll = 0.0f;                              ///< 横滚角 (rad)
-    float pitch = 0.0f;                             ///< 俯仰角 (rad)
-    
-    float vel_body[4] = {0.0f, 0.0f, 0.0f, 0.0f};   ///< 机体系速度/角速度 [vx, vy, vz, vyaw]
-    float vroll = 0.0f;                             ///< 横滚角速度 (rad/s)
-    float vpitch = 0.0f;                            ///< 俯仰角速度 (rad/s)
+    std::array<float, 6> pos_world = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};  ///< NED: [x, y, z, φ, θ, ψ]
+    std::array<float, 6> vel_body  = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};  ///< FRD: [u, v, w, p, q, r]
 };
 
 /**
  * @struct TargetSetpoint
- * @brief 管理级联控制中各层级的目标设定值
+ * @brief 管理级联控制中各层级的目标设定值（6DOF）
  */
 struct TargetSetpoint {
-    float pos_world[4] = {0.0f, 0.0f, 0.0f, 0.0f};   // 世界系目标位置/角度 [X, Y, Z, Yaw]
-    float vel_body[4] = {0.0f, 0.0f, 0.0f, 0.0f};    // 机体系目标速度/角速度 [vx, vy, vz, vyaw]
-    float thrust_body[4] = {0.0f, 0.0f, 0.0f, 0.0f};  // 机体系目标推力 [Fx, Fy, Fz, Myaw]
+    std::array<float, 6> pos_world   = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};  ///< 世界系目标 [x, y, z, φ, θ, ψ]
+    std::array<float, 6> vel_body    = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};  ///< 机体系速度 [u, v, w, p, q, r]
+    std::array<float, 6> thrust_body = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};  ///< 机体系推力 [Fx, Fy, Fz, Mk, Mm, Mn]
 };
 
 /**
@@ -84,8 +86,13 @@ class MotionContext {
 public:
     static float wrapAngle(float angle);
 
+    // 旧 4DOF 变换接口（过渡期保留，Step 4 替换为 6DOF 矩阵版本）
     void transformBodyToWorld(ControlLevel level, const float body_in[4], float world_out[4], bool is_inc) const;
     void transformWorldToBody(ControlLevel level, const float world_in[4], float body_out[4], bool is_inc) const;
+
+    // 新 6DOF 变换接口（准备接入 MathUtils 矩阵）
+    void transformBodyToWorld6(const float body_in[6], float world_out[6]) const;
+    void transformWorldToBody6(const float world_in[6], float body_out[6]) const;
 
     // 线程安全存取接口
     NavState getNavState() const {
@@ -118,7 +125,7 @@ public:
 
     void resetSetpoint() {
         taskENTER_CRITICAL();
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 6; ++i) {
             current_setpoint.pos_world[i] = 0.0f;
             current_setpoint.vel_body[i] = 0.0f;
             current_setpoint.thrust_body[i] = 0.0f;
@@ -168,19 +175,19 @@ public:
         taskEXIT_CRITICAL();
     }
 
-    std::array<float, 4> getLastOutputForces() const {
-        std::array<float, 4> forces;
+    std::array<float, 6> getLastOutputForces() const {
+        std::array<float, 6> forces;
         taskENTER_CRITICAL();
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 6; ++i) {
             forces[i] = last_output_forces[i];
         }
         taskEXIT_CRITICAL();
         return forces;
     }
 
-    void setLastOutputForces(const std::array<float, 4>& forces) {
+    void setLastOutputForces(const std::array<float, 6>& forces) {
         taskENTER_CRITICAL();
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 6; ++i) {
             last_output_forces[i] = forces[i];
         }
         taskEXIT_CRITICAL();
@@ -191,9 +198,11 @@ public:
     float offset_x_ = 0.0f;
     float offset_y_ = 0.0f;
     float offset_z_ = 0.0f;
+    float offset_roll_ = 0.0f;
+    float offset_pitch_ = 0.0f;
     float offset_yaw_ = 0.0f;
 
-    void setHomeOffset(float x, float y, float z, float yaw);
+    void setHomeOffset(float x, float y, float z, float roll, float pitch, float yaw);
     void clearHomeOffset();
 
 private:
@@ -202,7 +211,7 @@ private:
     RawSetpoint raw_setpoint{};         ///< 原始 AGX 设定值快照
     float last_dt_ms = 0.0f;
     uint32_t last_received_seq = 0;
-    float last_output_forces[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float last_output_forces[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 };
 
 extern MotionContext motion_context;

@@ -1,8 +1,9 @@
 #include "INS_Driver.hpp"
-#include "SystemContext.hpp"
-#include "SoftWatchdog.hpp"
 #include "RosLogger.hpp"
+#include "SoftWatchdog.hpp"
+#include "SystemContext.hpp"
 #include <cmath>
+#include <cstdint>
 
 namespace auv {
 namespace device {
@@ -96,7 +97,8 @@ bool INS_Driver::isDataFresh() const {
     uint32_t now = HAL_GetTick();
     if (now - last_warn_ms >= 2000) {
       last_warn_ms = now;
-      ROS_LOG_WARN("INS data timeout! last update was %lu ms ago", (unsigned long)(now - last_update_ms_));
+      ROS_LOG_WARN("INS data timeout! last update was %lu ms ago",
+                   (unsigned long)(now - last_update_ms_));
     }
   }
   return fresh;
@@ -119,87 +121,175 @@ bool INS_Driver::update(auv::motion::NavState &state) {
   return has_new_frame;
 }
 
+namespace ProtoOff {
+constexpr int kRoll = 2;
+constexpr int kPitch = 6;
+constexpr int kYaw = 10;
+constexpr int kRollRate = 14;
+constexpr int kPitchRate = 18;
+constexpr int kYawRate = 22;
+constexpr int kVx = 26;
+constexpr int kVy = 30;
+constexpr int kVz = 34;
+constexpr int kLat = 38;
+constexpr int kLon = 42;
+constexpr int kDepth = 46;
+constexpr int kNorthOffset = 99;
+constexpr int kEastOffset = 103;
+constexpr int kManometerDepth = 107;
+constexpr int kSensorFlags = 115;
+constexpr int kNavMode = 129;
+constexpr int kChecksum = 130;
+constexpr int kTail1 = 131;
+constexpr int kTail2 = 132;
+constexpr int kFrameSize = 133;
+} // namespace ProtoOff
+
 bool INS_Driver::parseByte(uint8_t b) {
-  if (frame_len_ == 0 && b != 0xFA)
-    return false;
-  if (frame_len_ == 1 && b != 0xAF) {
-    frame_len_ = 0;
+  // 状态 0：等待帧头 0xFA
+  if (frame_len_ == 0) {
+    if (b == 0xFA) {
+      packet_buf_[frame_len_++] = b;
+    }
+    // 非 0xFA 直接丢弃（不上涨 frame_len_）
     return false;
   }
 
+  // 状态 1：等待第二字节 0xAF
+  if (frame_len_ == 1) {
+    if (b == 0xAF) {
+      packet_buf_[frame_len_++] = b;
+      return false;
+    }
+    // 不是 0xAF：滑动窗口退回
+    // 如果当前 b 恰好是 0xFA，则以它为新的帧头起始
+    frame_len_ = 0;
+    if (b == 0xFA) {
+      packet_buf_[frame_len_++] = b;
+    }
+    return false;
+  }
+
+  // 状态 2+：收集数据负载
   if (frame_len_ < kMaxFrameSize) {
     packet_buf_[frame_len_++] = b;
   } else {
+    // 缓冲区溢出，复位
     frame_len_ = 0;
     return false;
   }
 
-  // UNAV-IP 133字节标准帧 (根据截图确认)
-  return frame_len_ == 133;
+  // UNAV-IP 标准帧长
+  return frame_len_ == ProtoOff::kFrameSize;
 }
 
 bool INS_Driver::validateFrame() {
-  if (frame_len_ != 133) {
+  using namespace ProtoOff;
+  if (frame_len_ != kFrameSize) {
     frame_len_ = 0;
     return false;
   }
 
-  // 异或校验位在 130，校验范围 0-129
+  // 异或校验位在 kChecksum，校验范围 0 ～ kChecksum-1
   uint8_t v = 0;
-  for (int i = 0; i < 130; i++) {
+  for (int i = 0; i < kChecksum; i++) {
     v ^= packet_buf_[i];
   }
 
-  if (v == packet_buf_[130]) {
-    // 检查帧尾 0xFB 0xBF
-    if (packet_buf_[131] == 0xFB && packet_buf_[132] == 0xBF) {
-      return true;
-    }
+  if (v == packet_buf_[kChecksum] && packet_buf_[kTail1] == 0xFB &&
+      packet_buf_[kTail2] == 0xBF) {
+    return true;
   }
 
+  // 校验失败：滑动窗口重同步
+  // 从第 2 字节开始搜索 0xFA，避免丢弃下一帧的同步头
+  uint16_t search_pos = 2; // 跳过已确认的 0xFA 0xAF
+  while (search_pos < frame_len_) {
+    if (packet_buf_[search_pos] == 0xFA) {
+      // 发现潜在的新帧头，将后续字节移到缓冲区起始
+      uint16_t remaining = frame_len_ - search_pos;
+      memmove(packet_buf_, packet_buf_ + search_pos, remaining);
+      frame_len_ = remaining;
+      return false;
+    }
+    search_pos++;
+  }
+
+  // 未找到新的 0xFA，完全复位
   frame_len_ = 0;
   return false;
 }
 
+// ============================================================================
+// 字节序安全读取工具（noexcept 消除异常处理桩，利于 STM32 编译器内联）
+// ============================================================================
+
+/// 从小端字节序读取 int32_t
+static inline int32_t readLE32(const uint8_t *buf) noexcept {
+  return (int32_t)buf[0] | ((int32_t)buf[1] << 8) | ((int32_t)buf[2] << 16) |
+         ((int32_t)buf[3] << 24);
+}
+
+/// 从小端字节序读取 float
+static inline float readLEFloat(const uint8_t *buf) noexcept {
+  int32_t bits = readLE32(buf);
+  float val;
+  memcpy(&val, &bits, sizeof(val));
+  return val;
+}
+
+/// 从大端字节序读取 int32_t（备用于命令响应帧解析）
+static inline int32_t readBE32(const uint8_t *buf) noexcept {
+  return ((int32_t)buf[0] << 24) | ((int32_t)buf[1] << 16) |
+         ((int32_t)buf[2] << 8) | (int32_t)buf[3];
+}
+
+/// 从大端字节序读取 float（备用于命令响应帧解析）
+static inline float readBEFloat(const uint8_t *buf) noexcept {
+  int32_t bits = readBE32(buf);
+  float val;
+  memcpy(&val, &bits, sizeof(val));
+  return val;
+}
+
 void INS_Driver::decodePacket(auv::motion::NavState &s) {
-  // 严格按照截图偏移量解析
+  using namespace ProtoOff;
 
-  // 1. 姿态 (Offset 2, 6, 10)
-  memcpy(&s.roll, packet_buf_ + 2, 4);
-  memcpy(&s.pitch, packet_buf_ + 6, 4);
-  memcpy(&s.pos_world[3], packet_buf_ + 10, 4);
+  // 1. 姿态 → pos_world[ROLL=3, PITCH=4, YAW=5]
+  s.pos_world[3] = readLEFloat(packet_buf_ + kRoll);  // Roll (φ)
+  s.pos_world[4] = readLEFloat(packet_buf_ + kPitch); // Pitch (θ)
+  s.pos_world[5] = readLEFloat(packet_buf_ + kYaw);   // Yaw (ψ)
 
-  // 2. 角速度 (Offset 14, 18, 22)
-  memcpy(&s.vroll, packet_buf_ + 14, 4);
-  memcpy(&s.vpitch, packet_buf_ + 18, 4);
-  memcpy(&s.vel_body[3], packet_buf_ + 22, 4);
+  // 2. 角速度 → vel_body[ROLL=3, PITCH=4, YAW=5]
+  s.vel_body[3] = readLEFloat(packet_buf_ + kRollRate);  // p
+  s.vel_body[4] = readLEFloat(packet_buf_ + kPitchRate); // q
+  s.vel_body[5] = readLEFloat(packet_buf_ + kYawRate);   // r
 
-  // 3. 机体系线速度 (Offset 26, 30, 34) -> vx, vy, vz
-  memcpy(&s.vel_body[0], packet_buf_ + 26, 4);
-  memcpy(&s.vel_body[1], packet_buf_ + 30, 4);
-  memcpy(&s.vel_body[2], packet_buf_ + 34, 4);
+  // 3. 机体系线速度
+  s.vel_body[0] = readLEFloat(packet_buf_ + kVx);
+  s.vel_body[1] = readLEFloat(packet_buf_ + kVy);
+  s.vel_body[2] = readLEFloat(packet_buf_ + kVz);
 
-  // 4. 经纬度 (Offset 38, 42, int32, 1e7)
-  int32_t lat_i, lon_i;
-  memcpy(&lat_i, packet_buf_ + 38, 4);
-  memcpy(&lon_i, packet_buf_ + 42, 4);
+  // 4. 经纬度 (int32, 1e7 缩放)
+  int32_t lat_i = readLE32(packet_buf_ + kLat);
+  int32_t lon_i = readLE32(packet_buf_ + kLon);
   auv::system::system_context.nav_status.lat = lat_i * 1e-7;
   auv::system::system_context.nav_status.lon = lon_i * 1e-7;
 
-  // 5. 深度 (改为 Offset 46: 组合深度) -> z
-  memcpy(&s.pos_world[2], packet_buf_ + 46, 4);
+  // 5. 深度
+  s.pos_world[2] = readLEFloat(packet_buf_ + kDepth);
 
-  // 6. 位置增量 (Offset 99, 103, float) -> x, y
-  memcpy(&s.pos_world[0], packet_buf_ + 99, 4);
-  memcpy(&s.pos_world[1], packet_buf_ + 103, 4);
+  // 6. 位置增量
+  s.pos_world[0] = readLEFloat(packet_buf_ + kNorthOffset); // X (North)
+  s.pos_world[1] = readLEFloat(packet_buf_ + kEastOffset);  // Y (East)
 
-  // 6.5 压力计深度 (Offset 107, float, m)
-  float manometer_z = 0.0f;
-  memcpy(&manometer_z, packet_buf_ + 107, 4);
+  // 7. 压力计深度
+  manometer_z_ = readLEFloat(packet_buf_ + kManometerDepth);
 
-  // 7. 模式与状态 (Offset 129 模式, Offset 115 状态)
-  auv::system::system_context.nav_status.imu_state = packet_buf_[129];
-  auv::system::system_context.nav_status.dvl_state = (packet_buf_[115] & 0x02) ? 1 : 0;
+  // 8. 传感器状态 & 导航模式
+  auv::system::system_context.nav_status.imu_state = packet_buf_[kNavMode];
+  auv::system::system_context.nav_status.dvl_state =
+      (packet_buf_[kSensorFlags] & 0x02) ? 1 : 0;
   auv::system::system_context.nav_status.timestamp = HAL_GetTick();
 
   auv::device::SoftWatchdog::getInstance().feed(
@@ -207,19 +297,17 @@ void INS_Driver::decodePacket(auv::motion::NavState &s) {
 
   // 转换单位 (Deg -> Rad)
   const float kDeg2Rad = 0.0174532925f;
-  s.roll *= kDeg2Rad;
-  s.pitch *= kDeg2Rad;
-  s.pos_world[3] *= kDeg2Rad;
-  s.vroll *= kDeg2Rad;
-  s.vpitch *= kDeg2Rad;
-  s.vel_body[3] *= kDeg2Rad;
+  s.pos_world[3] *= kDeg2Rad; // Roll
+  s.pos_world[4] *= kDeg2Rad; // Pitch
+  s.pos_world[5] *= kDeg2Rad; // Yaw
+  s.vel_body[3] *= kDeg2Rad;  // p (Roll rate)
+  s.vel_body[4] *= kDeg2Rad;  // q (Pitch rate)
+  s.vel_body[5] *= kDeg2Rad;  // r (Yaw rate)
 
   // 更新内部缓存（保存为弧度制状态）
   state_ = s;
 
-  manometer_z_ = manometer_z;
-
-  frame_len_ = 0;
+  frame_len_ = 0; // 确保状态机复位，准备下一帧
 }
 
 } // namespace device

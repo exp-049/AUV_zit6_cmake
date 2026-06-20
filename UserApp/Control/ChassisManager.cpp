@@ -131,7 +131,7 @@ void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level, const f
         }
       }
     }
-    sp.pos_world[3] = auv::motion::MotionContext::wrapAngle(sp.pos_world[3]);
+    sp.pos_world[5] = auv::motion::MotionContext::wrapAngle(sp.pos_world[5]);
   } else if (new_level == auv::motion::ControlLevel::VELOCITY) {
     float converted_val[4];
     if (!is_body) {
@@ -183,7 +183,7 @@ void ChassisManager::setControlLevel(auv::motion::ControlLevel new_level) {
   if (new_level == auv::motion::ControlLevel::POSITION) {
     float actual_v_world[4];
     auv::motion::motion_context.transformBodyToWorld(
-        auv::motion::ControlLevel::VELOCITY, nav.vel_body, actual_v_world, false);
+        auv::motion::ControlLevel::VELOCITY, nav.vel_body.data(), actual_v_world, false);
 
     for (int i = 0; i < 4; i++) {
       profiles_[i].align(nav.pos_world[i], actual_v_world[i]);
@@ -221,8 +221,8 @@ std::array<float, 4> ChassisManager::update() {
   auto nav = auv::motion::motion_context.getNavState();
   auto target = auv::motion::motion_context.getCurrentSetpoint();
 
-  const float *actual_p_world = nav.pos_world;
-  const float *actual_v_body = nav.vel_body;
+  const float *actual_p_world = nav.pos_world.data();
+  const float *actual_v_body = nav.vel_body.data();
 
   // 计算世界系下的实际速度（用于位置环微分项）
   float actual_v_world[4];
