@@ -10,7 +10,8 @@ alias zit_src='source /home/doc049/dev/2026-auv-sub/AUV_zit6_cmake/install/setup
 alias zit_agt='zit_src && MicroXRCEAgent serial --dev /dev/ttyUSB0 -b 921600'
 alias zit_fox='zit_src && ros2 launch foxglove_bridge foxglove_bridge_launch.xml'
 alias zit_rqt='zit_src && rqt'
-alias zit_cfg='zit_src && ros2 run upper_examples cfg_tool'
+alias zit_cfg='zit_src && ros2 run upper_examples config_setter'
+alias zit_gui='zit_src && ros2 run upper_examples gui'
 ```
 
 ---
@@ -70,4 +71,6 @@ alias zit_cfg='zit_src && ros2 run upper_examples cfg_tool'
 #### 常见调试命令
 - **查看位置反馈**: `ros2 topic echo /zit6/state/pos`
 - **查看推力输出**: `ros2 topic echo /zit6/state/thr`
+- **查看实时日志**: `ros2 topic echo /zit6/log`
 - **检查所有参数**: `ros2 service call /zit6/get_params zit6_interfaces/srv/GetParams "{paths: []}"`
+- **打开综合主控制台（含日志监控面板）**: `ros2 run upper_examples gui`

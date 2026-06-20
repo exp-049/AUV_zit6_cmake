@@ -14,18 +14,18 @@ from .xbox_control import XboxControlWidget
 from .config_setter import ConfigWidget
 from .motion_control import MotionControlWidget
 from .heartbeat import FloatingHeartbeatPanel
+from .log_viewer import LogViewerWidget
 
 # Qt imports
 try:
-    from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                                 QPushButton, QLabel, QStackedWidget, QFrame, QSplitter)
+    from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+                                 QPushButton, QLabel, QStackedWidget, QFrame, QSplitter, QSizePolicy)
     from PyQt5.QtCore import Qt
     from PyQt5.QtGui import QIcon
 except ImportError:
-    from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                                   QPushButton, QLabel, QStackedWidget, QFrame, QSplitter)
-    from PySide6.QtCore import Qt, QAction as QIcon # 兼容性定义
-
+    from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+                                   QPushButton, QLabel, QStackedWidget, QFrame, QSplitter, QSizePolicy)
+    from PySide6.QtCore import Qt, QAction as QIcon  # 兼容性定义
 class MasterConsoleApp(QMainWindow):
     """
     Zit6 AUV 统一主控制台，整合所有控制和监测板块于一体
@@ -39,13 +39,19 @@ class MasterConsoleApp(QMainWindow):
         self.resize(1200, 780)
         self.init_style()
         
-        # 主布局
+        # 主布局：垂直分割，上部内容区 + 底部日志面板
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
-        self.main_layout = QHBoxLayout(main_widget)
+        self.main_layout = QVBoxLayout(main_widget)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
-        
+
+        # ── 上部：内容区（侧边栏 + 页面堆栈） ──
+        content_area = QWidget()
+        content_layout = QHBoxLayout(content_area)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+
         # 1. 左侧导航侧边栏
         self.sidebar = QFrame()
         self.sidebar.setObjectName("Sidebar")
@@ -65,7 +71,7 @@ class MasterConsoleApp(QMainWindow):
             ("📷 图像监控", 0),
             ("🎮 手柄遥控", 1),
             ("⚙️ 参数配置", 2),
-            ("⚓ 运动控制台", 3)
+            ("⚓ 运动控制台", 3),
         ]
         
         for text, index in nav_items:
@@ -83,11 +89,11 @@ class MasterConsoleApp(QMainWindow):
         footer.setStyleSheet("color: #4caf50; font-size: 11px; padding-left: 10px;")
         sidebar_layout.addWidget(footer)
         
-        self.main_layout.addWidget(self.sidebar)
+        content_layout.addWidget(self.sidebar)
         
         # 2. 右侧页面堆栈 (QStackedWidget)
         self.stacked_widget = QStackedWidget()
-        self.main_layout.addWidget(self.stacked_widget)
+        content_layout.addWidget(self.stacked_widget)
         
         # 初始化各个业务 Widget 并加入堆栈
         self.image_widget = ImageViewerWidget(self.node)
@@ -99,6 +105,14 @@ class MasterConsoleApp(QMainWindow):
         self.stacked_widget.addWidget(self.xbox_widget)
         self.stacked_widget.addWidget(self.config_widget)
         self.stacked_widget.addWidget(self.motion_widget)
+
+        # 将内容区加入主布局
+        self.main_layout.addWidget(content_area, 1)
+
+        # ── 底部：日志监控面板（始终显示） ──
+        self.log_widget = LogViewerWidget(self.node)
+        self.log_widget.setMaximumHeight(300)
+        self.main_layout.addWidget(self.log_widget, 0)
         
         # 图像置顶特殊联动逻辑
         self.image_widget.pin_toggled_signal.connect(self.on_pin_toggled)
@@ -174,6 +188,7 @@ class MasterConsoleApp(QMainWindow):
         self.xbox_widget.close()
         self.config_widget.close()
         self.motion_widget.close()
+        self.log_widget.close()
         self.floating_hbt.close()
         super().closeEvent(event)
 

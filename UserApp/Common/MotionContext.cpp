@@ -72,8 +72,7 @@ void MotionContext::setHomeOffset(float x, float y, float z, float yaw) {
     offset_z_ = z;
     offset_yaw_ = yaw;
     ROS_LOG_INFO("Home offset set: x=%.2f y=%.2f z=%.2f yaw=%.2f",
-                    nav_state.pos_world[0], nav_state.pos_world[1],
-                    nav_state.pos_world[2], nav_state.pos_world[3]);
+                    x, y, z, yaw);
 }
 
 void MotionContext::clearHomeOffset() {
