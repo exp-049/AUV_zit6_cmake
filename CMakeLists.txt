@@ -124,6 +124,9 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Eigen 矩阵库配置：禁用运行时断言和调试检查
     EIGEN_NO_DEBUG
     NDEBUG
+
+    # HITL 仿真模式：Debug 下启用，Release 下注释即可剔除仿真代码
+    $<$<CONFIG:Debug>:AUV_SIMULATION_ENABLE>
 )
 
 # Remove wrong libob.a library dependency when using cpp files

@@ -91,15 +91,12 @@ class MotionContext {
 public:
   static float wrapAngle(float angle);
 
-  // 旧 4DOF 变换接口（过渡期保留，Step 4 替换为 6DOF 矩阵版本）
-  void transformBodyToWorld(ControlLevel level, const float body_in[4],
-                            float world_out[4], bool is_inc) const;
-  void transformWorldToBody(ControlLevel level, const float world_in[4],
-                            float body_out[4], bool is_inc) const;
+  /// 6DOF 坐标变换：机体系 → 世界系（使用 MathUtils 旋转矩阵 R(η)）
+  /// 输入输出均为 6 元素数组 [X, Y, Z, Roll, Pitch, Yaw]
+  void transformBodyToWorld(const float body_in[6], float world_out[6]) const;
 
-  // 新 6DOF 变换接口（准备接入 MathUtils 矩阵）
-  void transformBodyToWorld6(const float body_in[6], float world_out[6]) const;
-  void transformWorldToBody6(const float world_in[6], float body_out[6]) const;
+  /// 6DOF 坐标变换：世界系 → 机体系（使用 MathUtils 逆矩阵 R(η)⁻¹）
+  void transformWorldToBody(const float world_in[6], float body_out[6]) const;
 
   // 线程安全存取接口
   NavState getNavState() const {
@@ -200,7 +197,26 @@ public:
     taskEXIT_CRITICAL();
   }
 
-  // 坐标偏置变量及设置接口
+  /// 线程安全：获取家系偏移（单次临界区读取全部 7 个字段）
+  struct HomeOffset {
+    bool active = false;
+    std::array<float, 6> offset = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+  };
+  HomeOffset getHomeOffset() const {
+    HomeOffset h;
+    taskENTER_CRITICAL();
+    h.active = use_offset_;
+    h.offset[0] = offset_x_;
+    h.offset[1] = offset_y_;
+    h.offset[2] = offset_z_;
+    h.offset[3] = offset_roll_;
+    h.offset[4] = offset_pitch_;
+    h.offset[5] = offset_yaw_;
+    taskEXIT_CRITICAL();
+    return h;
+  }
+
+  // 坐标偏置变量（公开以备特殊场景直接访问，优先使用 getHomeOffset）
   bool use_offset_ = false;
   float offset_x_ = 0.0f;
   float offset_y_ = 0.0f;
@@ -209,8 +225,7 @@ public:
   float offset_pitch_ = 0.0f;
   float offset_yaw_ = 0.0f;
 
-  void setHomeOffset(float x, float y, float z, float roll, float pitch,
-                     float yaw);
+  void setHomeOffset(const auv::math::Vector6f &offset);
   void clearHomeOffset();
 
 private:
