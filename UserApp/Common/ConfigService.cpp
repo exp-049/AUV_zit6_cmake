@@ -14,7 +14,7 @@
 
 namespace auv::service {
 
-static char g_json_build_buf[2048];
+static char g_json_build_buf[4096];
 static char g_path_walk_buf[128];
 
 class JsonWriter {

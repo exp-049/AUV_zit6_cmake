@@ -442,8 +442,8 @@ void MicroRosTask::run() {
             (void)rc;
             zit6_interfaces__srv__UpdateParams_Request__init(&update_req_);
             // Pre-allocate buffer for incoming JSON string
-            update_req_.json.data = (char *)microros_allocate(1024, NULL);
-            update_req_.json.capacity = 1024;
+            update_req_.json.data = (char *)microros_allocate(4096, NULL);
+            update_req_.json.capacity = 4096;
             update_req_.json.size = 0;
 
             // 重要修复：预分配 paths 和 values 序列内存
@@ -483,8 +483,8 @@ void MicroRosTask::run() {
             }
             zit6_interfaces__srv__GetParams_Response__init(&get_res_);
             // Pre-allocate buffer for outgoing JSON string
-            get_res_.config_json.data = (char *)microros_allocate(1024, NULL);
-            get_res_.config_json.capacity = 1024;
+            get_res_.config_json.data = (char *)microros_allocate(4096, NULL);
+            get_res_.config_json.capacity = 4096;
             get_res_.config_json.size = 0;
             rc = rclc_executor_add_service_with_request_id(
                 &executor_, &get_params_srv_, &get_req_, &get_res_,
@@ -531,24 +531,31 @@ void MicroRosTask::run() {
         if (now_ms - last_vel_pub_tick >= 20) {
           last_vel_pub_tick = now_ms;
           auto nav = auv::motion::motion_context.getNavState();
-          for (int i = 0; i < 4; i++) {
-            vel_buf_[i] = nav.vel_body[i];
-          }
+          // 6DOF → 4DOF: [u,v,w, r] = vel_body[0,1,2, 5]
+          vel_buf_[0] = nav.vel_body[0];
+          vel_buf_[1] = nav.vel_body[1];
+          vel_buf_[2] = nav.vel_body[2];
+          vel_buf_[3] = nav.vel_body[5];  // yaw rate at index 5
           rcl_publish(&vel_pub_, &vel_fb_msg_, NULL);
         }
         if (now_ms - last_thr_pub_tick >= 33) {
           last_thr_pub_tick = now_ms;
           auto forces = auv::motion::motion_context.getLastOutputForces();
-          for (int i = 0; i < 4; i++)
-            thr_buf_[i] = forces[i];
+          // 6DOF → 4DOF: [Fx,Fy,Fz, Myaw] = forces[0,1,2, 5]
+          thr_buf_[0] = forces[0];
+          thr_buf_[1] = forces[1];
+          thr_buf_[2] = forces[2];
+          thr_buf_[3] = forces[5];  // Myaw at index 5
           rcl_publish(&thr_pub_, &thr_fb_msg_, NULL);
         }
         if (now_ms - last_pos_pub_tick >= 33) {
           last_pos_pub_tick = now_ms;
           auto nav = auv::motion::motion_context.getNavState();
-          for (int i = 0; i < 4; i++) {
-            pos_buf_[i] = nav.pos_world[i];
-          }
+          // 6DOF → 4DOF: [x,y,z, yaw] = pos_world[0,1,2, 5]
+          pos_buf_[0] = nav.pos_world[0];
+          pos_buf_[1] = nav.pos_world[1];
+          pos_buf_[2] = nav.pos_world[2];
+          pos_buf_[3] = nav.pos_world[5];  // yaw at index 5
           rcl_publish(&pos_pub_, &pos_fb_msg_, NULL);
         }
         if (now_ms - last_status_pub_tick >= 100) {
@@ -565,8 +572,11 @@ void MicroRosTask::run() {
               auv::system::system_context.nav_status.imu_state;
           status_msg_.navigation_ready =
               auv::system::system_context.getNavigationValid();
-          for (int i = 0; i < 4; i++)
-            status_msg_.forces[i] = forces[i];
+          // 6DOF → 4DOF: [Fx,Fy,Fz, Myaw] = forces[0,1,2, 5]
+          status_msg_.forces[0] = forces[0];
+          status_msg_.forces[1] = forces[1];
+          status_msg_.forces[2] = forces[2];
+          status_msg_.forces[3] = forces[5];
           status_msg_.cycle_time_ms = cycle_time;
           status_msg_.battery_voltage = 0.0f;
           status_msg_.error_flags = 0;

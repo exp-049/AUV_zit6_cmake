@@ -29,17 +29,15 @@ public:
   auv::motion::ControlLevel getControlLevel() const;
 
   /**
-   * @brief 执行 100Hz 级联控制演进 (自动计算 dt)
-   * @param actual_p 当前位姿 (NED)
-   * @param actual_v 当前速度 (Body)
-   * @param target 目标设定值 (包含位置、速度、推力等)
-   * @return std::array<float, 4> 计算出的 4-DOF 归一化力矢量
+   * @brief 执行 100Hz 级联控制演进 (固定 dt=0.01s)
+   * @return std::array<float, 6> 计算出的 6-DOF 归一化力/力矩矢量
+   *         [Fx, Fy, Fz, Mroll, Mpitch, Myaw]
    */
   std::array<float, 6> update();
 
   /**
    * @brief 配置指定轴的 PID 参数
-   * @param axis 轴索引 (0-3: X, Y, Z, Yaw)
+   * @param axis 轴索引 (0-5: X, Y, Z, Roll, Pitch, Yaw)
    * @param is_pos_ring 是否为位置环
    * @param kp, ki, kd, i_limit, out_limit 参数
    */
@@ -58,7 +56,7 @@ public:
 
   /**
    * @brief 配置指定轴的运动学约束
-   * @param axis 轴索引 (0-3: X, Y, Z, Yaw)
+   * @param axis 轴索引 (0-5: X, Y, Z, Roll, Pitch, Yaw)
    * @param max_v 最大速度 (若 < 0 则保留当前值)
    * @param max_a 最大加速度 (若 < 0 则保留当前值)
    */
@@ -67,7 +65,7 @@ public:
   /**
    * @brief 更新底盘目标设定值并切换控制层级
    * @param new_level 目标控制层级
-   * @param val 设定值数组 [X, Y, Z, Yaw]
+   * @param val 设定值数组 [X, Y, Z, Yaw] (4DOF 协议)
    * @param mask 掩码
    * @param is_body 是否为机体系
    * @param is_inc 是否为增量设定

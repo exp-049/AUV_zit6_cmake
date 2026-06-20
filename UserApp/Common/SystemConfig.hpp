@@ -79,6 +79,7 @@ struct SimulationConfig {
     float mass;
     float drag;
     float thrust_k;
+    float metacentric_height;
 };
 
 struct SystemConfig {

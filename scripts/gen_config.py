@@ -181,6 +181,7 @@ struct SimulationConfig {
     float mass;
     float drag;
     float thrust_k;
+    float metacentric_height;
 };
 
 struct SystemConfig {
@@ -238,7 +239,7 @@ SystemConfig sys_config = {{
     .ins = {{ {config['ins']['init_lat']}, {config['ins']['init_lon']} }},
     .soft_watchdog = {{ {config['soft_watchdog']['timeout_ms']}, {str(config['soft_watchdog']['check_microros']).lower()}, {str(config['soft_watchdog']['check_ins']).lower()}, {str(config['soft_watchdog']['check_depth']).lower()} }},
     .sensors = {{ ZDataSource::{z_enum} }},
-    .simulation = {{ {str(config['simulation']['hitl_enabled']).lower()}, {config['simulation']['mass']}, {config['simulation']['drag']}, {config['simulation']['thrust_k']} }}
+    .simulation = {{ {str(config['simulation']['hitl_enabled']).lower()}, {config['simulation']['mass']}, {config['simulation']['drag']}, {config['simulation']['thrust_k']}, {config['simulation']['metacentric_height']} }}
 }};
 
 const ParamMeta SYSTEM_PARAMS[] = {{

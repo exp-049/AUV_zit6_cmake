@@ -90,21 +90,18 @@ auv::motion::NavState ControlTask::updateNavigation() {
     }
   }
 
-  // 2. 应用解锁原点平移与旋转变换（6DOF 矩阵版本）
-  // 通过 getHomeOffset() 一次临界区获取全部偏置，避免外层关中断
+  // 2. 应用解锁原点平移与旋转变换
   auto home = auv::motion::motion_context.getHomeOffset();
   bool use_offset = home.active;
   const auto &offset = home.offset;
 
   if (use_offset) {
-    // η_diff = η_raw - η_home（6DOF 向量减法）
+    // η_diff = η_raw - η_home
     float diff[6];
     for (int i = 0; i < 6; i++)
       diff[i] = state.pos_world[i] - offset[i];
 
     // η_home = R(η_offset)⁻¹ · η_diff
-    // 由于 setHomeOffset 强制 offset[3]=offset[4]=0，
-    // T⁻¹ 退化为单位阵，位置部分退化为 R_z(-ψ) 2D 旋转。
     auv::math::applyRotationToBody(diff, state.pos_world.data(), offset[3],
                                    offset[4], offset[5]);
 
@@ -177,8 +174,7 @@ void ControlTask::handleArmState(uint32_t now) {
       if (!auv::system::system_context.is_system_armed) {
 
         auto nav_state = auv::motion::motion_context.getNavState();
-        // Roll/Pitch 强制为 0：AUV 重心浮心拉开自然稳定，
-        // 防止上锁时倾斜扰动导致控制坐标系偏移，增强健壮性
+        // Roll/Pitch 强制为 0
         {
           auv::math::Vector6f home_offset;
           home_offset << nav_state.pos_world[0], // X

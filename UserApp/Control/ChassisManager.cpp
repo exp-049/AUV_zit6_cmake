@@ -130,8 +130,8 @@ void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level,
     if (is_body) {
       // 机体系位置指令 → 世界系：填充 val6, 变换, 可选加 nav 位姿
       float val6[6];
-      Eigen::Map<auv::math::Vector6f>(val6) << val[0], val[1], val[2],
-          0.0f, 0.0f, val[3];
+      Eigen::Map<auv::math::Vector6f>(val6) << val[0], val[1], val[2], 0.0f,
+          0.0f, val[3];
       float world6[6];
       auv::motion::motion_context.transformBodyToWorld(val6, world6);
       auto nav = auv::motion::motion_context.getNavState();
@@ -150,7 +150,8 @@ void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level,
     }
     // 写入 6DOF setpoint，用 mask 控制哪些轴被覆盖
     for (int i = 0; i < 6; i++) {
-      if (!(mask & (1 << (i > 2 ? i + 2 : i)))) {  // mask 位: [X=0,Y=1,Z=2,Yaw=3]
+      if (!(mask &
+            (1 << (i > 2 ? i + 2 : i)))) { // mask 位: [X=0,Y=1,Z=2,Yaw=3]
         sp.pos_world[i] = converted_val[i];
       }
       if (i >= 3) {
@@ -166,8 +167,8 @@ void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level,
     } else {
       // 世界系速度指令：变换到机体系
       float world6[6];
-      Eigen::Map<auv::math::Vector6f>(world6) << val[0], val[1], val[2],
-          0.0f, 0.0f, val[3];
+      Eigen::Map<auv::math::Vector6f>(world6) << val[0], val[1], val[2], 0.0f,
+          0.0f, val[3];
       float body6[6];
       auv::motion::motion_context.transformWorldToBody(world6, body6);
       std::memcpy(converted_val, body6, 6 * sizeof(float));
@@ -183,8 +184,8 @@ void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level,
           0.0f, 0.0f, val[3];
     } else {
       float world6[6];
-      Eigen::Map<auv::math::Vector6f>(world6) << val[0], val[1], val[2],
-          0.0f, 0.0f, val[3];
+      Eigen::Map<auv::math::Vector6f>(world6) << val[0], val[1], val[2], 0.0f,
+          0.0f, val[3];
       float body6[6];
       auv::motion::motion_context.transformWorldToBody(world6, body6);
       std::memcpy(converted_val, body6, 6 * sizeof(float));
@@ -256,30 +257,27 @@ std::array<float, 6> ChassisManager::update() {
   if (level_ == auv::motion::ControlLevel::POSITION) {
     float v_target_world[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 6; i++) {
       ProfileState profile_target;
       if (config_.planner_enabled) {
-        if (i == 3) {
+        // 所有角度轴 (Roll=3, Pitch=4, Yaw=5) 使用最短路径
+        float raw_target = target.pos_world[i];
+        if (i >= 3) {
           float current = profiles_[i].getState().p;
-          float target_yaw =
+          raw_target =
               current +
-              auv::motion::MotionContext::wrapAngle(
-                  target.pos_world[i] -
-                  current); // 启用规划器时，航向采用最短旋转路径目标值
-          profile_target = profiles_[i].updatePosition(target_yaw, dt);
-        } else {
-          profile_target = profiles_[i].updatePosition(target.pos_world[i], dt);
+              auv::motion::MotionContext::wrapAngle(raw_target - current);
         }
+        profile_target = profiles_[i].updatePosition(raw_target, dt);
       } else {
         profile_target.p = target.pos_world[i];
         profile_target.v = 0.0f;
         profile_target.a = 0.0f;
       }
 
-      // 位置环的导数项应使用世界系下的速度误差 (v_ref_world - v_actual_world)
       float pos_derivative = profile_target.v - actual_v_world[i];
       float pos_error = profile_target.p - actual_p_world[i];
-      if (i == 3)
+      if (i >= 3)
         pos_error = auv::motion::MotionContext::wrapAngle(pos_error);
       v_target_world[i] = pos_pids_[i].compute(pos_error, dt, pos_derivative) +
                           profile_target.v;
@@ -305,8 +303,9 @@ std::array<float, 6> ChassisManager::update() {
     if (level_ == auv::motion::ControlLevel::POSITION ||
         level_ == auv::motion::ControlLevel::VELOCITY) {
       // 通过本地指针数组获取轴配置（避免 IIFE lambda + switch 开销）
-      const auv::config::AxisConfig *axes[6] = {&config_.x, &config_.y,
-          &config_.z, &config_.roll, &config_.pitch, &config_.yaw};
+      const auv::config::AxisConfig *axes[6] = {&config_.x,     &config_.y,
+                                                &config_.z,     &config_.roll,
+                                                &config_.pitch, &config_.yaw};
       const auv::config::AxisConfig &axis_cfg = *axes[i];
 
       // 使用机体系下的目标速度与机体系下的真实速度进行闭环

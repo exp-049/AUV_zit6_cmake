@@ -11,12 +11,12 @@ SystemConfig sys_config = {
         .z = { 1.0, 0.0, 0.0, 0.2, 0.5, 10.0, 0.1, 0.0, 0.2, 0.8, 0.5, 0.3, 0.016, 5.0 },
         .roll = { 3.0, 0.0, 0.5, 0.1, 0.5, 1.0, 0.1, 0.0, 0.2, 0.8, 0.5, 1.0, 0.1, 0.5 },
         .pitch = { 3.0, 0.0, 0.5, 0.1, 0.5, 1.0, 0.1, 0.0, 0.2, 0.8, 0.5, 1.0, 0.1, 0.5 },
-        .yaw = { 1.0, 0.0, 0.0, 0.5, 1.5, 1.0, 0.002, 0.01, 0.05, 1.0, 1.0, 0.8, 0.0003, 0.0005 }
+        .yaw = { 1.0, 0.0, 0.0, 0.5, 1.5, 1.0, 0.002, 0.01, 0.05, 1.0, 1.0, 0.8, 3.0, 2.0 }
     },
     .ins = { 45.7749, 126.6765 },
     .soft_watchdog = { 3000, true, false, false },
     .sensors = { ZDataSource::USE_MS5837_Z },
-    .simulation = { false, 35.0, 15.0, 1000.0 }
+    .simulation = { false, 35.0, 15.0, 1000.0, 0.05 }
 };
 
 const ParamMeta SYSTEM_PARAMS[] = {
@@ -116,10 +116,11 @@ const ParamMeta SYSTEM_PARAMS[] = {
     {"simulation.mass", &sys_config.simulation.mass, ParamType::FLOAT},
     {"simulation.drag", &sys_config.simulation.drag, ParamType::FLOAT},
     {"simulation.thrust_k", &sys_config.simulation.thrust_k, ParamType::FLOAT},
+    {"simulation.metacentric_height", &sys_config.simulation.metacentric_height, ParamType::FLOAT},
     {NULL, NULL, ParamType::FLOAT}
 };
 
-const size_t SYSTEM_PARAMS_COUNT = 96;
+const size_t SYSTEM_PARAMS_COUNT = 97;
 
 } // namespace config
 } // namespace auv

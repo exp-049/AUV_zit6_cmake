@@ -53,6 +53,7 @@ private:
   zit6_interfaces__srv__GetParams_Request get_req_;
   zit6_interfaces__srv__GetParams_Response get_res_;
 
+  // ROS 消息接口仍为 4 元素 [X, Y, Z, Yaw]，从 6DOF 数据正确映射
   float pos_buf_[4], vel_buf_[4], thr_buf_[4];
 
   // 处理函数（原来位于匿名命名空间）

@@ -24,14 +24,14 @@ public:
 
     ~SerialPort();
 
-    // 启动 DMA 循环接收
-    bool startReceive();
+    /// 启动 DMA 循环接收（noexcept 以利编译器内联）
+    bool startReceive() noexcept;
 
-    // 发送数据 (DMA 方式)
-    bool transmit(const uint8_t* data, uint16_t len);
+    /// 发送数据 (DMA 方式)
+    bool transmit(const uint8_t* data, uint16_t len) noexcept;
 
-    // 从循环缓冲区读取新数据，返回读取到的字节数
-    uint16_t read(uint8_t* out_buf, uint16_t max_len);
+    /// 从循环缓冲区读取新数据，返回读取到的字节数
+    uint16_t read(uint8_t* out_buf, uint16_t max_len) noexcept;
 
 private:
     UART_HandleTypeDef* huart_;
