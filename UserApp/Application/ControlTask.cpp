@@ -3,9 +3,9 @@
 #include "AuvSimulator.hpp"
 #include "FreeRTOS.h"
 #include "MotionContext.hpp"
+#include "RosLogger.hpp"
 #include "SerialPort.hpp"
 #include "SoftWatchdog.hpp"
-#include "RosLogger.hpp"
 #include "SystemConfig.hpp"
 #include "SystemContext.hpp"
 #include "task.h"
@@ -104,11 +104,12 @@ auv::motion::NavState ControlTask::updateNavigation() {
     state.pos_world[0] = dx * cos_h + dy * sin_h;
     state.pos_world[1] = -dx * sin_h + dy * cos_h;
     state.pos_world[2] -= offset_z;
-    state.pos_world[5] -= offset_yaw;  // Yaw 偏移
+    state.pos_world[5] -= offset_yaw; // Yaw 偏移
 
     // 角度归一化（Roll/Pitch/Yaw）
     for (int i = 3; i < 6; i++) {
-      state.pos_world[i] = auv::motion::MotionContext::wrapAngle(state.pos_world[i]);
+      state.pos_world[i] =
+          auv::motion::MotionContext::wrapAngle(state.pos_world[i]);
     }
   }
 
@@ -220,9 +221,10 @@ void ControlTask::computeAndPublish() {
 
   // 4DOF → 6DOF 转换（Step 5 后 chassis.update() 将直接返回 6DOF）
   std::array<float, 6> forces6;
-  for (int i = 0; i < 4; i++) forces6[i] = forces4[i];
-  forces6[4] = 0.0f;  // Pitch 推力暂为 0
-  forces6[5] = 0.0f;  // Roll 推力暂为 0
+  for (int i = 0; i < 4; i++)
+    forces6[i] = forces4[i];
+  forces6[4] = 0.0f; // Pitch 推力自 Step 5 起由速度阻尼环计算
+  forces6[5] = 0.0f; // Roll  推力自 Step 5 起由速度阻尼环计算
   auv::motion::motion_context.setLastOutputForces(forces6);
 
   taskENTER_CRITICAL();
@@ -230,8 +232,13 @@ void ControlTask::computeAndPublish() {
   taskEXIT_CRITICAL();
 
   if (armed) {
-    auv::device::motor_driver.publishThrust(forces4[0], forces4[1], forces4[2],
-                                            forces4[3]);
+    // publishThrust(fx, fy, fz, fyaw, fpitch, froll)
+    // forces6: [X=0, Y=1, Z=2, ROLL=3, PITCH=4, YAW=5]
+    auv::device::motor_driver.publishThrust(
+        forces6[0], forces6[1], forces6[2],
+        forces6[5],  // fyaw  ← 索引 5
+        forces6[4],  // fpitch ← 索引 4
+        forces6[3]); // froll  ← 索引 3
   } else {
     auv::device::motor_driver.publishThrust(0, 0, 0, 0);
   }

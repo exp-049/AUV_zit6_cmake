@@ -1,7 +1,7 @@
 #include "ChassisManager.hpp"
+#include "FreeRTOS.h"
 #include "SystemConfig.hpp"
 #include "main.h"
-#include "FreeRTOS.h"
 #include "task.h"
 #include <algorithm>
 #include <cmath>
@@ -82,11 +82,16 @@ void ChassisManager::configurePID(int axis, bool is_pos_ring, float kp,
   // 获取当前配置，用于增量修改
   PID_Controller::Config cfg = getPIDConfig(axis, is_pos_ring);
 
-  if (kp >= 0.0f) cfg.kp = kp;
-  if (ki >= 0.0f) cfg.ki = ki;
-  if (kd >= 0.0f) cfg.kd = kd;
-  if (i_limit >= 0.0f) cfg.i_limit = i_limit;
-  if (out_limit >= 0.0f) cfg.output_limit = out_limit;
+  if (kp >= 0.0f)
+    cfg.kp = kp;
+  if (ki >= 0.0f)
+    cfg.ki = ki;
+  if (kd >= 0.0f)
+    cfg.kd = kd;
+  if (i_limit >= 0.0f)
+    cfg.i_limit = i_limit;
+  if (out_limit >= 0.0f)
+    cfg.output_limit = out_limit;
   cfg.dt = 0.01f; // 步长固定
 
   if (is_pos_ring)
@@ -95,7 +100,9 @@ void ChassisManager::configurePID(int axis, bool is_pos_ring, float kp,
     vel_pids_[axis].setConfig(cfg);
 }
 
-void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level, const float val[4], uint32_t mask, bool is_body, bool is_inc) {
+void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level,
+                                    const float val[4], uint32_t mask,
+                                    bool is_body, bool is_inc) {
   auto nav = auv::motion::motion_context.getNavState();
   auto sp = auv::motion::motion_context.getCurrentSetpoint();
 
@@ -183,7 +190,8 @@ void ChassisManager::setControlLevel(auv::motion::ControlLevel new_level) {
   if (new_level == auv::motion::ControlLevel::POSITION) {
     float actual_v_world[4];
     auv::motion::motion_context.transformBodyToWorld(
-        auv::motion::ControlLevel::VELOCITY, nav.vel_body.data(), actual_v_world, false);
+        auv::motion::ControlLevel::VELOCITY, nav.vel_body.data(),
+        actual_v_world, false);
 
     for (int i = 0; i < 4; i++) {
       profiles_[i].align(nav.pos_world[i], actual_v_world[i]);
@@ -227,10 +235,11 @@ std::array<float, 4> ChassisManager::update() {
   // 计算世界系下的实际速度（用于位置环微分项）
   float actual_v_world[4];
   auv::motion::motion_context.transformBodyToWorld(
-      auv::motion::ControlLevel::VELOCITY, actual_v_body, actual_v_world, false);
+      auv::motion::ControlLevel::VELOCITY, actual_v_body, actual_v_world,
+      false);
 
   float v_target_body[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-  //pos->vel  
+  // pos->vel
   if (level_ == auv::motion::ControlLevel::POSITION) {
     float v_target_world[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
@@ -239,7 +248,11 @@ std::array<float, 4> ChassisManager::update() {
       if (config_.planner_enabled) {
         if (i == 3) {
           float current = profiles_[i].getState().p;
-          float target_yaw = current + auv::motion::MotionContext::wrapAngle(target.pos_world[i] - current);//启用规划器时，航向采用最短旋转路径目标值
+          float target_yaw =
+              current +
+              auv::motion::MotionContext::wrapAngle(
+                  target.pos_world[i] -
+                  current); // 启用规划器时，航向采用最短旋转路径目标值
           profile_target = profiles_[i].updatePosition(target_yaw, dt);
         } else {
           profile_target = profiles_[i].updatePosition(target.pos_world[i], dt);
@@ -255,23 +268,26 @@ std::array<float, 4> ChassisManager::update() {
       float pos_error = profile_target.p - actual_p_world[i];
       if (i == 3)
         pos_error = auv::motion::MotionContext::wrapAngle(pos_error);
-      v_target_world[i] = pos_pids_[i].compute(pos_error, dt, pos_derivative) + profile_target.v;
+      v_target_world[i] = pos_pids_[i].compute(pos_error, dt, pos_derivative) +
+                          profile_target.v;
     }
 
     auv::motion::motion_context.transformWorldToBody(
-        auv::motion::ControlLevel::VELOCITY, v_target_world, v_target_body, false);
+        auv::motion::ControlLevel::VELOCITY, v_target_world, v_target_body,
+        false);
 
   } else if (level_ == auv::motion::ControlLevel::VELOCITY) {
     // 速度环：直接跟踪机体系目标
     for (int i = 0; i < 4; i++) {
       if (config_.planner_enabled) {
-        v_target_body[i] = profiles_[i].updateVelocity(target.vel_body[i], dt).v;
+        v_target_body[i] =
+            profiles_[i].updateVelocity(target.vel_body[i], dt).v;
       } else {
         v_target_body[i] = target.vel_body[i];
       }
     }
   }
-  //vel->thr
+  // vel->thr
   for (int i = 0; i < 4; i++) {
     float f_base = 0.0f;
     if (level_ == auv::motion::ControlLevel::POSITION ||

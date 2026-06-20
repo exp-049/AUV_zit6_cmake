@@ -53,6 +53,8 @@ struct ChassisConfig {
     AxisConfig x;
     AxisConfig y;
     AxisConfig z;
+    AxisConfig roll;
+    AxisConfig pitch;
     AxisConfig yaw;
 };
 

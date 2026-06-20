@@ -76,8 +76,6 @@ public:
    */
   void setInitialPosition(double lat, double lon);
 
-
-
 private:
   porting::SerialPort rx_port_; ///< 串口接收驱动
   UART_HandleTypeDef *tx_uart_; ///< 指令发送串口句柄
@@ -88,13 +86,11 @@ private:
   static constexpr uint16_t kMinFrameSize = 133;
   /// 帧解析临时缓冲区（4 字节对齐，确保 memmove/memcpy 使用 32 位总线）
   __attribute__((aligned(4))) uint8_t packet_buf_[kMaxFrameSize] = {0};
-  uint16_t frame_len_ = 0;                  ///< 当前解析长度
+  uint16_t frame_len_ = 0; ///< 当前解析长度
 
   auv::motion::NavState state_{};      ///< 缓存的最新有效位姿状态
   auv::motion::NavState prev_state_{}; ///< 上一帧状态，用于速度差分估计
   bool has_prev_state_ = false;
-
-
 
   // 压力计深度 (m)
   float manometer_z_ = 0.0f;

@@ -9,6 +9,8 @@ SystemConfig sys_config = {
         .x = { 1.0, 0.0, 1.0, 0.3, 0.5, 1.0, 0.02, 0.01, 0.03, 0.8, 0.8, 0.4, 0.013, 2.0 },
         .y = { 1.0, 0.0, 0.0, 0.2, 0.2, 6.5, 0.015, 0.03, 0.8, 0.9, 0.6, 0.3, 0.013, 2.5 },
         .z = { 1.0, 0.0, 0.0, 0.2, 0.5, 10.0, 0.1, 0.0, 0.2, 0.8, 0.5, 0.3, 0.016, 5.0 },
+        .roll = { 3.0, 0.0, 0.5, 0.1, 0.5, 1.0, 0.1, 0.0, 0.2, 0.8, 0.5, 1.0, 0.1, 0.5 },
+        .pitch = { 3.0, 0.0, 0.5, 0.1, 0.5, 1.0, 0.1, 0.0, 0.2, 0.8, 0.5, 1.0, 0.1, 0.5 },
         .yaw = { 1.0, 0.0, 0.0, 0.5, 1.5, 1.0, 0.002, 0.01, 0.05, 1.0, 1.0, 0.8, 0.0003, 0.0005 }
     },
     .ins = { 45.7749, 126.6765 },
@@ -66,6 +68,34 @@ const ParamMeta SYSTEM_PARAMS[] = {
     {"chassis.z.max_a", &sys_config.chassis.z.max_a, ParamType::FLOAT},
     {"chassis.z.mass", &sys_config.chassis.z.mass, ParamType::FLOAT},
     {"chassis.z.drag", &sys_config.chassis.z.drag, ParamType::FLOAT},
+    {"chassis.roll.pos_kp", &sys_config.chassis.roll.pos_kp, ParamType::FLOAT},
+    {"chassis.roll.pos_ki", &sys_config.chassis.roll.pos_ki, ParamType::FLOAT},
+    {"chassis.roll.pos_kd", &sys_config.chassis.roll.pos_kd, ParamType::FLOAT},
+    {"chassis.roll.pos_i_limit", &sys_config.chassis.roll.pos_i_limit, ParamType::FLOAT},
+    {"chassis.roll.pos_output_limit", &sys_config.chassis.roll.pos_output_limit, ParamType::FLOAT},
+    {"chassis.roll.vel_kp", &sys_config.chassis.roll.vel_kp, ParamType::FLOAT},
+    {"chassis.roll.vel_ki", &sys_config.chassis.roll.vel_ki, ParamType::FLOAT},
+    {"chassis.roll.vel_kd", &sys_config.chassis.roll.vel_kd, ParamType::FLOAT},
+    {"chassis.roll.vel_i_limit", &sys_config.chassis.roll.vel_i_limit, ParamType::FLOAT},
+    {"chassis.roll.vel_output_limit", &sys_config.chassis.roll.vel_output_limit, ParamType::FLOAT},
+    {"chassis.roll.max_v", &sys_config.chassis.roll.max_v, ParamType::FLOAT},
+    {"chassis.roll.max_a", &sys_config.chassis.roll.max_a, ParamType::FLOAT},
+    {"chassis.roll.mass", &sys_config.chassis.roll.mass, ParamType::FLOAT},
+    {"chassis.roll.drag", &sys_config.chassis.roll.drag, ParamType::FLOAT},
+    {"chassis.pitch.pos_kp", &sys_config.chassis.pitch.pos_kp, ParamType::FLOAT},
+    {"chassis.pitch.pos_ki", &sys_config.chassis.pitch.pos_ki, ParamType::FLOAT},
+    {"chassis.pitch.pos_kd", &sys_config.chassis.pitch.pos_kd, ParamType::FLOAT},
+    {"chassis.pitch.pos_i_limit", &sys_config.chassis.pitch.pos_i_limit, ParamType::FLOAT},
+    {"chassis.pitch.pos_output_limit", &sys_config.chassis.pitch.pos_output_limit, ParamType::FLOAT},
+    {"chassis.pitch.vel_kp", &sys_config.chassis.pitch.vel_kp, ParamType::FLOAT},
+    {"chassis.pitch.vel_ki", &sys_config.chassis.pitch.vel_ki, ParamType::FLOAT},
+    {"chassis.pitch.vel_kd", &sys_config.chassis.pitch.vel_kd, ParamType::FLOAT},
+    {"chassis.pitch.vel_i_limit", &sys_config.chassis.pitch.vel_i_limit, ParamType::FLOAT},
+    {"chassis.pitch.vel_output_limit", &sys_config.chassis.pitch.vel_output_limit, ParamType::FLOAT},
+    {"chassis.pitch.max_v", &sys_config.chassis.pitch.max_v, ParamType::FLOAT},
+    {"chassis.pitch.max_a", &sys_config.chassis.pitch.max_a, ParamType::FLOAT},
+    {"chassis.pitch.mass", &sys_config.chassis.pitch.mass, ParamType::FLOAT},
+    {"chassis.pitch.drag", &sys_config.chassis.pitch.drag, ParamType::FLOAT},
     {"chassis.yaw.pos_kp", &sys_config.chassis.yaw.pos_kp, ParamType::FLOAT},
     {"chassis.yaw.pos_ki", &sys_config.chassis.yaw.pos_ki, ParamType::FLOAT},
     {"chassis.yaw.pos_kd", &sys_config.chassis.yaw.pos_kd, ParamType::FLOAT},
@@ -89,7 +119,7 @@ const ParamMeta SYSTEM_PARAMS[] = {
     {NULL, NULL, ParamType::FLOAT}
 };
 
-const size_t SYSTEM_PARAMS_COUNT = 68;
+const size_t SYSTEM_PARAMS_COUNT = 96;
 
 } // namespace config
 } // namespace auv
