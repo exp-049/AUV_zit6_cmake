@@ -28,3 +28,5 @@ CMakePresets.json
 
 micro_ros_stm32cubemx_utils/microros_static_library_ide/libmicroro*
 upper_examples/__pycache__/
+
+Usr

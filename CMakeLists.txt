@@ -111,6 +111,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     UserApp/Control
     UserApp/Application
     UserApp/Porting
+    UserApp/Thirdparty  # Eigen 矩阵库
 )
 
 # Add project symbols (macros)
@@ -119,6 +120,10 @@ add_compile_options(-Wno-error -Wno-error=fpermissive -Wno-pointer-to-int-cast -
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
     DATA_IN_D2_SRAM
+
+    # Eigen 矩阵库配置：禁用运行时断言和调试检查
+    EIGEN_NO_DEBUG
+    NDEBUG
 )
 
 # Remove wrong libob.a library dependency when using cpp files
