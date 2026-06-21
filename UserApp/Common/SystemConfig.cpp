@@ -16,7 +16,7 @@ SystemConfig sys_config = {
     .ins = { 45.7749, 126.6765 },
     .soft_watchdog = { 3000, true, false, false },
     .sensors = { ZDataSource::USE_MS5837_Z },
-    .simulation = { false, 35.0, 15.0, 1000.0, 0.05 }
+    .simulation = {{ false, false, 35.0, 15.0, 1000.0, 0.05 }}
 };
 
 const ParamMeta SYSTEM_PARAMS[] = {

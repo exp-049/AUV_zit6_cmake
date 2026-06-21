@@ -13,8 +13,6 @@
 #include <string.h>
 // No global using namespace directives
 
-// HITL 仿真模式 — 默认关闭；CMake Debug 预设可添加 -DAUV_SIMULATION_ENABLE
-// 生产固件中仿真代码完全被编译器剔除，零开销
 #if AUV_SIMULATION_ENABLE
 static auv::control::AuvSimulator g_hitl_sim(0.01f);
 #endif
@@ -75,6 +73,21 @@ auv::motion::NavState ControlTask::updateNavigation() {
     auv::system::system_context.nav_status.timestamp = HAL_GetTick();
   } else
 #endif
+  if (auv::config::sys_config.simulation.sitl_enabled) {
+    // SITL 模式：从 micro-ROS 订阅的仿真数据注入
+    if (auv::motion::motion_context.isSimDataValid()) {
+      state = auv::motion::motion_context.getSimNavState();
+      auv::system::system_context.nav_status.imu_state = 4;
+      auv::system::system_context.nav_status.timestamp = HAL_GetTick();
+    } else {
+      // 仿真数据尚未到达，使用零值
+      for (int i = 0; i < 6; ++i) {
+        state.pos_world[i] = 0.0f;
+        state.vel_body[i] = 0.0f;
+      }
+      auv::system::system_context.nav_status.imu_state = 0;
+    }
+  } else
   {
     // 正常：从硬件读取原始导航数据
     state = auv::device::ins_driver.getNavState();
@@ -164,10 +177,12 @@ void ControlTask::handleArmState(uint32_t now) {
     // 允许解锁逻辑：
     // 1. 数据为 kRemoteModeHeartbeatData (3)
     // 2. 数据为 1 且 (导航有效 或 处于仿真模式)
+    bool sim_mode = auv::config::sys_config.simulation.hitl_enabled ||
+                    auv::config::sys_config.simulation.sitl_enabled;
     bool can_arm =
         (hbt_data == kRemoteModeHeartbeatData) ||
         (hbt_data == 1 && (auv::system::system_context.getNavigationValid() ||
-                           auv::config::sys_config.simulation.hitl_enabled));
+                           sim_mode));
 
     if (can_arm) {
       taskENTER_CRITICAL();
@@ -195,7 +210,7 @@ void ControlTask::handleArmState(uint32_t now) {
       ROS_LOG_INFO("System ARMED");
     } else {
       if (hbt_data == 1 && !(auv::system::system_context.getNavigationValid() ||
-                             auv::config::sys_config.simulation.hitl_enabled)) {
+                             sim_mode)) {
         static uint32_t last_warn_ms = 0;
         if (now - last_warn_ms > 2000) {
           last_warn_ms = now;

@@ -216,6 +216,41 @@ public:
     return h;
   }
 
+  // --- SITL 仿真数据注入接口 ---
+
+  /**
+   * @brief 存储从上位机收到的 SITL 仿真位姿/速度
+   *        由 MicroRosTask 的 sim 回调调用（中断/任务上下文）
+   */
+  void setSimNavState(const NavState &state) {
+    taskENTER_CRITICAL();
+    sim_nav_state_ = state;
+    sim_data_valid_ = true;
+    taskEXIT_CRITICAL();
+  }
+
+  /**
+   * @brief 读取缓存的 SITL 仿真导航状态
+   */
+  NavState getSimNavState() const {
+    NavState state;
+    taskENTER_CRITICAL();
+    state = sim_nav_state_;
+    taskEXIT_CRITICAL();
+    return state;
+  }
+
+  /**
+   * @brief 查询 SITL 仿真数据是否已收到过
+   */
+  bool isSimDataValid() const {
+    bool valid;
+    taskENTER_CRITICAL();
+    valid = sim_data_valid_;
+    taskEXIT_CRITICAL();
+    return valid;
+  }
+
   // 坐标偏置变量（公开以备特殊场景直接访问，优先使用 getHomeOffset）
   bool use_offset_ = false;
   float offset_x_ = 0.0f;
@@ -235,6 +270,10 @@ private:
   float last_dt_ms = 0.0f;
   uint32_t last_received_seq = 0;
   float last_output_forces[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+
+  // --- SITL 仿真数据缓存 ---
+  NavState sim_nav_state_{}; ///< 从上位机收到的 SITL 仿真数据
+  bool sim_data_valid_ = false; ///< 是否已至少收到一次仿真数据
 };
 
 extern MotionContext motion_context;

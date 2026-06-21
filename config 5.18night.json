@@ -111,6 +111,7 @@
   },
   "simulation": {
     "hitl_enabled": false,
+    "sitl_enabled": false,
     "mass": 35.0,
     "drag": 15.0,
     "thrust_k": 1000.0

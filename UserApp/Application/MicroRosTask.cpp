@@ -87,8 +87,10 @@ void MicroRosTask::onZitSetpoint(const void *msgin) {
   float val[4] = {msg->x, msg->y, msg->z, msg->yaw};
 
   auto nav = auv::motion::motion_context.getNavState();
+  bool sim_mode = auv::config::sys_config.simulation.hitl_enabled ||
+                  auv::config::sys_config.simulation.sitl_enabled;
   bool nav_valid = auv::system::system_context.getNavigationValid() ||
-                   auv::config::sys_config.simulation.hitl_enabled;
+                   sim_mode;
   if ((new_level == auv::motion::ControlLevel::POSITION ||
        new_level == auv::motion::ControlLevel::VELOCITY) &&
       !nav_valid)
@@ -173,6 +175,40 @@ void MicroRosTask::onLedCmd(const void *msgin) {
   const auto *msg = (const std_msgs__msg__UInt8 *)msgin;
   auv::device::motor_driver.setLightState(msg->data);
   ROS_LOG_INFO("LED Cmd: state=%d", msg->data);
+}
+
+void MicroRosTask::onSimPos(const void *msgin) {
+  const auto *msg = (const std_msgs__msg__Float32MultiArray *)msgin;
+  if (msg->data.size < 6) return;
+
+  // 解析 6DOF 位置/姿态: [x, y, z, roll, pitch, yaw] — NED 世界系
+  auv::motion::NavState state;
+  for (int i = 0; i < 6; ++i) {
+    state.pos_world[i] = msg->data.data[i];
+  }
+  // 保持当前速度不变（仅更新位置）
+  auto cur = auv::motion::motion_context.getSimNavState();
+  for (int i = 0; i < 6; ++i) {
+    state.vel_body[i] = cur.vel_body[i];
+  }
+  auv::motion::motion_context.setSimNavState(state);
+}
+
+void MicroRosTask::onSimVel(const void *msgin) {
+  const auto *msg = (const std_msgs__msg__Float32MultiArray *)msgin;
+  if (msg->data.size < 6) return;
+
+  // 解析 6DOF 速度: [u, v, w, p, q, r] — FRD 机体系
+  auv::motion::NavState state;
+  for (int i = 0; i < 6; ++i) {
+    state.vel_body[i] = msg->data.data[i];
+  }
+  // 保持当前位置不变（仅更新速度）
+  auto cur = auv::motion::motion_context.getSimNavState();
+  for (int i = 0; i < 6; ++i) {
+    state.pos_world[i] = cur.pos_world[i];
+  }
+  auv::motion::motion_context.setSimNavState(state);
 }
 
 void MicroRosTask::onUpdateParams(const void *reqin, rmw_request_id_t *req_id,
@@ -296,6 +332,8 @@ void MicroRosTask::cleanupMicroRos() {
   rcl_subscription_fini(&ins_cmd_sub_, &node_);
   rcl_subscription_fini(&servo_sub_, &node_);
   rcl_subscription_fini(&led_sub_, &node_);
+  rcl_subscription_fini(&sim_pos_sub_, &node_);
+  rcl_subscription_fini(&sim_vel_sub_, &node_);
   rcl_node_fini(&node_);
   rclc_support_fini(&support_);
   memset(&support_, 0, sizeof(support_));
@@ -410,6 +448,24 @@ void MicroRosTask::run() {
               &setpoint_sub_, &node_,
               ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitSetpoint),
               "/zit6/cmd/setpoint");
+
+          // SITL 仿真数据订阅
+          std_msgs__msg__Float32MultiArray__init(&sim_pos_msg_);
+          sim_pos_msg_.data.data = sim_pos_buf_;
+          sim_pos_msg_.data.size = 6;
+          sim_pos_msg_.data.capacity = 6;
+          std_msgs__msg__Float32MultiArray__init(&sim_vel_msg_);
+          sim_vel_msg_.data.data = sim_vel_buf_;
+          sim_vel_msg_.data.size = 6;
+          sim_vel_msg_.data.capacity = 6;
+          rclc_subscription_init_default(
+              &sim_pos_sub_, &node_,
+              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+              "/zit6/sim/pos");
+          rclc_subscription_init_default(
+              &sim_vel_sub_, &node_,
+              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+              "/zit6/sim/vel");
           rclc_subscription_init_default(
               &arm_sub_, &node_,
               ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt32),
@@ -432,6 +488,12 @@ void MicroRosTask::run() {
                                          &MicroRosTask::servoCb, ON_NEW_DATA);
           rclc_executor_add_subscription(&executor_, &led_sub_, &led_msg_,
                                          &MicroRosTask::ledCb, ON_NEW_DATA);
+          rclc_executor_add_subscription(&executor_, &sim_pos_sub_,
+                                         &sim_pos_msg_, &MicroRosTask::simPosCb,
+                                         ON_NEW_DATA);
+          rclc_executor_add_subscription(&executor_, &sim_vel_sub_,
+                                         &sim_vel_msg_, &MicroRosTask::simVelCb,
+                                         ON_NEW_DATA);
           // Initialize services for parameter update and query
           // Initialize update_params service and check return codes
           {

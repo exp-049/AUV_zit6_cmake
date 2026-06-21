@@ -76,6 +76,7 @@ struct SensorsConfig {
 
 struct SimulationConfig {
     bool hitl_enabled;
+    bool sitl_enabled;
     float mass;
     float drag;
     float thrust_k;

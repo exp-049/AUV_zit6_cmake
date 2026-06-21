@@ -178,6 +178,7 @@ struct SensorsConfig {
 
 struct SimulationConfig {
     bool hitl_enabled;
+    bool sitl_enabled;
     float mass;
     float drag;
     float thrust_k;
@@ -239,7 +240,7 @@ SystemConfig sys_config = {{
     .ins = {{ {config['ins']['init_lat']}, {config['ins']['init_lon']} }},
     .soft_watchdog = {{ {config['soft_watchdog']['timeout_ms']}, {str(config['soft_watchdog']['check_microros']).lower()}, {str(config['soft_watchdog']['check_ins']).lower()}, {str(config['soft_watchdog']['check_depth']).lower()} }},
     .sensors = {{ ZDataSource::{z_enum} }},
-    .simulation = {{ {str(config['simulation']['hitl_enabled']).lower()}, {config['simulation']['mass']}, {config['simulation']['drag']}, {config['simulation']['thrust_k']}, {config['simulation']['metacentric_height']} }}
+    .simulation = {{ {str(config['simulation']['hitl_enabled']).lower()}, {str(config['simulation']['sitl_enabled']).lower()}, {config['simulation']['mass']}, {config['simulation']['drag']}, {config['simulation']['thrust_k']}, {config['simulation']['metacentric_height']} }}
 }};
 
 const ParamMeta SYSTEM_PARAMS[] = {{

@@ -33,13 +33,14 @@ private:
   rcl_node_t node_;
   rclc_executor_t executor_;
   rcl_subscription_t setpoint_sub_, arm_sub_, ins_cmd_sub_, servo_sub_,
-      led_sub_;
+      led_sub_, sim_pos_sub_, sim_vel_sub_;
   rcl_publisher_t pos_pub_, vel_pub_, thr_pub_, zithbt_pub_, status_pub_, log_pub_;
 
   // 消息 + 缓冲区
   std_msgs__msg__Float32 servo_msg_;
   std_msgs__msg__UInt8 led_msg_;
-  std_msgs__msg__Float32MultiArray pos_fb_msg_, vel_fb_msg_, thr_fb_msg_;
+  std_msgs__msg__Float32MultiArray pos_fb_msg_, vel_fb_msg_, thr_fb_msg_,
+      sim_pos_msg_, sim_vel_msg_;
   zit6_interfaces__msg__ZitSetpoint setpoint_msg_;
   zit6_interfaces__msg__ZitStatus status_msg_;
   std_msgs__msg__UInt8 ins_cmd_msg_;
@@ -55,6 +56,8 @@ private:
 
   // ROS 消息接口仍为 4 元素 [X, Y, Z, Yaw]，从 6DOF 数据正确映射
   float pos_buf_[4], vel_buf_[4], thr_buf_[4];
+  // SITL sim 消息为 6 元素 [X,Y,Z,Roll,Pitch,Yaw] / [u,v,w,p,q,r]
+  float sim_pos_buf_[6], sim_vel_buf_[6];
 
   // 处理函数（原来位于匿名命名空间）
   void onZitSetpoint(const void *msgin);
@@ -62,6 +65,8 @@ private:
   void onInsCommand(const void *msgin);
   void onServoCmd(const void *msgin);
   void onLedCmd(const void *msgin);
+  void onSimPos(const void *msgin);
+  void onSimVel(const void *msgin);
   void onUpdateParams(const void *req, rmw_request_id_t *req_id, void *res);
   void onGetParams(const void *req, rmw_request_id_t *req_id, void *res);
   void cleanupMicroRos();
@@ -86,6 +91,14 @@ private:
   static void ledCb(const void *msgin) {
     if (instance_)
       instance_->onLedCmd(msgin);
+  }
+  static void simPosCb(const void *msgin) {
+    if (instance_)
+      instance_->onSimPos(msgin);
+  }
+  static void simVelCb(const void *msgin) {
+    if (instance_)
+      instance_->onSimVel(msgin);
   }
   static void updateParamsCb(const void *req, rmw_request_id_t *req_id,
                              void *res) {
