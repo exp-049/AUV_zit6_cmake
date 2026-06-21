@@ -16,7 +16,8 @@ SystemConfig sys_config = {
     .ins = { 45.7749, 126.6765 },
     .soft_watchdog = { 3000, true, false, false },
     .sensors = { ZDataSource::USE_MS5837_Z },
-    .simulation = {{ false, false, 35.0, 15.0, 1000.0, 0.05 }}
+    .simulation = { false, false, 35.0, 15.0, 1000.0, 0.05 },
+    .firmware_version = "26_06_21"
 };
 
 const ParamMeta SYSTEM_PARAMS[] = {
@@ -113,14 +114,16 @@ const ParamMeta SYSTEM_PARAMS[] = {
     {"ins.init_lat", &sys_config.ins.init_lat, ParamType::FLOAT},
     {"ins.init_lon", &sys_config.ins.init_lon, ParamType::FLOAT},
     {"simulation.hitl_enabled", &sys_config.simulation.hitl_enabled, ParamType::BOOL},
+    {"simulation.sitl_enabled", &sys_config.simulation.sitl_enabled, ParamType::BOOL},
     {"simulation.mass", &sys_config.simulation.mass, ParamType::FLOAT},
     {"simulation.drag", &sys_config.simulation.drag, ParamType::FLOAT},
     {"simulation.thrust_k", &sys_config.simulation.thrust_k, ParamType::FLOAT},
     {"simulation.metacentric_height", &sys_config.simulation.metacentric_height, ParamType::FLOAT},
+    {"firmware.version", sys_config.firmware_version, ParamType::STRING},
     {NULL, NULL, ParamType::FLOAT}
 };
 
-const size_t SYSTEM_PARAMS_COUNT = 97;
+const size_t SYSTEM_PARAMS_COUNT = 99;
 
 } // namespace config
 } // namespace auv

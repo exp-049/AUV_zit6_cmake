@@ -191,6 +191,7 @@ struct SystemConfig {
     SoftWatchdogConfig soft_watchdog;
     SensorsConfig sensors;
     SimulationConfig simulation;
+    char firmware_version[32];
 };
 
 // 全局配置实例声明
@@ -240,7 +241,8 @@ SystemConfig sys_config = {{
     .ins = {{ {config['ins']['init_lat']}, {config['ins']['init_lon']} }},
     .soft_watchdog = {{ {config['soft_watchdog']['timeout_ms']}, {str(config['soft_watchdog']['check_microros']).lower()}, {str(config['soft_watchdog']['check_ins']).lower()}, {str(config['soft_watchdog']['check_depth']).lower()} }},
     .sensors = {{ ZDataSource::{z_enum} }},
-    .simulation = {{ {str(config['simulation']['hitl_enabled']).lower()}, {str(config['simulation']['sitl_enabled']).lower()}, {config['simulation']['mass']}, {config['simulation']['drag']}, {config['simulation']['thrust_k']}, {config['simulation']['metacentric_height']} }}
+    .simulation = {{ {str(config['simulation']['hitl_enabled']).lower()}, {str(config['simulation']['sitl_enabled']).lower()}, {config['simulation']['mass']}, {config['simulation']['drag']}, {config['simulation']['thrust_k']}, {config['simulation']['metacentric_height']} }},
+    .firmware_version = "26_06_21"
 }};
 
 const ParamMeta SYSTEM_PARAMS[] = {{
@@ -254,9 +256,11 @@ const ParamMeta SYSTEM_PARAMS[] = {{
 
         cpp_content += f'    {{"{p["path"]}", &sys_config.{cpp_path}, {p["type"]}}},\n'
     
+    # 手动添加非 JSON 配置项的注册
+    cpp_content += '    {"firmware.version", sys_config.firmware_version, ParamType::STRING},\n'
     cpp_content += "    {NULL, NULL, ParamType::FLOAT}\n"
     cpp_content += "};\n\n"
-    cpp_content += f"const size_t SYSTEM_PARAMS_COUNT = {len(params)};\n\n"
+    cpp_content += f"const size_t SYSTEM_PARAMS_COUNT = {len(params) + 1};\n\n"
     cpp_content += "} // namespace config\n"
     cpp_content += "} // namespace auv\n"
 

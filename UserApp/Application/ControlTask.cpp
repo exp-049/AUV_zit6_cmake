@@ -27,7 +27,7 @@ void ControlTask::run() {
     auv::motion::motion_context.setLastDtMs(static_cast<float>(kLoopPeriodMs));
 
     auv::motion::NavState nav = updateNavigation();
-    handleArmState(HAL_GetTick());
+    safety_monitor_.check(HAL_GetTick());
     computeAndPublish();
 
     vTaskDelayUntil(&last_wake_time_, pdMS_TO_TICKS(kLoopPeriodMs));
@@ -129,105 +129,6 @@ auv::motion::NavState ControlTask::updateNavigation() {
   auv::motion::motion_context.setNavState(state);
 
   return state;
-}
-
-void ControlTask::setControlLevelNone() {
-  auv::control::chassis.setControlLevel(auv::motion::ControlLevel::NONE);
-}
-
-void ControlTask::forceDisarmWithNeutralLevel() {
-  taskENTER_CRITICAL();
-  auv::system::system_context.is_system_armed = false;
-  auv::system::system_context.arm_heartbeat_count = 0;
-  auv::motion::motion_context.clearHomeOffset(); // 失锁时恢复原始坐标系
-  taskEXIT_CRITICAL();
-  setControlLevelNone();
-}
-
-void ControlTask::handleArmState(uint32_t now) {
-  taskENTER_CRITICAL();
-  const bool armed_snapshot = auv::system::system_context.is_system_armed;
-  const uint32_t heartbeat_snapshot =
-      auv::system::system_context.last_arm_heartbeat_ms;
-  const uint32_t heartbeat_count_snapshot =
-      auv::system::system_context.arm_heartbeat_count;
-  const uint32_t arm_start_snapshot = auv::system::system_context.arm_start_ms;
-  taskEXIT_CRITICAL();
-
-  if (armed_snapshot) {
-    if (now - heartbeat_snapshot > kArmedHeartbeatTimeoutMs) {
-      forceDisarmWithNeutralLevel();
-      ROS_LOG_INFO("System DISARMED - Heartbeat timeout");
-    }
-    return;
-  }
-
-  if (auv::control::chassis.getControlLevel() !=
-      auv::motion::ControlLevel::NONE) {
-    setControlLevelNone();
-  }
-
-  if (heartbeat_count_snapshot >= kArmMinHeartbeatCount &&
-      (now - arm_start_snapshot >= kArmMinDurationMs)) {
-    taskENTER_CRITICAL();
-    const uint32_t hbt_data =
-        auv::system::system_context.last_arm_heartbeat_data;
-    taskEXIT_CRITICAL();
-
-    // 允许解锁逻辑：
-    // 1. 数据为 kRemoteModeHeartbeatData (3)
-    // 2. 数据为 1 且 (导航有效 或 处于仿真模式)
-    bool sim_mode = auv::config::sys_config.simulation.hitl_enabled ||
-                    auv::config::sys_config.simulation.sitl_enabled;
-    bool can_arm =
-        (hbt_data == kRemoteModeHeartbeatData) ||
-        (hbt_data == 1 && (auv::system::system_context.getNavigationValid() ||
-                           sim_mode));
-
-    if (can_arm) {
-      taskENTER_CRITICAL();
-      if (!auv::system::system_context.is_system_armed) {
-
-        auto nav_state = auv::motion::motion_context.getNavState();
-        // Roll/Pitch 强制为 0
-        {
-          auv::math::Vector6f home_offset;
-          home_offset << nav_state.pos_world[0], // X
-              nav_state.pos_world[1],            // Y
-              nav_state.pos_world[2],            // Z
-              0.0f,                              // Roll 强制为 0
-              0.0f,                              // Pitch 强制为 0
-              nav_state.pos_world[5];            // Yaw 正常记录
-          auv::motion::motion_context.setHomeOffset(home_offset);
-        }
-
-        // 3. 锁定控制器目标为当前点（即新坐标系的 0 点）
-        auv::motion::motion_context.resetSetpoint();
-      }
-      auv::system::system_context.is_system_armed = true;
-      taskEXIT_CRITICAL();
-
-      ROS_LOG_INFO("System ARMED");
-    } else {
-      if (hbt_data == 1 && !(auv::system::system_context.getNavigationValid() ||
-                             sim_mode)) {
-        static uint32_t last_warn_ms = 0;
-        if (now - last_warn_ms > 2000) {
-          last_warn_ms = now;
-          ROS_LOG_WARN("Arm denied - Navigation NOT valid");
-        }
-      }
-      taskENTER_CRITICAL();
-      auv::system::system_context.arm_heartbeat_count = 0;
-      taskEXIT_CRITICAL();
-    }
-  }
-
-  if (now - heartbeat_snapshot > kDisarmedHeartbeatTimeoutMs) {
-    taskENTER_CRITICAL();
-    auv::system::system_context.arm_heartbeat_count = 0;
-    taskEXIT_CRITICAL();
-  }
 }
 
 void ControlTask::computeAndPublish() {

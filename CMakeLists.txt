@@ -84,6 +84,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     UserApp/Application/AppMain.cpp
     UserApp/Application/ControlTask.cpp
     UserApp/Application/MicroRosTask.cpp
+    UserApp/Application/MicroRosTransport.cpp
+    UserApp/Application/MicroRosPublisher.cpp
+    UserApp/Application/MicroRosSubscriber.cpp
+    UserApp/Application/MicroRosService.cpp
     UserApp/Application/IICTask.cpp
     UserApp/Common/MotionContext.cpp
     UserApp/Common/SystemContext.cpp
@@ -97,6 +101,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     UserApp/Porting/SerialPort.cpp
     UserApp/Porting/cJSON.c
     UserApp/Control/ChassisManager.cpp
+    UserApp/Control/SafetyMonitor.cpp
     UserApp/Control/PID_Controller.cpp
     UserApp/Control/KinematicProfile.cpp
     micro_ros_stm32cubemx_utils/extra_sources/microros_transports/dma_transport.c

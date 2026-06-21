@@ -47,6 +47,7 @@ class ConfigWidget(QWidget):
             "soft_watchdog.check_depth",
             "chassis.planner_enabled",
             "simulation.hitl_enabled",
+            "simulation.sitl_enabled",
         }
         self._enum_paths = {"z_data_sourse"}
         self._enum_allowed = {
@@ -269,6 +270,16 @@ class ConfigWidget(QWidget):
                 row = self.params_map[path]
                 self.table.setItem(row, 1, QTableWidgetItem(self._format_value(val)))
                 self.table.item(row, 1).setFlags(Qt.ItemIsEnabled)
+            else:
+                # 固件中有但本地 config.json 没有的参数（如 firmware.version）
+                row = self.table.rowCount()
+                self.table.insertRow(row)
+                self.table.setItem(row, 0, QTableWidgetItem(path))
+                self.table.item(row, 0).setFlags(Qt.ItemIsEnabled)
+                self.table.setItem(row, 1, QTableWidgetItem(self._format_value(val)))
+                self.table.item(row, 1).setFlags(Qt.ItemIsEnabled)
+                self.table.setItem(row, 2, QTableWidgetItem(self._format_value(val)))
+                self.params_map[path] = row
 
     def on_apply(self):
         paths, values = [], []

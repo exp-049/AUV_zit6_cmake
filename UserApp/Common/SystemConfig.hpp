@@ -89,6 +89,7 @@ struct SystemConfig {
     SoftWatchdogConfig soft_watchdog;
     SensorsConfig sensors;
     SimulationConfig simulation;
+    char firmware_version[32];
 };
 
 // 全局配置实例声明

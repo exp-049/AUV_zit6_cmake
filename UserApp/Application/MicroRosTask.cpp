@@ -1,655 +1,113 @@
 #include "MicroRosTask.hpp"
 #include "AppMain.hpp"
-#include "MotionContext.hpp"
+#include "FreeRTOS.h"
 #include "SoftWatchdog.hpp"
-#include "SystemContext.hpp"
-#include "RosLogger.hpp"
+#include "cJSON.h"
+#include "main.h"
 #include "task.h"
 #include <rcl/error_handling.h>
-#include <rcl/rcl.h>
-#include <rclc/executor.h>
-#include <rclc/rclc.h>
-#include <rcutils/allocator.h>
 #include <rmw_microros/rmw_microros.h>
 
-#include "ConfigService.hpp"
-#include "cJSON.h"
-#include <cmath>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <rosidl_runtime_c/string_functions.h>
-#include <std_msgs/msg/bool.h>
-#include <std_msgs/msg/float32.h>
-#include <std_msgs/msg/float32_multi_array.h>
-#include <std_msgs/msg/u_int32.h>
-#include <std_msgs/msg/u_int8.h>
-#include <zit6_interfaces/msg/zit_pid_status.h>
-#include <zit6_interfaces/msg/zit_setpoint.h>
-#include <zit6_interfaces/msg/zit_status.h>
-#include <zit6_interfaces/srv/get_params.h>
-#include <zit6_interfaces/srv/update_params.h>
-
-extern "C" {
-bool cubemx_transport_open(struct uxrCustomTransport *transport);
-bool cubemx_transport_close(struct uxrCustomTransport *transport);
-size_t cubemx_transport_write(struct uxrCustomTransport *transport,
-                              const uint8_t *buf, size_t len, uint8_t *errcode);
-size_t cubemx_transport_read(struct uxrCustomTransport *transport, uint8_t *buf,
-                             size_t len, int timeout, uint8_t *errcode);
-void *microros_allocate(size_t size, void *state);
-void microros_deallocate(void *ptr, void *state);
-void *microros_reallocate(void *ptr, size_t new_size, void *state);
-void *microros_zero_allocate(size_t number_of_elements,
-                             size_t size_t_of_element, void *state);
-}
+// cJSON 使用 micro-ROS 分配器
+extern "C" void *microros_allocate(size_t size, void *state);
+extern "C" void microros_deallocate(void *ptr, void *state);
 
 static void *cjson_malloc(size_t size) { return microros_allocate(size, NULL); }
 static void cjson_free(void *ptr) { microros_deallocate(ptr, NULL); }
 
-// 实例指针定义
-MicroRosTask *MicroRosTask::instance_ = nullptr;
-
-// (on-target debug UART removed — no debug pins available)
-
-// --- 成员回调实现 ---
-void MicroRosTask::onZitSetpoint(const void *msgin) {
-  const auto *msg = (const zit6_interfaces__msg__ZitSetpoint *)msgin;
-  auv::motion::motion_context.setLastReceivedSeq(msg->seq);
-  if (!std::isfinite(msg->x) || !std::isfinite(msg->y) ||
-      !std::isfinite(msg->z) || !std::isfinite(msg->yaw))
-    return;
-  if (!auv::system::system_context.is_system_armed)
-    return;
-
-  uint32_t level_idx = msg->control_key & 0x03;
-  if (level_idx >= 3)
-    return;
-
-  auv::motion::ControlLevel new_level;
-  switch (level_idx) {
-  case 0:
-    new_level = auv::motion::ControlLevel::POSITION;
-    break;
-  case 1:
-    new_level = auv::motion::ControlLevel::VELOCITY;
-    break;
-  case 2:
-    new_level = auv::motion::ControlLevel::ACTUATOR;
-    break;
-  default:
-    return;
-  }
-
-  bool is_body = (msg->control_key & 0x10) != 0;
-  bool is_inc = (msg->control_key & 0x20) != 0;
-  uint32_t mask = msg->type_mask;
-  float val[4] = {msg->x, msg->y, msg->z, msg->yaw};
-
-  auto nav = auv::motion::motion_context.getNavState();
-  bool sim_mode = auv::config::sys_config.simulation.hitl_enabled ||
-                  auv::config::sys_config.simulation.sitl_enabled;
-  bool nav_valid = auv::system::system_context.getNavigationValid() ||
-                   sim_mode;
-  if ((new_level == auv::motion::ControlLevel::POSITION ||
-       new_level == auv::motion::ControlLevel::VELOCITY) &&
-      !nav_valid)
-    return;
-
-  taskENTER_CRITICAL();
-
-  // 1. 记录原始 AGX 设定值快照
-  auv::motion::RawSetpoint raw_sp;
-  raw_sp.level = new_level;
-  raw_sp.data[0] = val[0];
-  raw_sp.data[1] = val[1];
-  raw_sp.data[2] = val[2];
-  raw_sp.data[3] = val[3];
-  raw_sp.type_mask = mask;
-  raw_sp.is_body = is_body;
-  raw_sp.is_incremental = is_inc;
-  auv::motion::motion_context.setRawSetpoint(raw_sp);
-
-  // 2. 更新底盘目标设定值并切换控制层级
-  auv::control::chassis.updateSetpoint(new_level, val, mask, is_body, is_inc);
-  taskEXIT_CRITICAL();
-
-  ROS_LOG_INFO("Setpoint rec: seq=%lu x=%.2f y=%.2f z=%.2f yaw=%.2f",
-               (unsigned long)msg->seq, msg->x, msg->y, msg->z, msg->yaw);
-}
-
-void MicroRosTask::onArmHeartbeat(const void *msgin) {
-  const auto *msg = (const std_msgs__msg__UInt32 *)msgin;
-  taskENTER_CRITICAL();
-  auv::system::system_context.last_arm_heartbeat_ms = HAL_GetTick();
-  auv::system::system_context.last_arm_heartbeat_data = msg->data;
-  if (!auv::system::system_context.is_system_armed) {
-    if (auv::system::system_context.arm_heartbeat_count == 0)
-      auv::system::system_context.arm_start_ms =
-          auv::system::system_context.last_arm_heartbeat_ms;
-    auv::system::system_context.arm_heartbeat_count++;
-  }
-  taskEXIT_CRITICAL();
-}
-
-void MicroRosTask::onInsCommand(const void *msgin) {
-  const auto *message = static_cast<const std_msgs__msg__UInt8 *>(msgin);
-  if (message == nullptr)
-    return;
-  switch (message->data) {
-  case 1:
-    auv::device::ins_driver.setDvlPower(true);
-    ROS_LOG_INFO("INS Cmd: DVL Power ON");
-    break;
-  case 2:
-    auv::device::ins_driver.setDvlPower(false);
-    ROS_LOG_INFO("INS Cmd: DVL Power OFF");
-    break;
-  case 3:
-    auv::device::ins_driver.restart();
-    ROS_LOG_INFO("INS Cmd: INS Restart");
-    break;
-  case 4:
-    auv::device::ins_driver.resetPosition();
-    ROS_LOG_INFO("INS Cmd: Reset Position");
-    break;
-  case 5:
-    auv::device::ins_driver.setInitialPosition(
-        auv::config::sys_config.ins.init_lat,
-        auv::config::sys_config.ins.init_lon);
-    ROS_LOG_INFO("INS Cmd: Set Initial Position");
-    break;
-  default:
-    ROS_LOG_WARN("INS Cmd: Unknown cmd %d", message->data);
-    break;
-  }
-}
-
-void MicroRosTask::onServoCmd(const void *msgin) {
-  const auto *msg = (const std_msgs__msg__Float32 *)msgin;
-  auv::device::motor_driver.setServoAngle(msg->data);
-  ROS_LOG_INFO("Servo Cmd: angle=%.2f", msg->data);
-}
-
-void MicroRosTask::onLedCmd(const void *msgin) {
-  const auto *msg = (const std_msgs__msg__UInt8 *)msgin;
-  auv::device::motor_driver.setLightState(msg->data);
-  ROS_LOG_INFO("LED Cmd: state=%d", msg->data);
-}
-
-void MicroRosTask::onSimPos(const void *msgin) {
-  const auto *msg = (const std_msgs__msg__Float32MultiArray *)msgin;
-  if (msg->data.size < 6) return;
-
-  // 解析 6DOF 位置/姿态: [x, y, z, roll, pitch, yaw] — NED 世界系
-  auv::motion::NavState state;
-  for (int i = 0; i < 6; ++i) {
-    state.pos_world[i] = msg->data.data[i];
-  }
-  // 保持当前速度不变（仅更新位置）
-  auto cur = auv::motion::motion_context.getSimNavState();
-  for (int i = 0; i < 6; ++i) {
-    state.vel_body[i] = cur.vel_body[i];
-  }
-  auv::motion::motion_context.setSimNavState(state);
-}
-
-void MicroRosTask::onSimVel(const void *msgin) {
-  const auto *msg = (const std_msgs__msg__Float32MultiArray *)msgin;
-  if (msg->data.size < 6) return;
-
-  // 解析 6DOF 速度: [u, v, w, p, q, r] — FRD 机体系
-  auv::motion::NavState state;
-  for (int i = 0; i < 6; ++i) {
-    state.vel_body[i] = msg->data.data[i];
-  }
-  // 保持当前位置不变（仅更新速度）
-  auto cur = auv::motion::motion_context.getSimNavState();
-  for (int i = 0; i < 6; ++i) {
-    state.pos_world[i] = cur.pos_world[i];
-  }
-  auv::motion::motion_context.setSimNavState(state);
-}
-
-void MicroRosTask::onUpdateParams(const void *reqin, rmw_request_id_t *req_id,
-                                  void *resin) {
-  (void)req_id;
-  auto *res = static_cast<zit6_interfaces__srv__UpdateParams_Response *>(resin);
-  const auto *req =
-      static_cast<const zit6_interfaces__srv__UpdateParams_Request *>(reqin);
-  if (!res || !req)
-    return;
-
-  const char *json_ptr = (req->json.size > 0) ? req->json.data : nullptr;
-  const char *paths[16] = {nullptr};
-  const char *values[16] = {nullptr};
-  size_t count = (req->paths.size < 16) ? req->paths.size : 16;
-  for (size_t i = 0; i < count; ++i) {
-    paths[i] = req->paths.data[i].data;
-    values[i] = req->values.data[i].data;
-  }
-
-  char out_buf[64] = {0};
-  res->success = auv::service::ConfigService::updateParams(
-      json_ptr, paths, values, count, out_buf, 64);
-
-  // 如果参数中有 PID 相关修改，同步到控制算法
-  if (res->success) {
-    auv::control::chassis.applyConfig(auv::config::sys_config.chassis);
-    ROS_LOG_INFO("Params updated: %s", out_buf);
-  } else {
-    ROS_LOG_WARN("Params update failed: %s", out_buf);
-  }
-
-  rosidl_runtime_c__String__assign(&res->message, out_buf);
-}
-
-void MicroRosTask::onGetParams(const void *reqin, rmw_request_id_t *req_id,
-                               void *resin) {
-  (void)req_id;
-  auto *res = static_cast<zit6_interfaces__srv__GetParams_Response *>(resin);
-  const auto *req =
-      static_cast<const zit6_interfaces__srv__GetParams_Request *>(reqin);
-  if (!res)
-    return;
-
-  const char *paths[16] = {nullptr};
-  size_t count = (req && req->paths.data)
-                     ? ((req->paths.size < 16) ? req->paths.size : 16)
-                     : 0;
-  for (size_t i = 0; i < count; ++i) {
-    paths[i] = req->paths.data[i].data;
-  }
-
-  const char *json_res =
-      auv::service::ConfigService::getParamsJson(paths, count);
-  res->success = true;
-  rosidl_runtime_c__String__assign(&res->config_json, json_res);
-  rosidl_runtime_c__String__assign(&res->message, "ok");
-  ROS_LOG_INFO("Params queried: count=%d", (int)count);
-}
-
-void MicroRosTask::cleanupMicroRos() {
-  ROS_LOG_INFO("micro-ROS resources cleaned up (Agent disconnected)");
-  rclc_executor_fini(&executor_);
-  // free pre-allocated request/response buffers
-  if (get_req_.paths.data) {
-    for (size_t _i = 0; _i < get_req_.paths.capacity; ++_i) {
-      if (get_req_.paths.data[_i].data) {
-        microros_deallocate(get_req_.paths.data[_i].data, NULL);
-        get_req_.paths.data[_i].data = NULL;
-        get_req_.paths.data[_i].capacity = 0;
-        get_req_.paths.data[_i].size = 0;
-      }
-    }
-    rosidl_runtime_c__String__Sequence__fini(&get_req_.paths);
-  }
-  if (update_req_.json.data) {
-    microros_deallocate(update_req_.json.data, NULL);
-    update_req_.json.data = NULL;
-    update_req_.json.capacity = 0;
-    update_req_.json.size = 0;
-  }
-  if (update_req_.paths.data) {
-    for (size_t _i = 0; _i < update_req_.paths.capacity; ++_i) {
-      if (update_req_.paths.data[_i].data) {
-        microros_deallocate(update_req_.paths.data[_i].data, NULL);
-        update_req_.paths.data[_i].data = NULL;
-        update_req_.paths.data[_i].capacity = 0;
-        update_req_.paths.data[_i].size = 0;
-      }
-    }
-    rosidl_runtime_c__String__Sequence__fini(&update_req_.paths);
-  }
-  if (update_req_.values.data) {
-    for (size_t _i = 0; _i < update_req_.values.capacity; ++_i) {
-      if (update_req_.values.data[_i].data) {
-        microros_deallocate(update_req_.values.data[_i].data, NULL);
-        update_req_.values.data[_i].data = NULL;
-        update_req_.values.data[_i].capacity = 0;
-        update_req_.values.data[_i].size = 0;
-      }
-    }
-    rosidl_runtime_c__String__Sequence__fini(&update_req_.values);
-  }
-  if (get_res_.config_json.data) {
-    microros_deallocate(get_res_.config_json.data, NULL);
-    get_res_.config_json.data = NULL;
-    get_res_.config_json.capacity = 0;
-    get_res_.config_json.size = 0;
-  }
-  rcl_service_fini(&update_params_srv_, &node_);
-  rcl_service_fini(&get_params_srv_, &node_);
-  rcl_publisher_fini(&pos_pub_, &node_);
-  rcl_publisher_fini(&vel_pub_, &node_);
-  rcl_publisher_fini(&thr_pub_, &node_);
-  rcl_publisher_fini(&zithbt_pub_, &node_);
-  rcl_publisher_fini(&status_pub_, &node_);
-  rcl_publisher_fini(&log_pub_, &node_);
-
-  rcl_subscription_fini(&setpoint_sub_, &node_);
-  rcl_subscription_fini(&arm_sub_, &node_);
-  rcl_subscription_fini(&ins_cmd_sub_, &node_);
-  rcl_subscription_fini(&servo_sub_, &node_);
-  rcl_subscription_fini(&led_sub_, &node_);
-  rcl_subscription_fini(&sim_pos_sub_, &node_);
-  rcl_subscription_fini(&sim_vel_sub_, &node_);
-  rcl_node_fini(&node_);
-  rclc_support_fini(&support_);
-  memset(&support_, 0, sizeof(support_));
-  memset(&node_, 0, sizeof(node_));
-  memset(&executor_, 0, sizeof(executor_));
-}
+// ============================================================================
+// 主循环
+// ============================================================================
 
 void MicroRosTask::run() {
-  MicroRosTask::instance_ = this;
-  rmw_uros_set_custom_transport(true, (void *)&huart2, cubemx_transport_open,
-                                cubemx_transport_close, cubemx_transport_write,
-                                cubemx_transport_read);
-
-  // Initialize cJSON with micro-ROS allocators
-  cJSON_Hooks hooks;
-  hooks.malloc_fn = cjson_malloc;
-  hooks.free_fn = cjson_free;
-  cJSON_InitHooks(&hooks);
-
-  rcutils_allocator_t allocator = rcutils_get_zero_initialized_allocator();
-  allocator.allocate = microros_allocate;
-  allocator.deallocate = microros_deallocate;
-  allocator.reallocate = microros_reallocate;
-  allocator.zero_allocate = microros_zero_allocate;
-  rcutils_set_default_allocator(&allocator);
-  rcl_allocator_t rcl_allocator = rcl_get_default_allocator();
-
-  uint32_t last_hbt_pub_tick = 0, last_vel_pub_tick = 0, last_thr_pub_tick = 0,
-           last_pos_pub_tick = 0, last_status_pub_tick = 0;
-  enum uros_state { WAITING_AGENT, AGENT_CONNECTED } state = WAITING_AGENT;
+  // 一次性配置 cJSON 分配器
+  {
+    cJSON_Hooks hooks;
+    hooks.malloc_fn = cjson_malloc;
+    hooks.free_fn = cjson_free;
+    cJSON_InitHooks(&hooks);
+  }
 
   for (;;) {
-    uint32_t now_ms = HAL_GetTick();
+    // 喂软件看门狗
     auv::device::SoftWatchdog::getInstance().feed(
         auv::device::SoftWatchdog::Component::MICROROS);
-    if (state == WAITING_AGENT) {
-      if (RCL_RET_OK == rmw_uros_ping_agent(200, 1)) {
-        if (RCL_RET_OK ==
-            rclc_support_init(&support_, 0, NULL, &rcl_allocator)) {
-          rmw_uros_sync_session(100);
-          rclc_node_init_default(&node_, "zit6_node", "", &support_);
-          std_msgs__msg__Float32MultiArray__init(&pos_fb_msg_);
-          pos_fb_msg_.data.data = pos_buf_;
-          pos_fb_msg_.data.size = 4;
-          pos_fb_msg_.data.capacity = 4;
-          std_msgs__msg__Float32MultiArray__init(&vel_fb_msg_);
-          vel_fb_msg_.data.data = vel_buf_;
-          vel_fb_msg_.data.size = 4;
-          vel_fb_msg_.data.capacity = 4;
-          std_msgs__msg__Float32MultiArray__init(&thr_fb_msg_);
-          thr_fb_msg_.data.data = thr_buf_;
-          thr_fb_msg_.data.size = 4;
-          thr_fb_msg_.data.capacity = 4;
-          std_msgs__msg__UInt32__init(&node_heartbeat_msg_);
-          std_msgs__msg__UInt32__init(&arm_msg_);
-          std_msgs__msg__UInt8__init(&ins_cmd_msg_);
-          std_msgs__msg__UInt8__init(&led_msg_);
-          std_msgs__msg__Float32__init(&servo_msg_);
-          zit6_interfaces__msg__ZitStatus__init(&status_msg_);
 
-          rclc_publisher_init_default(
-              &pos_pub_, &node_,
-              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-              "/zit6/state/pos");
-          rclc_publisher_init_default(
-              &vel_pub_, &node_,
-              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-              "/zit6/state/vel");
-          rclc_publisher_init_default(
-              &thr_pub_, &node_,
-              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-              "/zit6/state/thr");
-          rclc_publisher_init_default(
-              &zithbt_pub_, &node_,
-              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt32),
-              "/zit6/state/zithbt");
-          rclc_publisher_init_default(
-              &status_pub_, &node_,
-              ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitStatus),
-              "/zit6/state/status");
+    uint32_t now_ms = HAL_GetTick();
 
-          rcl_interfaces__msg__Log__init(&log_msg_);
-          static char log_msg_buf[128];
-          log_msg_.msg.data = log_msg_buf;
-          log_msg_.msg.capacity = sizeof(log_msg_buf);
-          log_msg_.msg.size = 0;
-          log_msg_.name.data = const_cast<char *>("zit6_node");
-          log_msg_.name.size = 9;
-          log_msg_.name.capacity = 0;
-          log_msg_.file.data = const_cast<char *>("");
-          log_msg_.file.size = 0;
-          log_msg_.file.capacity = 0;
-          log_msg_.function.data = const_cast<char *>("");
-          log_msg_.function.size = 0;
-          log_msg_.function.capacity = 0;
-          log_msg_.line = 0;
-
-          rclc_publisher_init_default(
-              &log_pub_, &node_,
-              ROSIDL_GET_MSG_TYPE_SUPPORT(rcl_interfaces, msg, Log),
-              "/zit6/log");
-
-          rclc_subscription_init_default(
-              &led_sub_, &node_,
-              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
-              "/zit6/cmd/light");
-          rclc_subscription_init_default(
-              &servo_sub_, &node_,
-              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
-              "/zit6/cmd/servo");
-          rclc_subscription_init_default(
-              &setpoint_sub_, &node_,
-              ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitSetpoint),
-              "/zit6/cmd/setpoint");
-
-          // SITL 仿真数据订阅
-          std_msgs__msg__Float32MultiArray__init(&sim_pos_msg_);
-          sim_pos_msg_.data.data = sim_pos_buf_;
-          sim_pos_msg_.data.size = 6;
-          sim_pos_msg_.data.capacity = 6;
-          std_msgs__msg__Float32MultiArray__init(&sim_vel_msg_);
-          sim_vel_msg_.data.data = sim_vel_buf_;
-          sim_vel_msg_.data.size = 6;
-          sim_vel_msg_.data.capacity = 6;
-          rclc_subscription_init_default(
-              &sim_pos_sub_, &node_,
-              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-              "/zit6/sim/pos");
-          rclc_subscription_init_default(
-              &sim_vel_sub_, &node_,
-              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-              "/zit6/sim/vel");
-          rclc_subscription_init_default(
-              &arm_sub_, &node_,
-              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt32),
-              "/zit6/cmd/agxhbt");
-          rclc_subscription_init_default(
-              &ins_cmd_sub_, &node_,
-              ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
-              "/zit6/cmd/ins");
-
-          rclc_executor_init(&executor_, &support_.context, 18, &rcl_allocator);
-          rclc_executor_add_subscription(
-              &executor_, &setpoint_sub_, &setpoint_msg_,
-              &MicroRosTask::setpointCb, ON_NEW_DATA);
-          rclc_executor_add_subscription(&executor_, &arm_sub_, &arm_msg_,
-                                         &MicroRosTask::armCb, ON_NEW_DATA);
-          rclc_executor_add_subscription(&executor_, &ins_cmd_sub_,
-                                         &ins_cmd_msg_, &MicroRosTask::insCmdCb,
-                                         ON_NEW_DATA);
-          rclc_executor_add_subscription(&executor_, &servo_sub_, &servo_msg_,
-                                         &MicroRosTask::servoCb, ON_NEW_DATA);
-          rclc_executor_add_subscription(&executor_, &led_sub_, &led_msg_,
-                                         &MicroRosTask::ledCb, ON_NEW_DATA);
-          rclc_executor_add_subscription(&executor_, &sim_pos_sub_,
-                                         &sim_pos_msg_, &MicroRosTask::simPosCb,
-                                         ON_NEW_DATA);
-          rclc_executor_add_subscription(&executor_, &sim_vel_sub_,
-                                         &sim_vel_msg_, &MicroRosTask::simVelCb,
-                                         ON_NEW_DATA);
-          // Initialize services for parameter update and query
-          // Initialize update_params service and check return codes
-          {
-            rcl_ret_t rc = rclc_service_init_default(
-                &update_params_srv_, &node_,
-                ROSIDL_GET_SRV_TYPE_SUPPORT(zit6_interfaces, srv, UpdateParams),
-                "/zit6/update_params");
-            (void)rc;
-            zit6_interfaces__srv__UpdateParams_Request__init(&update_req_);
-            // Pre-allocate buffer for incoming JSON string
-            update_req_.json.data = (char *)microros_allocate(4096, NULL);
-            update_req_.json.capacity = 4096;
-            update_req_.json.size = 0;
-
-            // 重要修复：预分配 paths 和 values 序列内存
-            rosidl_runtime_c__String__Sequence__init(&update_req_.paths, 16);
-            rosidl_runtime_c__String__Sequence__init(&update_req_.values, 16);
-            for (size_t _i = 0; _i < 16; ++_i) {
-              update_req_.paths.data[_i].data =
-                  (char *)microros_allocate(64, NULL);
-              update_req_.paths.data[_i].capacity = 64;
-              update_req_.values.data[_i].data =
-                  (char *)microros_allocate(64, NULL);
-              update_req_.values.data[_i].capacity = 64;
-            }
-
-            zit6_interfaces__srv__UpdateParams_Response__init(&update_res_);
-            rc = rclc_executor_add_service_with_request_id(
-                &executor_, &update_params_srv_, &update_req_, &update_res_,
-                &MicroRosTask::updateParamsCb);
-            (void)rc;
-          }
-
-          {
-            rcl_ret_t rc = rclc_service_init_default(
-                &get_params_srv_, &node_,
-                ROSIDL_GET_SRV_TYPE_SUPPORT(zit6_interfaces, srv, GetParams),
-                "/zit6/get_params");
-            (void)rc;
-            zit6_interfaces__srv__GetParams_Request__init(&get_req_);
-            rosidl_runtime_c__String__Sequence__init(&get_req_.paths, 8);
-            if (get_req_.paths.data) {
-              for (size_t _i = 0; _i < get_req_.paths.capacity; ++_i) {
-                get_req_.paths.data[_i].data =
-                    (char *)microros_allocate(64, NULL);
-                get_req_.paths.data[_i].capacity = 64;
-                get_req_.paths.data[_i].size = 0;
-              }
-            }
-            zit6_interfaces__srv__GetParams_Response__init(&get_res_);
-            // Pre-allocate buffer for outgoing JSON string
-            get_res_.config_json.data = (char *)microros_allocate(4096, NULL);
-            get_res_.config_json.capacity = 4096;
-            get_res_.config_json.size = 0;
-            rc = rclc_executor_add_service_with_request_id(
-                &executor_, &get_params_srv_, &get_req_, &get_res_,
-                &MicroRosTask::getParamsCb);
-            (void)rc;
-          }
-          state = AGENT_CONNECTED;
-        }
-      } else
-        vTaskDelay(pdMS_TO_TICKS(100));
-    } else {
-      static uint32_t last_ping_ms = 0;
-      bool ping_ok = true;
-      if (now_ms - last_ping_ms >= 2000) {
-        last_ping_ms = now_ms;
-        if (RCL_RET_OK != rmw_uros_ping_agent(100, 1)) {
-          ping_ok = false;
-        }
-      }
-
-      if (!ping_ok) {
-        cleanupMicroRos();
-        state = WAITING_AGENT;
+    switch (state_) {
+    case State::WAITING_AGENT:
+      // 每 100ms 探测一次 Agent
+      if (transport_.pingAgent(200, 1)) {
+        connectAgent();
       } else {
-        rclc_executor_spin_some(&executor_, RCL_MS_TO_NS(1));
+        vTaskDelay(pdMS_TO_TICKS(100));
+      }
+      break;
 
-        // Publish at most one log message per loop iteration to save bandwidth
-        auv::device::RosLogger::LogEntry log_entry;
-        if (auv::device::RosLogger::getInstance().popLog(log_entry)) {
-          std::strncpy(log_msg_.msg.data, log_entry.msg, log_msg_.msg.capacity - 1);
-          log_msg_.msg.data[log_msg_.msg.capacity - 1] = '\0';
-          log_msg_.msg.size = std::strlen(log_msg_.msg.data);
-          log_msg_.level = log_entry.level;
-          log_msg_.stamp.sec = now_ms / 1000;
-          log_msg_.stamp.nanosec = (now_ms % 1000) * 1000000;
-          rcl_publish(&log_pub_, &log_msg_, NULL);
-        }
-
-        if (now_ms - last_hbt_pub_tick >= 1000) {
-          last_hbt_pub_tick = now_ms;
-          node_heartbeat_msg_.data = now_ms;
-          rcl_publish(&zithbt_pub_, &node_heartbeat_msg_, NULL);
-        }
-        if (now_ms - last_vel_pub_tick >= 20) {
-          last_vel_pub_tick = now_ms;
-          auto nav = auv::motion::motion_context.getNavState();
-          // 6DOF → 4DOF: [u,v,w, r] = vel_body[0,1,2, 5]
-          vel_buf_[0] = nav.vel_body[0];
-          vel_buf_[1] = nav.vel_body[1];
-          vel_buf_[2] = nav.vel_body[2];
-          vel_buf_[3] = nav.vel_body[5];  // yaw rate at index 5
-          rcl_publish(&vel_pub_, &vel_fb_msg_, NULL);
-        }
-        if (now_ms - last_thr_pub_tick >= 33) {
-          last_thr_pub_tick = now_ms;
-          auto forces = auv::motion::motion_context.getLastOutputForces();
-          // 6DOF → 4DOF: [Fx,Fy,Fz, Myaw] = forces[0,1,2, 5]
-          thr_buf_[0] = forces[0];
-          thr_buf_[1] = forces[1];
-          thr_buf_[2] = forces[2];
-          thr_buf_[3] = forces[5];  // Myaw at index 5
-          rcl_publish(&thr_pub_, &thr_fb_msg_, NULL);
-        }
-        if (now_ms - last_pos_pub_tick >= 33) {
-          last_pos_pub_tick = now_ms;
-          auto nav = auv::motion::motion_context.getNavState();
-          // 6DOF → 4DOF: [x,y,z, yaw] = pos_world[0,1,2, 5]
-          pos_buf_[0] = nav.pos_world[0];
-          pos_buf_[1] = nav.pos_world[1];
-          pos_buf_[2] = nav.pos_world[2];
-          pos_buf_[3] = nav.pos_world[5];  // yaw at index 5
-          rcl_publish(&pos_pub_, &pos_fb_msg_, NULL);
-        }
-        if (now_ms - last_status_pub_tick >= 100) {
-          last_status_pub_tick = now_ms;
-          auto forces = auv::motion::motion_context.getLastOutputForces();
-          float cycle_time = auv::motion::motion_context.getLastDtMs();
-          taskENTER_CRITICAL();
-          status_msg_.is_armed = auv::system::system_context.is_system_armed;
-          status_msg_.arm_mode =
-              (uint8_t)auv::system::system_context.last_arm_heartbeat_data;
-          status_msg_.control_level =
-              (uint8_t)auv::control::chassis.getControlLevel();
-          status_msg_.ins_state =
-              auv::system::system_context.nav_status.imu_state;
-          status_msg_.navigation_ready =
-              auv::system::system_context.getNavigationValid();
-          // 6DOF → 4DOF: [Fx,Fy,Fz, Myaw] = forces[0,1,2, 5]
-          status_msg_.forces[0] = forces[0];
-          status_msg_.forces[1] = forces[1];
-          status_msg_.forces[2] = forces[2];
-          status_msg_.forces[3] = forces[5];
-          status_msg_.cycle_time_ms = cycle_time;
-          status_msg_.battery_voltage = 0.0f;
-          status_msg_.error_flags = 0;
-          taskEXIT_CRITICAL();
-          rcl_publish(&status_pub_, &status_msg_, NULL);
+    case State::AGENT_CONNECTED:
+      // 每 2s 检查 Agent 在线状态
+      if (now_ms - last_ping_ms_ >= 2000) {
+        last_ping_ms_ = now_ms;
+        if (!transport_.pingAgent(100, 1)) {
+          disconnectAgent();
+          break;
         }
       }
+
+      // spin executor：处理所有订阅回调和服务请求
+      rclc_executor_spin_some(&transport_.getExecutor(), RCL_MS_TO_NS(1));
+
+      // 定时发布状态
+      publisher_.publish(now_ms);
+      break;
     }
+
     vTaskDelay(pdMS_TO_TICKS(1));
   }
 }
+
+// ============================================================================
+// 连接 / 断开 Agent
+// ============================================================================
+
+void MicroRosTask::connectAgent() {
+  // 初始化 Transport（创建 support / node / executor）
+  if (!transport_.init("zit6_node", "", 18)) {
+    return; // 初始化失败，保持 WAITING_AGENT
+  }
+
+  // 按依赖顺序初始化各模块
+  if (!subscriber_.init(&transport_.getNode(), &transport_.getExecutor())) {
+    disconnectAgent();
+    return;
+  }
+  if (!service_.init(&transport_.getNode(), &transport_.getExecutor())) {
+    disconnectAgent();
+    return;
+  }
+  if (!publisher_.init(&transport_.getNode())) {
+    disconnectAgent();
+    return;
+  }
+
+  state_ = State::AGENT_CONNECTED;
+  last_ping_ms_ = HAL_GetTick();
+}
+
+void MicroRosTask::disconnectAgent() {
+  // 按依赖逆序清理
+  publisher_.cleanup(&transport_.getNode());
+  subscriber_.cleanup(&transport_.getNode());
+  service_.cleanup(&transport_.getNode());
+  transport_.fini();
+
+  state_ = State::WAITING_AGENT;
+}
+
+// ============================================================================
+// FreeRTOS 任务入口
+// ============================================================================
 
 void UserApp_MicroRosTask(void *argument) {
   (void)argument;
