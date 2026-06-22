@@ -3,11 +3,15 @@
 #include <cstring>
 
 namespace auv {
-namespace device {
+namespace peripheral {
 
-MotionController_Driver::MotionController_Driver(UART_HandleTypeDef *huart,
+MotionController_Driver::MotionController_Driver(MotorPortOps ops,
                                                  ThrustPacket *ext_pkt)
-    : huart_(huart), thrust_pkt_ptr_(ext_pkt) {
+    : ops_(ops), thrust_pkt_ptr_(ext_pkt ? ext_pkt
+                                         : static_cast<ThrustPacket *>(
+                                               ops_.getTxPacket(ops_.ctx))) {
+  if (!thrust_pkt_ptr_)
+    thrust_pkt_ptr_ = &internal_pkt_;
   initPacket(thrust_pkt_ptr_, 0x01);
   thrust_pkt_ptr_->Fx = 0.0f;
   thrust_pkt_ptr_->Fy = 0.0f;
@@ -17,26 +21,17 @@ MotionController_Driver::MotionController_Driver(UART_HandleTypeDef *huart,
   thrust_pkt_ptr_->Froll = 0.0f;
 }
 
-MotionController_Driver::MotionController_Driver(UART_HandleTypeDef *huart)
-    : huart_(huart), thrust_pkt_ptr_(&thrust_pkt_internal_) {
-  initPacket(thrust_pkt_ptr_, 0x01);
-  thrust_pkt_ptr_->Fx = 0.0f;
-  thrust_pkt_ptr_->Fy = 0.0f;
-  thrust_pkt_ptr_->Fz = 0.0f;
-  thrust_pkt_ptr_->Fyaw = 0.0f;
-  thrust_pkt_ptr_->Fpitch = 0.0f;
-  thrust_pkt_ptr_->Froll = 0.0f;
-}
+MotionController_Driver::~MotionController_Driver() = default;
 
 void MotionController_Driver::publishThrust(float fx, float fy, float fz,
                                             float fyaw, float fp, float fr) {
   taskENTER_CRITICAL();
-  thrust_pkt_ptr_->Fx = -fy;    // Left = Right
-  thrust_pkt_ptr_->Fy = fx;     // Front = Front
-  thrust_pkt_ptr_->Fz = fz;     // Down = Down
-  thrust_pkt_ptr_->Fyaw = fyaw; // Yaw = Yaw
-  thrust_pkt_ptr_->Fpitch = fr; // Pitch (around Front) = Roll
-  thrust_pkt_ptr_->Froll = -fp; // Roll (around Left) = -Pitch
+  thrust_pkt_ptr_->Fx = -fy;
+  thrust_pkt_ptr_->Fy = fx;
+  thrust_pkt_ptr_->Fz = fz;
+  thrust_pkt_ptr_->Fyaw = fyaw;
+  thrust_pkt_ptr_->Fpitch = fr;
+  thrust_pkt_ptr_->Froll = -fp;
   taskEXIT_CRITICAL();
 
   sendThrustPacketDMA();
@@ -80,41 +75,9 @@ void MotionController_Driver::sendThrustPacketDMA() {
 }
 
 void MotionController_Driver::transmitDMA(uint8_t *data, uint16_t size) {
-  bool can_start = false;
-  taskENTER_CRITICAL();
-  if (huart_->gState == HAL_UART_STATE_READY) {
-    can_start = true;
-  }
-  taskEXIT_CRITICAL();
-
-  if (!can_start)
-    return;
-
-  if (huart_->hdmatx != NULL) {
-    DMA_Stream_TypeDef *dma_stream =
-        (DMA_Stream_TypeDef *)huart_->hdmatx->Instance;
-    int retries = 3;
-    while (retries-- > 0) {
-      if ((dma_stream->CR & DMA_SxCR_EN) == 0U)
-        break;
-      for (volatile int i = 0; i < 100; ++i)
-        __asm__ volatile("nop");
-    }
-    if ((dma_stream->CR & DMA_SxCR_EN) != 0U) {
-      return;
-    }
-  }
-
-  const uintptr_t dcache_line = 32u;
-  uintptr_t addr = (uintptr_t)data;
-  uintptr_t aligned_addr = addr & ~(dcache_line - 1);
-  uintptr_t end = (addr + size + dcache_line - 1) & ~(dcache_line - 1);
-  int32_t clean_size = (int32_t)(end - aligned_addr);
-  SCB_CleanDCache_by_Addr((uint32_t *)aligned_addr, clean_size);
-
-  HAL_StatusTypeDef res = HAL_UART_Transmit_DMA(huart_, data, size);
-  (void)res;
+  if (ops_.transmitDMA)
+    ops_.transmitDMA(ops_.ctx, data, size);
 }
 
-} // namespace device
+} // namespace peripheral
 } // namespace auv

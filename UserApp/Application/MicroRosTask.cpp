@@ -28,10 +28,11 @@ void MicroRosTask::run() {
     cJSON_InitHooks(&hooks);
   }
 
+  last_wake_time_ = xTaskGetTickCount();
+
   for (;;) {
     // 喂软件看门狗
-    auv::device::SoftWatchdog::getInstance().feed(
-        auv::device::SoftWatchdog::Component::MICROROS);
+    ctx_->watchdog->feed(auv::component::SoftWatchdog::Component::MICROROS);
 
     uint32_t now_ms = HAL_GetTick();
 
@@ -63,7 +64,7 @@ void MicroRosTask::run() {
       break;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(1));
+    vTaskDelayUntil(&last_wake_time_, pdMS_TO_TICKS(kLoopPeriodMs));
   }
 }
 
@@ -111,6 +112,6 @@ void MicroRosTask::disconnectAgent() {
 
 void UserApp_MicroRosTask(void *argument) {
   (void)argument;
-  MicroRosTask runner;
+  MicroRosTask runner(&auv::system::g_app_ctx);
   runner.run();
 }

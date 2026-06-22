@@ -7,12 +7,22 @@
 #define __INS_DRIVER_HPP
 
 #include "MotionContext.hpp"
-#include "SerialPort.hpp"
 #include <cstdint>
 #include <cstring>
 
 namespace auv {
-namespace device {
+namespace peripheral {
+
+/**
+ * @struct InsPortOps
+ * @brief INS 惯导硬件操作接口（函数指针表）
+ */
+struct InsPortOps {
+  void *ctx;
+  bool (*init)(void *ctx);
+  uint16_t (*read)(void *ctx, uint8_t *buf, uint16_t max_len);
+  bool (*transmit)(void *ctx, const uint8_t *data, uint16_t len);
+};
 
 /**
  * @class INS_Driver
@@ -20,65 +30,23 @@ namespace device {
  */
 class INS_Driver {
 public:
-  /**
-   * @brief 构造函数
-   * @param rx_uart 接收数据的 UART 句柄 (通常开启 DMA)
-   * @param tx_uart 发送指令的 UART 句柄
-   */
-  INS_Driver(UART_HandleTypeDef *rx_uart, UART_HandleTypeDef *tx_uart,
-             uint8_t *ext_rx_buf, uint16_t rx_buf_size)
-      : rx_port_(rx_uart, ext_rx_buf, rx_buf_size), tx_uart_(tx_uart) {}
-
-  INS_Driver(UART_HandleTypeDef *rx_uart, UART_HandleTypeDef *tx_uart)
-      : rx_port_(rx_uart, 512), tx_uart_(tx_uart) {}
+  INS_Driver(InsPortOps ops) : ops_(ops) {}
 
   void init();
   bool update(auv::motion::NavState &state);
   auv::motion::NavState getNavState() const { return state_; }
   float getManometerZ() const { return manometer_z_; }
-
-  /**
-   * @brief 检查惯导数据是否新鲜 (200ms 内有更新)
-   */
   bool isDataFresh() const;
 
-  // --- 指令发送接口 ---
-
-  /**
-   * @brief 发送控制指令 (带 1 字节 value)
-   */
   void sendCommand(uint8_t cmd_id, uint8_t value);
-
-  /**
-   * @brief 发送带多字节数据的控制指令
-   */
   void sendCommand(uint8_t cmd_id, const uint8_t *data, uint8_t data_len);
-
-  /**
-   * @brief 全局位置增量清零 (ID: 0x02)
-   */
   void resetPosition();
-
-  /**
-   * @brief 控制 DVL 模块电源状态 (ID: 0x03)
-   */
   void setDvlPower(bool on);
-
-  /**
-   * @brief 触发惯导系统重启 (ID: 0x04)
-   */
   void restart();
-
-  /**
-   * @brief 惯导初始位置装订 (ID: 0x20)
-   * @param lat 纬度 (度)
-   * @param lon 经度 (度)
-   */
   void setInitialPosition(double lat, double lon);
 
 private:
-  porting::SerialPort rx_port_; ///< 串口接收驱动
-  UART_HandleTypeDef *tx_uart_; ///< 指令发送串口句柄
+  InsPortOps ops_;
   uint32_t rx_total_bytes_ = 0; ///< 累计接收字节数（调试统计）
   uint32_t last_update_ms_ = 0; ///< 上次收到有效包的时间
 
@@ -102,7 +70,7 @@ private:
   void decodePacket(auv::motion::NavState &state);
 };
 
-} // namespace device
+} // namespace peripheral
 } // namespace auv
 
 #endif

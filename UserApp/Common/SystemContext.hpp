@@ -1,37 +1,23 @@
 #ifndef __SYSTEM_CONTEXT_HPP
 #define __SYSTEM_CONTEXT_HPP
 
-#include "INS_Driver.hpp"
-#include "MotionController_Driver.hpp"
+#include "LockedField.hpp"
+#include <stdint.h>
+
+// extern 对象声明需要完整类型
 #include "ChassisManager.hpp"
-#include "MS5837_Class.hpp"
-#include "stm32h7xx_hal.h"
+#include "INS_Driver.hpp"
+#include "MS5837_Driver.hpp"
+#include "MotionController_Driver.hpp"
 
-// --- 硬件句柄 extern ---
-extern "C" {
-extern UART_HandleTypeDef huart5;
-extern UART_HandleTypeDef huart3;
-extern UART_HandleTypeDef huart2;
-extern UART_HandleTypeDef huart6;
-extern UART_HandleTypeDef huart7;  // INS UART
-extern IWDG_HandleTypeDef hiwdg1;
-extern I2C_HandleTypeDef hi2c1;
-}
-
-// --- DMA 缓冲区 extern ---
-extern uint8_t ins_rx_buffer[512];
-extern auv::device::MotionController_Driver::ThrustPacket motor_tx_packet;
-
-// --- 全局实例 extern ---
-namespace auv {
-namespace device {
-    extern INS_Driver ins_driver;
-    extern MotionController_Driver motor_driver;
-    extern MS5837 depth_sensor;
-}
-namespace control {
-    extern ChassisManager chassis;
-}
+// --- 底层驱动实例（通过 AppContext 访问，此处为定义提供 extern）---
+namespace auv::peripheral {
+extern INS_Driver ins_driver;
+extern MotionController_Driver motor_driver;
+extern MS5837_Driver depth_sensor;
+} // namespace auv::peripheral
+namespace auv::component {
+extern ChassisManager chassis;
 }
 
 namespace auv {
@@ -42,11 +28,23 @@ namespace system {
  * @brief 提取自原 NavState 的非实时状态标志和低频定位信息
  */
 struct NavStatus {
-    uint8_t imu_state = 0;   ///< 惯导模式
-    uint8_t dvl_state = 0;   ///< DVL有效性标志
-    double lat = 0.0;        ///< 纬度 (deg)
-    double lon = 0.0;        ///< 经度 (deg)
-    uint32_t timestamp = 0;  ///< 系统毫秒时间戳
+  uint8_t imu_state = 0;  ///< 惯导模式
+  uint8_t dvl_state = 0;  ///< DVL有效性标志
+  double lat = 0.0;       ///< 纬度 (deg)
+  double lon = 0.0;       ///< 经度 (deg)
+  uint32_t timestamp = 0; ///< 系统毫秒时间戳
+};
+
+/**
+ * @struct ArmState
+ * @brief 解锁状态与心跳监测（多字段原子整体读取）
+ */
+struct ArmState {
+  bool is_armed = false;
+  uint32_t heartbeat_count = 0;
+  uint32_t last_heartbeat_ms = 0;
+  uint32_t last_heartbeat_data = 0;
+  uint32_t start_ms = 0;
 };
 
 /**
@@ -55,22 +53,15 @@ struct NavStatus {
  */
 class SystemContext {
 public:
-    // 解锁与安全监测变量
-    bool is_system_armed = false;
-    uint32_t arm_heartbeat_count = 0;
-    uint32_t last_arm_heartbeat_ms = 0;
-    uint32_t last_arm_heartbeat_data = 0;
-    uint32_t arm_start_ms = 0;
+  LockedField<ArmState> arm_state_{};
+  LockedField<NavStatus> nav_status_{};
 
-    // 规划器启用与状态变量
-    bool is_planner_active = false;
-    volatile bool planner_replan_flag = false;
+  // 规划器启用与状态变量
+  bool is_planner_active = false;
+  volatile bool planner_replan_flag = false;
 
-    // 低频导航状态与标志
-    NavStatus nav_status{};
-
-    // 校验导航数据是否有效
-    bool getNavigationValid() const;
+  // 校验导航数据是否有效
+  bool getNavigationValid() const;
 };
 
 extern SystemContext system_context;

@@ -15,14 +15,25 @@ echo "[0/3] Preparing environment & checking cache..."
 EXTRA_PKG_DIR="micro_ros_stm32cubemx_utils/microros_static_library_ide/library_generation/extra_packages"
 HASH_FILE=".msg_hash"
 LIB_FILE="micro_ros_stm32cubemx_utils/microros_static_library_ide/libmicroros/libmicroros.a"
+MICROROS_CONFIG="microros_config.meta"
+MERGE_SCRIPT="scripts/merge_microros_config.py"
+
+# 如果有外置配置，将其注入到 colcon.meta 中
+COLCON_META="micro_ros_stm32cubemx_utils/microros_static_library_ide/library_generation/colcon.meta"
+if [ -f "$MICROROS_CONFIG" ] && [ -f "$COLCON_META" ]; then
+    echo ">>> Injecting $MICROROS_CONFIG into colcon.meta..."
+    python3 "$MERGE_SCRIPT" "$COLCON_META" "$MICROROS_CONFIG" "$COLCON_META"
+fi
 
 # 计算当前接口定义与生成配置的哈希值
-# 如果存在 micro-ROS 库生成配置目录，也把它纳入哈希计算，
-# 这样修改 colcon.meta 等生成相关配置可以触发重建。
+# 包含 zit6_interfaces、生成配置目录、及外置 RMW 配置
 HASH_PATHS="zit6_interfaces"
 GEN_DIR="micro_ros_stm32cubemx_utils/microros_static_library_ide/library_generation"
 if [ -d "$GEN_DIR" ]; then
     HASH_PATHS="$HASH_PATHS $GEN_DIR"
+fi
+if [ -f "$MICROROS_CONFIG" ]; then
+    HASH_PATHS="$HASH_PATHS $MICROROS_CONFIG"
 fi
 CURRENT_HASH=$(find $HASH_PATHS -type f -exec md5sum {} + | sort | md5sum | awk '{print $1}')
 OLD_HASH=""

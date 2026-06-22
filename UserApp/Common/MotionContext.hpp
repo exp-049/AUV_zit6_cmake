@@ -2,6 +2,7 @@
 #define __MOTION_CONTEXT_HPP
 
 #include "FreeRTOS.h"
+#include "LockedField.hpp"
 #include "MathUtils.hpp"
 #include "RosLogger.hpp"
 #include "task.h"
@@ -55,18 +56,6 @@ struct TargetSetpoint {
 };
 
 /**
- * @struct RawSetpoint
- * @brief 记录原始的 AGX 控制设定值快照
- */
-struct RawSetpoint {
-  ControlLevel level = ControlLevel::NONE;
-  float data[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-  uint32_t type_mask = 0;
-  bool is_body = false;
-  bool is_incremental = false;
-};
-
-/**
  * @struct OffboardSetpoint
  * @brief 上位机原始指令结构体
  */
@@ -80,6 +69,11 @@ struct OffboardSetpoint {
  * @struct Constants
  * @brief 系统数学与控制常数
  */
+struct HomeOffset {
+  bool active = false;
+  std::array<float, 6> offset = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+};
+
 struct Constants {
   static constexpr float CONTROL_FREQ = 100.0f;     ///< 控制频率 (Hz)
   static constexpr uint32_t CONTROL_PERIOD_MS = 10; ///< 控制周期 (ms)
@@ -91,189 +85,18 @@ class MotionContext {
 public:
   static float wrapAngle(float angle);
 
-  /// 6DOF 坐标变换：机体系 → 世界系（使用 MathUtils 旋转矩阵 R(η)）
-  /// 输入输出均为 6 元素数组 [X, Y, Z, Roll, Pitch, Yaw]
-  void transformBodyToWorld(const float body_in[6], float world_out[6]) const;
+  // 线程安全字段（LockedField::get/set 自动加临界区）
+  LockedField<NavState> nav_state_{};
+  LockedField<TargetSetpoint> current_setpoint_{};
+  LockedField<float> last_dt_ms_{0.0f};
+  LockedField<uint32_t> last_received_seq_{0};
+  LockedField<std::array<float, 6>> last_output_forces_{};
+  LockedField<bool> sim_data_valid_{false};
 
-  /// 6DOF 坐标变换：世界系 → 机体系（使用 MathUtils 逆矩阵 R(η)⁻¹）
-  void transformWorldToBody(const float world_in[6], float body_out[6]) const;
+  LockedField<HomeOffset> home_offset_{};
 
-  // 线程安全存取接口
-  NavState getNavState() const {
-    NavState state;
-    taskENTER_CRITICAL();
-    state = nav_state;
-    taskEXIT_CRITICAL();
-    return state;
-  }
-
-  void setNavState(const NavState &state) {
-    taskENTER_CRITICAL();
-    nav_state = state;
-    taskEXIT_CRITICAL();
-  }
-
-  TargetSetpoint getCurrentSetpoint() const {
-    TargetSetpoint sp;
-    taskENTER_CRITICAL();
-    sp = current_setpoint;
-    taskEXIT_CRITICAL();
-    return sp;
-  }
-
-  void updateSetpoint(const TargetSetpoint &sp) {
-    taskENTER_CRITICAL();
-    current_setpoint = sp;
-    taskEXIT_CRITICAL();
-  }
-
-  void resetSetpoint() {
-    taskENTER_CRITICAL();
-    for (int i = 0; i < 6; ++i) {
-      current_setpoint.pos_world[i] = 0.0f;
-      current_setpoint.vel_body[i] = 0.0f;
-      current_setpoint.thrust_body[i] = 0.0f;
-    }
-    taskEXIT_CRITICAL();
-  }
-
-  RawSetpoint getRawSetpoint() const {
-    RawSetpoint sp;
-    taskENTER_CRITICAL();
-    sp = raw_setpoint;
-    taskEXIT_CRITICAL();
-    return sp;
-  }
-
-  void setRawSetpoint(const RawSetpoint &sp) {
-    taskENTER_CRITICAL();
-    raw_setpoint = sp;
-    taskEXIT_CRITICAL();
-  }
-
-  float getLastDtMs() const {
-    float dt;
-    taskENTER_CRITICAL();
-    dt = last_dt_ms;
-    taskEXIT_CRITICAL();
-    return dt;
-  }
-
-  void setLastDtMs(float dt) {
-    taskENTER_CRITICAL();
-    last_dt_ms = dt;
-    taskEXIT_CRITICAL();
-  }
-
-  uint32_t getLastReceivedSeq() const {
-    uint32_t seq;
-    taskENTER_CRITICAL();
-    seq = last_received_seq;
-    taskEXIT_CRITICAL();
-    return seq;
-  }
-
-  void setLastReceivedSeq(uint32_t seq) {
-    taskENTER_CRITICAL();
-    last_received_seq = seq;
-    taskEXIT_CRITICAL();
-  }
-
-  std::array<float, 6> getLastOutputForces() const {
-    std::array<float, 6> forces;
-    taskENTER_CRITICAL();
-    for (int i = 0; i < 6; ++i) {
-      forces[i] = last_output_forces[i];
-    }
-    taskEXIT_CRITICAL();
-    return forces;
-  }
-
-  void setLastOutputForces(const std::array<float, 6> &forces) {
-    taskENTER_CRITICAL();
-    for (int i = 0; i < 6; ++i) {
-      last_output_forces[i] = forces[i];
-    }
-    taskEXIT_CRITICAL();
-  }
-
-  /// 线程安全：获取家系偏移（单次临界区读取全部 7 个字段）
-  struct HomeOffset {
-    bool active = false;
-    std::array<float, 6> offset = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-  };
-  HomeOffset getHomeOffset() const {
-    HomeOffset h;
-    taskENTER_CRITICAL();
-    h.active = use_offset_;
-    h.offset[0] = offset_x_;
-    h.offset[1] = offset_y_;
-    h.offset[2] = offset_z_;
-    h.offset[3] = offset_roll_;
-    h.offset[4] = offset_pitch_;
-    h.offset[5] = offset_yaw_;
-    taskEXIT_CRITICAL();
-    return h;
-  }
-
-  // --- SITL 仿真数据注入接口 ---
-
-  /**
-   * @brief 存储从上位机收到的 SITL 仿真位姿/速度
-   *        由 MicroRosTask 的 sim 回调调用（中断/任务上下文）
-   */
-  void setSimNavState(const NavState &state) {
-    taskENTER_CRITICAL();
-    sim_nav_state_ = state;
-    sim_data_valid_ = true;
-    taskEXIT_CRITICAL();
-  }
-
-  /**
-   * @brief 读取缓存的 SITL 仿真导航状态
-   */
-  NavState getSimNavState() const {
-    NavState state;
-    taskENTER_CRITICAL();
-    state = sim_nav_state_;
-    taskEXIT_CRITICAL();
-    return state;
-  }
-
-  /**
-   * @brief 查询 SITL 仿真数据是否已收到过
-   */
-  bool isSimDataValid() const {
-    bool valid;
-    taskENTER_CRITICAL();
-    valid = sim_data_valid_;
-    taskEXIT_CRITICAL();
-    return valid;
-  }
-
-  // 坐标偏置变量（公开以备特殊场景直接访问，优先使用 getHomeOffset）
-  bool use_offset_ = false;
-  float offset_x_ = 0.0f;
-  float offset_y_ = 0.0f;
-  float offset_z_ = 0.0f;
-  float offset_roll_ = 0.0f;
-  float offset_pitch_ = 0.0f;
-  float offset_yaw_ = 0.0f;
-
-  void setHomeOffset(const auv::math::Vector6f &offset);
+  void setHomeOffset(const auv::algorithm::math::Vector6f &offset);
   void clearHomeOffset();
-
-private:
-  NavState nav_state{};              ///< 实时真实位姿速度状态
-  TargetSetpoint current_setpoint{}; ///< 当前控制目标设定值
-  RawSetpoint raw_setpoint{};        ///< 原始 AGX 设定值快照
-  float last_dt_ms = 0.0f;
-  uint32_t last_received_seq = 0;
-  float last_output_forces[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-
-  // --- SITL 仿真数据缓存 ---
-  NavState sim_nav_state_{}; ///< 从上位机收到的 SITL 仿真数据
-  bool sim_data_valid_ = false; ///< 是否已至少收到一次仿真数据
 };
 
 extern MotionContext motion_context;

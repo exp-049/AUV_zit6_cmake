@@ -1,11 +1,16 @@
-# 编译输出
+# ============================================================================
+# ZIT6 AUV .gitignore
+# ============================================================================
+
+# ---- 编译输出 ----
 build/
+build_tests/
 bin/
 obj/
 install/
 log/
 
-# 静态库和临时文件
+# ---- 静态库和中间文件 ----
 *.elf
 *.bin
 *.hex
@@ -13,20 +18,43 @@ log/
 *.o
 *.obj
 *.su
+*.a
 
+# ---- IDE/编辑器 ----
 .settings/
 .project
 .cproject
 .mxproject
+.vscode/
+.idea/
 
-# 备份文件
-*~
+# ---- 代码生成器输出 ----
+# gen_config.py 自动生成，编辑 scripts/templates/SystemConfig.hpp.j2 替代
+UserApp/Config/SystemConfig.hpp
+UserApp/Config/SystemConfig.cpp
+Core/Inc/SystemConfig.hpp
+Core/Inc/SystemConfig.cpp
+
+# ---- micro-ROS 构建产物 ----
+# Docker 构建生成的静态库和构建缓存
+micro_ros_stm32cubemx_utils/microros_static_library_ide/libmicroro*
+# build_lib.sh 在构建前自动拷贝的接口副本
+micro_ros_stm32cubemx_utils/microros_static_library_ide/library_generation/extra_packages/
+
+# ---- 构建缓存哈希 ----
+.msg_hash
+
+# ---- Python 缓存 ----
+**/__pycache__/
+*.pyc
+
+# ---- CubeMX 生成的可选文件 ----
 *.bak
-config.json
+*~
 
+# ---- 用户配置 ----
+config.json
 CMakePresets.json
 
-micro_ros_stm32cubemx_utils/microros_static_library_ide/libmicroro*
-upper_examples/__pycache__/
-
-Usr
+# ---- 用户文档工作区 ----
+Usr/

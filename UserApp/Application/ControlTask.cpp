@@ -1,33 +1,28 @@
 #include "ControlTask.hpp"
 #include "AppMain.hpp"
-#include "AuvSimulator.hpp"
 #include "FreeRTOS.h"
+#include "HitlSimulator.hpp"
+#include "INS_Porting.hpp"
 #include "MotionContext.hpp"
 #include "RosLogger.hpp"
-#include "SerialPort.hpp"
-#include "SoftWatchdog.hpp"
 #include "SystemConfig.hpp"
 #include "SystemContext.hpp"
 #include "task.h"
 #include <cstdio>
-#include <string.h>
-// No global using namespace directives
+#include <cstring>
 
 #if AUV_SIMULATION_ENABLE
-static auv::control::AuvSimulator g_hitl_sim(0.01f);
+static auv::component::HitlSimulator g_hitl_sim(0.01f);
 #endif
 
 void ControlTask::run() {
   init();
 
   for (;;) {
-    refreshHardwareWatchdogIfNeeded();
+    auv::motion::motion_context.last_dt_ms_.set(
+        static_cast<float>(kLoopPeriodMs));
 
-    // dt 由 vTaskDelayUntil 保证为严格 10ms，固定值避免 HAL_GetTick 截断抖动
-    auv::motion::motion_context.setLastDtMs(static_cast<float>(kLoopPeriodMs));
-
-    auv::motion::NavState nav = updateNavigation();
-    safety_monitor_.check(HAL_GetTick());
+    updateNavigation();
     computeAndPublish();
 
     vTaskDelayUntil(&last_wake_time_, pdMS_TO_TICKS(kLoopPeriodMs));
@@ -37,27 +32,17 @@ void ControlTask::run() {
 void ControlTask::init() {
   memset(ins_rx_buffer, 0, sizeof(ins_rx_buffer));
 
-  auv::device::ins_driver.init();
-  auv::device::SoftWatchdog::getInstance().init(
-      auv::config::sys_config.soft_watchdog);
+  ctx_->ins_driver->init();
+  ctx_->chassis->applyConfig(auv::config::sys_config.chassis);
 
-  // 初始化底盘 PID 参数与运动学约束 (从 SystemConfig 加载)
-  auv::control::chassis.applyConfig(auv::config::sys_config.chassis);
-
-  auv::device::RosLogger::getInstance().init();
+  ctx_->logger->init();
   ROS_LOG_INFO("System ControlTask initialized");
 
   last_wake_time_ = xTaskGetTickCount();
   last_tick_ = HAL_GetTick();
 }
 
-void ControlTask::refreshHardwareWatchdogIfNeeded() {
-  if (auv::device::SoftWatchdog::getInstance().check()) {
-    HAL_IWDG_Refresh(&hiwdg1);
-  }
-}
-
-auv::motion::NavState ControlTask::updateNavigation() {
+void ControlTask::updateNavigation() {
   auv::motion::NavState state;
 
   // 1. 获取原始导航输入
@@ -69,70 +54,72 @@ auv::motion::NavState ControlTask::updateNavigation() {
       state.pos_world[i] = p[i];
       state.vel_body[i] = v[i];
     }
-    auv::system::system_context.nav_status.imu_state = 4;
-    auv::system::system_context.nav_status.timestamp = HAL_GetTick();
+    {
+      auto ns = auv::system::system_context.nav_status_.get();
+      ns.imu_state = 4;
+      ns.timestamp = HAL_GetTick();
+      auv::system::system_context.nav_status_.set(ns);
+    }
   } else
 #endif
-  if (auv::config::sys_config.simulation.sitl_enabled) {
-    // SITL 模式：从 micro-ROS 订阅的仿真数据注入
-    if (auv::motion::motion_context.isSimDataValid()) {
-      state = auv::motion::motion_context.getSimNavState();
-      auv::system::system_context.nav_status.imu_state = 4;
-      auv::system::system_context.nav_status.timestamp = HAL_GetTick();
+      if (auv::config::sys_config.simulation.sitl_enabled) {
+    if (auv::motion::motion_context.sim_data_valid_.get()) {
+      state = auv::motion::motion_context.nav_state_.get();
+      {
+        auto ns = auv::system::system_context.nav_status_.get();
+        ns.imu_state = 4;
+        ns.timestamp = HAL_GetTick();
+        auv::system::system_context.nav_status_.set(ns);
+      }
     } else {
-      // 仿真数据尚未到达，使用零值
       for (int i = 0; i < 6; ++i) {
         state.pos_world[i] = 0.0f;
         state.vel_body[i] = 0.0f;
       }
-      auv::system::system_context.nav_status.imu_state = 0;
+      {
+        auto ns = auv::system::system_context.nav_status_.get();
+        ns.imu_state = 0;
+        auv::system::system_context.nav_status_.set(ns);
+      }
     }
-  } else
-  {
-    // 正常：从硬件读取原始导航数据
-    state = auv::device::ins_driver.getNavState();
-    auv::device::ins_driver.update(state);
+  } else {
+    state = ctx_->ins_driver->getNavState();
+    ctx_->ins_driver->update(state);
 
-    // 根据配置覆盖 Z 轴深度数据源
     if (auv::config::sys_config.sensors.z_data_source ==
         auv::config::ZDataSource::USE_MS5837_Z) {
-      state.pos_world[2] = auv::device::depth_sensor.getMS5837Z();
+      state.pos_world[2] = ctx_->depth_sensor->getMS5837Z();
     } else if (auv::config::sys_config.sensors.z_data_source ==
                auv::config::ZDataSource::USE_INS_PRESSURE_Z) {
-      state.pos_world[2] = auv::device::ins_driver.getManometerZ();
+      state.pos_world[2] = ctx_->ins_driver->getManometerZ();
     }
   }
 
   // 2. 应用解锁原点平移与旋转变换
-  auto home = auv::motion::motion_context.getHomeOffset();
+  auto home = auv::motion::motion_context.home_offset_.get();
   bool use_offset = home.active;
   const auto &offset = home.offset;
 
   if (use_offset) {
-    // η_diff = η_raw - η_home
     float diff[6];
     for (int i = 0; i < 6; i++)
       diff[i] = state.pos_world[i] - offset[i];
 
-    // η_home = R(η_offset)⁻¹ · η_diff
-    auv::math::applyRotationToBody(diff, state.pos_world.data(), offset[3],
-                                   offset[4], offset[5]);
+    auv::algorithm::math::applyRotationToBody(diff, state.pos_world.data(),
+                                              offset[3], offset[4], offset[5]);
 
-    // 角度归一化
     for (int i = 3; i < 6; i++) {
       state.pos_world[i] =
           auv::motion::MotionContext::wrapAngle(state.pos_world[i]);
     }
   }
 
-  // 3. 将融合后的位姿写入全局的 MotionContext
-  auv::motion::motion_context.setNavState(state);
-
-  return state;
+  // 3. 写入 MotionContext
+  auv::motion::motion_context.nav_state_.set(state);
 }
 
 void ControlTask::computeAndPublish() {
-  auto forces = auv::control::chassis.update();
+  auto forces = ctx_->chassis->update();
 
 #if AUV_SIMULATION_ENABLE
   if (auv::config::sys_config.simulation.hitl_enabled) {
@@ -140,26 +127,20 @@ void ControlTask::computeAndPublish() {
   }
 #endif
 
-  auv::motion::motion_context.setLastOutputForces(forces);
+  auv::motion::motion_context.last_output_forces_.set(forces);
 
-  taskENTER_CRITICAL();
-  const bool armed = auv::system::system_context.is_system_armed;
-  taskEXIT_CRITICAL();
+  const bool armed = auv::system::system_context.arm_state_.get().is_armed;
 
   if (armed) {
-    // forces: [X=0, Y=1, Z=2, ROLL=3, PITCH=4, YAW=5]
-    // publishThrust(fx, fy, fz, fyaw, fpitch, froll)
-    auv::device::motor_driver.publishThrust(forces[0], forces[1], forces[2],
-                                            forces[5],  // fyaw
-                                            forces[4],  // fpitch
-                                            forces[3]); // froll
+    ctx_->motor_driver->publishThrust(forces[0], forces[1], forces[2],
+                                      forces[5], forces[4], forces[3]);
   } else {
-    auv::device::motor_driver.publishThrust(0, 0, 0, 0, 0, 0);
+    ctx_->motor_driver->publishThrust(0, 0, 0, 0, 0, 0);
   }
 }
 
 void UserApp_ControlTask(void *argument) {
   (void)argument;
-  ControlTask runner;
+  ControlTask runner(&auv::system::g_app_ctx);
   runner.run();
 }

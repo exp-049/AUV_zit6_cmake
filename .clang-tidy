@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: MIT
+#
+# ZIT6 AUV 固件 clang-tidy 配置
+# 针对 STM32H743 + FreeRTOS + Eigen3 + micro-ROS 项目定制
+#
+# 使用方式：
+#   cmake -DCMAKE_CXX_CLANG_TIDY="clang-tidy" ..
+#   或在已有 build 目录下：
+#   run-clang-tidy -p build/Debug -header-filter='UserApp/.*'
+
+---
+Checks: >
+  -*,
+
+  # === 核心安全分析（推荐开启） ===
+  clang-analyzer-core.*,
+  clang-analyzer-cplusplus.*,
+  clang-analyzer-deadcode.*,
+  clang-analyzer-security.*,
+  clang-analyzer-unix.*,
+  clang-analyzer-optin.cplusplus.*,
+
+  # === Bug 高风险模式 ===
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-reserved-identifier,
+  -bugprone-macro-parentheses,
+  -bugprone-suspicious-include,
+
+  # === 性能相关 ===
+  performance-*,
+  -performance-no-int-to-ptr,
+
+  # === 代码清晰度 ===
+  readability-misleading-indentation,
+  readability-const-return-type,
+  readability-non-const-parameter,
+  google-explicit-constructor,
+
+  # === 现代 C++ 迁移 ===
+  modernize-use-override,
+  modernize-use-nullptr,
+  modernize-use-default-member-init,
+  modernize-loop-convert,
+  modernize-deprecated-headers,
+
+  # === 未初始化变量（高价值） ===
+  cppcoreguidelines-init-variables,
+  cppcoreguidelines-slicing,
+  cppcoreguidelines-pro-type-member-init,
+  cppcoreguidelines-pro-type-cstyle-cast,
+  cppcoreguidelines-no-malloc,
+
+# clang-tidy 运行较快，这些检查作为 Warnings（不影响 CI pass/fail）
+# 新项目可将关键分析器提升为 Error
+WarningsAsErrors: >
+  clang-analyzer-core.*,
+  clang-analyzer-cplusplus.*,
+  bugprone-undefined-memory-manipulation,
+
+# 只检查 UserApp 下的用户代码，跳过 HAL/FreeRTOS/micro-ROS 等第三方库
+HeaderFilterRegex: "UserApp/.*"
+
+FormatStyle: none
+
+CheckOptions:
+  - key: performance-move-const-arg.CheckTriviallyCopyableMove
+    value: false
+  - key: bugprone-argument-comment.StrictMode
+    value: false
+...

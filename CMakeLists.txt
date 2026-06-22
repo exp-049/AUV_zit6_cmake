@@ -26,14 +26,16 @@ endif()
 # Generate config header from JSON (run on build when config.json changes)
 set(GEN_CONFIG_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_config.py)
 set(CONFIG_JSON ${CMAKE_CURRENT_SOURCE_DIR}/config.json)
-set(GEN_CONFIG_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/UserApp/Common)
+set(GEN_CONFIG_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/UserApp/Config)
 set(GEN_CONFIG_HPP ${GEN_CONFIG_OUT_DIR}/SystemConfig.hpp)
 set(GEN_CONFIG_CPP ${GEN_CONFIG_OUT_DIR}/SystemConfig.cpp)
+
+set(GEN_CONFIG_TEMPLATE ${CMAKE_CURRENT_SOURCE_DIR}/scripts/templates/SystemConfig.hpp.j2)
 
 add_custom_command(
     OUTPUT ${GEN_CONFIG_HPP} ${GEN_CONFIG_CPP}
     COMMAND python3 ${GEN_CONFIG_SCRIPT} ${CONFIG_JSON} ${GEN_CONFIG_OUT_DIR}
-    DEPENDS ${GEN_CONFIG_SCRIPT} ${CONFIG_JSON}
+    DEPENDS ${GEN_CONFIG_SCRIPT} ${CONFIG_JSON} ${GEN_CONFIG_TEMPLATE}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Generating SystemConfig from config.json"
     VERBATIM
@@ -42,6 +44,39 @@ add_custom_target(gen_system_config DEPENDS ${GEN_CONFIG_HPP} ${GEN_CONFIG_CPP})
 
 # Set the project name
 set(CMAKE_PROJECT_NAME AUV_zit6)
+
+# ============================================================================
+# 静态分析集成
+# ============================================================================
+option(AUV_ENABLE_CLANG_TIDY "在编译时运行 clang-tidy（会显著增加编译时间）" OFF)
+
+if(AUV_ENABLE_CLANG_TIDY)
+    find_program(CLANG_TIDY_BIN clang-tidy)
+    if(CLANG_TIDY_BIN)
+        set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_BIN}")
+        message(STATUS "clang-tidy 已启用: ${CLANG_TIDY_BIN}")
+    else()
+        message(WARNING "AUV_ENABLE_CLANG_TIDY=ON 但未找到 clang-tidy")
+    endif()
+endif()
+
+# 自定义目标：运行完整静态分析（cppcheck + clang-tidy）
+add_custom_target(static-analysis
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_static_analysis.sh
+        -b ${CMAKE_BINARY_DIR}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "运行静态分析 (cppcheck + clang-tidy)"
+    USES_TERMINAL
+)
+
+# 自定义目标：仅 cppcheck（快速）
+add_custom_target(static-analysis-fast
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_static_analysis.sh
+        -b ${CMAKE_BINARY_DIR} -f
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "运行快速静态分析 (仅 cppcheck)"
+    USES_TERMINAL
+)
 
 # Enable compile command to ease indexing with e.g. clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
@@ -83,27 +118,33 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
   Core/Src/stm32h7xx_hal_timebase_tim.c
     UserApp/Application/AppMain.cpp
     UserApp/Application/ControlTask.cpp
+    UserApp/Application/MonitorTask.cpp
     UserApp/Application/MicroRosTask.cpp
-    UserApp/Application/MicroRosTransport.cpp
-    UserApp/Application/MicroRosPublisher.cpp
-    UserApp/Application/MicroRosSubscriber.cpp
-    UserApp/Application/MicroRosService.cpp
+    UserApp/MicroRos/MicroRosTransport.cpp
+    UserApp/MicroRos/MicroRosPublisher.cpp
+    UserApp/MicroRos/MicroRosSubscriber.cpp
+    UserApp/MicroRos/MicroRosService.cpp
     UserApp/Application/IICTask.cpp
     UserApp/Common/MotionContext.cpp
+    UserApp/Common/AppContext.cpp
     UserApp/Common/SystemContext.cpp
-    UserApp/Common/SystemConfig.cpp
-    UserApp/Common/ConfigService.cpp
-    UserApp/Peripherals/SoftWatchdog.cpp
+    UserApp/Config/SystemConfig.cpp
+    UserApp/Config/ConfigService.cpp
+    UserApp/Component/SoftWatchdog.cpp
+    UserApp/Component/SetpointRouter.cpp
+    UserApp/Component/CascadeController.cpp
+    UserApp/Component/ChassisManager.cpp
+    UserApp/Component/SafetyMonitor.cpp
     UserApp/Peripherals/INS_Driver.cpp
     UserApp/Peripherals/MotionController_Driver.cpp
-    UserApp/Peripherals/MS5837_Class.cpp
-    UserApp/Peripherals/RosLogger.cpp
-    UserApp/Porting/SerialPort.cpp
-    UserApp/Porting/cJSON.c
-    UserApp/Control/ChassisManager.cpp
-    UserApp/Control/SafetyMonitor.cpp
-    UserApp/Control/PID_Controller.cpp
-    UserApp/Control/KinematicProfile.cpp
+    UserApp/Peripherals/MS5837_Driver.cpp
+    UserApp/Component/RosLogger.cpp
+    UserApp/Porting/INS_Porting.cpp
+    UserApp/Porting/MotionController_Porting.cpp
+    UserApp/Porting/MS5837_Porting.cpp
+    UserApp/Thirdparty/cJSON/cJSON.c
+    UserApp/Algorithm/PID_Controller.cpp
+    UserApp/Algorithm/KinematicProfile.cpp
     micro_ros_stm32cubemx_utils/extra_sources/microros_transports/dma_transport.c
 )
 
@@ -112,11 +153,15 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     micro_ros_stm32cubemx_utils/microros_static_library_ide/libmicroros/include
     UserApp/Common
+    UserApp/Config
     UserApp/Peripherals
-    UserApp/Control
-    UserApp/Application
     UserApp/Porting
-    UserApp/Thirdparty  # Eigen 矩阵库
+    UserApp/Algorithm
+    UserApp/Component
+    UserApp/Application
+    UserApp/MicroRos
+    UserApp/Thirdparty       # Eigen 矩阵库
+    UserApp/Thirdparty/cJSON # cJSON
 )
 
 # Add project symbols (macros)

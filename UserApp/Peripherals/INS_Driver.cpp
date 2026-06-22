@@ -1,4 +1,5 @@
 #include "INS_Driver.hpp"
+#include "AppContext.hpp"
 #include "RosLogger.hpp"
 #include "SoftWatchdog.hpp"
 #include "SystemContext.hpp"
@@ -6,12 +7,11 @@
 #include <cstdint>
 
 namespace auv {
-namespace device {
+namespace peripheral {
 
 void INS_Driver::init() {
-  // 尝试启动 DMA 接收，如果失败则重试（防止上电初期串口噪声导致 ORE 锁死）
   for (int i = 0; i < 5; i++) {
-    if (rx_port_.startReceive())
+    if (ops_.init && ops_.init(ops_.ctx))
       break;
     HAL_Delay(10);
   }
@@ -49,9 +49,9 @@ void INS_Driver::sendCommand(uint8_t cmd_id, const uint8_t *data,
   }
   cmd[11] = v;
 
-  // 发送到 tx_uart_ (尝试发送3次以确保可靠性)
+  // 发送（尝试 3 次）
   for (int i = 0; i < 3; i++) {
-    HAL_UART_Transmit(tx_uart_, cmd, 14, 50);
+    ops_.transmit(ops_.ctx, cmd, 14);
     if (i < 2)
       HAL_Delay(10);
   }
@@ -106,7 +106,7 @@ bool INS_Driver::isDataFresh() const {
 
 bool INS_Driver::update(auv::motion::NavState &state) {
   uint8_t temp_buf[256];
-  uint16_t len = rx_port_.read(temp_buf, 256);
+  uint16_t len = ops_.read(ops_.ctx, temp_buf, 256);
   bool has_new_frame = false;
 
   for (int i = 0; i < len; i++) {
@@ -273,8 +273,12 @@ void INS_Driver::decodePacket(auv::motion::NavState &s) {
   // 4. 经纬度 (int32, 1e7 缩放)
   int32_t lat_i = readLE32(packet_buf_ + kLat);
   int32_t lon_i = readLE32(packet_buf_ + kLon);
-  auv::system::system_context.nav_status.lat = lat_i * 1e-7;
-  auv::system::system_context.nav_status.lon = lon_i * 1e-7;
+  {
+    auto ns = auv::system::system_context.nav_status_.get();
+    ns.lat = lat_i * 1e-7;
+    ns.lon = lon_i * 1e-7;
+    auv::system::system_context.nav_status_.set(ns);
+  }
 
   // 5. 深度
   s.pos_world[2] = readLEFloat(packet_buf_ + kDepth);
@@ -287,13 +291,16 @@ void INS_Driver::decodePacket(auv::motion::NavState &s) {
   manometer_z_ = readLEFloat(packet_buf_ + kManometerDepth);
 
   // 8. 传感器状态 & 导航模式
-  auv::system::system_context.nav_status.imu_state = packet_buf_[kNavMode];
-  auv::system::system_context.nav_status.dvl_state =
-      (packet_buf_[kSensorFlags] & 0x02) ? 1 : 0;
-  auv::system::system_context.nav_status.timestamp = HAL_GetTick();
+  {
+    auto ns = auv::system::system_context.nav_status_.get();
+    ns.imu_state = packet_buf_[kNavMode];
+    ns.dvl_state = (packet_buf_[kSensorFlags] & 0x02) ? 1 : 0;
+    ns.timestamp = HAL_GetTick();
+    auv::system::system_context.nav_status_.set(ns);
+  }
 
-  auv::device::SoftWatchdog::getInstance().feed(
-      auv::device::SoftWatchdog::Component::INS);
+  auv::system::g_app_ctx.watchdog->feed(
+      auv::component::SoftWatchdog::Component::INS);
 
   // 转换单位 (Deg -> Rad)
   const float kDeg2Rad = 0.0174532925f;
@@ -310,5 +317,5 @@ void INS_Driver::decodePacket(auv::motion::NavState &s) {
   frame_len_ = 0; // 确保状态机复位，准备下一帧
 }
 
-} // namespace device
+} // namespace peripheral
 } // namespace auv
