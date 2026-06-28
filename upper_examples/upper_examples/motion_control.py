@@ -38,7 +38,7 @@ class MotionControlWidget(QWidget):
         # 2. 订阅者
         self.status_sub = self.node.create_subscription(
             ZitStatus,
-            '/zit6/state/zit_status',
+            '/zit6/state/status',
             self.status_callback,
             10
         )
@@ -238,7 +238,7 @@ class MotionControlWidget(QWidget):
         right_layout.setContentsMargins(5, 5, 5, 5)
         right_layout.setSpacing(10)
         
-        title_right = QLabel("📊 实时状态监测 (/zit6/state/zit_status)")
+        title_right = QLabel("📊 实时状态监测 (/zit6/state/status)")
         title_right.setStyleSheet("font-size: 15px; font-weight: bold; color: #00e5ff;")
         right_layout.addWidget(title_right)
         

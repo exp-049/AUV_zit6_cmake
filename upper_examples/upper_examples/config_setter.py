@@ -39,7 +39,9 @@ class ConfigWidget(QWidget):
         self.update_client = self.node.create_client(UpdateParams, '/zit6/update_params')
         
         self.params_map = {}
-        self.config_path = os.path.join(os.getcwd(), 'config.json')
+        # 从脚本位置推导项目根
+        self._project_root = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        self.config_path = os.path.join(self._project_root, 'UserApp', 'Config', 'config.json')
         self._int_paths = {"soft_watchdog.timeout_ms"}
         self._bool_paths = {
             "soft_watchdog.check_microros",
@@ -202,9 +204,9 @@ class ConfigWidget(QWidget):
     def load_structure(self):
         from ament_index_python.packages import get_package_share_directory
         search_paths = [
+            self.config_path,
+            os.path.join(os.getcwd(), 'UserApp/Config/config.json'),
             os.path.join(os.getcwd(), 'config.json'),
-            os.path.join(os.path.dirname(__file__), '../../config.json'), 
-            self.config_path
         ]
         
         try:

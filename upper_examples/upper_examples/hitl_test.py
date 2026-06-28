@@ -46,6 +46,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_system_default
 from std_msgs.msg import Float32MultiArray, UInt32
+from nav_msgs.msg import Odometry
 from zit6_interfaces.msg import ZitSetpoint, ZitStatus
 
 try:
@@ -284,7 +285,7 @@ class HitlTestNode(Node):
         self.scn_t = 0.0
 
         # 加载配置
-        cfg_path = os.path.join(os.path.dirname(__file__),"..","..","config_recommend.json")
+        cfg_path = os.path.join(os.path.dirname(__file__),"..","..","doc","config_recommend.json")
         self.config = {}
         if os.path.exists(cfg_path):
             with open(cfg_path) as f:
@@ -304,10 +305,8 @@ class HitlTestNode(Node):
         self.pub_hb = self.create_publisher(UInt32, "/zit6/cmd/agxhbt",
                                             qos_profile_system_default)
         if mode == "sitl":
-            self.pub_sim_p = self.create_publisher(Float32MultiArray, "/zit6/sim/pos",
-                                                   qos_profile_system_default)
-            self.pub_sim_v = self.create_publisher(Float32MultiArray, "/zit6/sim/vel",
-                                                   qos_profile_system_default)
+            self.pub_sim_nav = self.create_publisher(Odometry, "/zit6/sim/nav",
+                                                     qos_profile_system_default)
 
         # 订阅者
         self.sub_sta = self.create_subscription(ZitStatus, "/zit6/state/status",
@@ -563,10 +562,28 @@ class HitlTestNode(Node):
     def _sim(self, pos, vel):
         if self.mode != "sitl":
             return
-        p = Float32MultiArray(); p.data = [float(v) for v in pos]
-        self.pub_sim_p.publish(p)
-        v = Float32MultiArray(); v.data = [float(v) for v in vel]
-        self.pub_sim_v.publish(v)
+        odom = Odometry()
+        odom.header.stamp = self.get_clock().now().to_msg()
+        odom.header.frame_id = "odom"
+        odom.child_frame_id = "base_link"
+        odom.pose.pose.position.x = float(pos[0])
+        odom.pose.pose.position.y = float(pos[1])
+        odom.pose.pose.position.z = float(pos[2])
+        roll, pitch, yaw = float(pos[3]), float(pos[4]), float(pos[5])
+        cy, sy = math.cos(yaw * 0.5), math.sin(yaw * 0.5)
+        cp, sp = math.cos(pitch * 0.5), math.sin(pitch * 0.5)
+        cr, sr = math.cos(roll * 0.5), math.sin(roll * 0.5)
+        odom.pose.pose.orientation.w = cr * cp * cy + sr * sp * sy
+        odom.pose.pose.orientation.x = sr * cp * cy - cr * sp * sy
+        odom.pose.pose.orientation.y = cr * sp * cy + sr * cp * sy
+        odom.pose.pose.orientation.z = cr * cp * sy - sr * sp * cy
+        odom.twist.twist.linear.x = float(vel[0])
+        odom.twist.twist.linear.y = float(vel[1])
+        odom.twist.twist.linear.z = float(vel[2])
+        odom.twist.twist.angular.x = float(vel[3])
+        odom.twist.twist.angular.y = float(vel[4])
+        odom.twist.twist.angular.z = float(vel[5])
+        self.pub_sim_nav.publish(odom)
 
     def _record(self):
         p = self.physics.pos if self.mode == "sitl" else [0.0]*6
