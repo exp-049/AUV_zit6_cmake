@@ -1,5 +1,5 @@
-#ifndef __CONFIG_SERVICE_HPP
-#define __CONFIG_SERVICE_HPP
+#ifndef __CONFIG_SERVICE_CONFIG_HPP
+#define __CONFIG_SERVICE_CONFIG_HPP
 
 #include <cstdint>
 #include <string>

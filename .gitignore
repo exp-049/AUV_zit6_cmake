@@ -32,14 +32,14 @@ log/
 # gen_config.py 自动生成，编辑 scripts/templates/SystemConfig.hpp.j2 替代
 UserApp/Config/SystemConfig.hpp
 UserApp/Config/SystemConfig.cpp
-Core/Inc/SystemConfig.hpp
-Core/Inc/SystemConfig.cpp
+UserApp/Peripherals/HAL/Core/Inc/SystemConfig.hpp
+UserApp/Peripherals/HAL/Core/Inc/SystemConfig.cpp
 
 # ---- micro-ROS 构建产物 ----
 # Docker 构建生成的静态库和构建缓存
-micro_ros_stm32cubemx_utils/microros_static_library_ide/libmicroro*
+UserApp/Thirdparty/micro_ros_stm32cubemx_utils/microros_static_library_ide/libmicroro*
 # build_lib.sh 在构建前自动拷贝的接口副本
-micro_ros_stm32cubemx_utils/microros_static_library_ide/library_generation/extra_packages/
+UserApp/Thirdparty/micro_ros_stm32cubemx_utils/microros_static_library_ide/library_generation/extra_packages/
 
 # ---- 构建缓存哈希 ----
 .msg_hash

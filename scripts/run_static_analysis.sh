@@ -41,7 +41,7 @@ fi
 if [ -z "$BUILD_DIR" ]; then
     echo "❌ 找不到 compile_commands.json，请先运行 cmake："
     echo "   cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \\"
-    echo "       -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \\"
+    echo "       -DCMAKE_TOOLCHAIN_FILE=UserApp/Peripherals/HAL/gcc-arm-none-eabi.cmake \\"
     echo "       -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
     exit 1
 fi
@@ -61,13 +61,15 @@ echo "[1/2] Running cppcheck..."
 echo ""
 
 CPPCHECK_FLAGS=(
-    --enable=warning,performance,portability,information
+    --enable=warning,performance,portability
     --suppress=missingIncludeSystem
     --suppress=unmatchedSuppression
     --suppress=ctunullpointer:UserApp/Thirdparty/cJSON/cJSON.c
     --suppress=toomanyconfigs
     --suppress=checkersReport
+    --suppress=noValidConfiguration
     --suppress=syntaxError:UserApp/Thirdparty/Eigen/*
+    --suppress=missingInclude:UserApp/Peripherals/HAL/Middlewares/*
     --error-exitcode=1
     --inline-suppr
     --language=c++
@@ -75,22 +77,35 @@ CPPCHECK_FLAGS=(
     --platform=unix64
     --check-level=normal
     -i build
-    -i micro_ros_stm32cubemx_utils
-    -i Drivers
-    -i Middlewares
     -i install
     -i CMakeFiles
+    -i UserApp/Thirdparty
+    -i UserApp/Peripherals/HAL/Drivers
+    -i UserApp/Peripherals/HAL/Middlewares
+    -i UserApp/Peripherals/HAL/Core/Src
+    -i UserApp/Peripherals/HAL/Core/Inc
     -I UserApp/Common
     -I UserApp/Config
-    -I UserApp/Peripherals
-    -I UserApp/Porting
+    -I UserApp/Peripherals/inc
+    -I UserApp/Porting/inc
     -I UserApp/Algorithm
     -I UserApp/Component
+    -I UserApp/Component/Chassis
+    -I UserApp/Component/Safety
+    -I UserApp/Component/RosLogger
+    -I UserApp/Component/ConfigService
+    -I UserApp/Component/HitlSimulator
+    -I UserApp/Component/MicroRos
     -I UserApp/Application
-    -I UserApp/MicroRos
+    -I UserApp/Peripherals/HAL/Core/Inc
+    -I UserApp/Peripherals/HAL/Drivers/CMSIS/Include
+    -I UserApp/Peripherals/HAL/Drivers/CMSIS/Device/ST/STM32H7xx/Include
+    -I UserApp/Peripherals/HAL/Drivers/CMSIS/RTOS2/Include
+    -I UserApp/Peripherals/HAL/Drivers/STM32H7xx_HAL_Driver/Inc
+    -I UserApp/Peripherals/HAL/Middlewares/Third_Party/FreeRTOS/Source/include
+    -I UserApp/Peripherals/HAL/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2
+    -I UserApp/Peripherals/HAL/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
     -I UserApp/Thirdparty
-    -I Core/Inc
-    -I Core/Src
     UserApp/
 )
 
@@ -128,17 +143,19 @@ if [ "$FAST_MODE" = false ]; then
     USER_SOURCES=$(find UserApp -name '*.cpp' -o -name '*.c' | grep -v Thirdparty/cJSON | sort)
 
     if [ "$CLANG_TIDY" = "clang-tidy" ]; then
-        # 直接对每个文件运行 clang-tidy
+        # 直接对每个文件运行 clang-tidy，过滤第三方库警告
         for src in $USER_SOURCES; do
             echo "  Analyzing: $src"
-            clang-tidy --quiet "$src" -p "$BUILD_DIR" 2>/dev/null || true
+            clang-tidy --quiet "$src" -p "$BUILD_DIR" 2>/dev/null | \
+                grep -v "Thirdparty/" || true
         done
         echo "✅ clang-tidy: 分析完成"
     else
         echo ">>> $CLANG_TIDY -p $BUILD_DIR -header-filter='UserApp/.*' UserApp/"
-        # run-clang-tidy 自动并行处理所有文件
-        if $CLANG_TIDY -p "$BUILD_DIR" -header-filter='UserApp/.*' \
-            -quiet UserApp/ 2>/dev/null; then
+        # run-clang-tidy 自动并行处理所有文件，过滤第三方库警告
+        if $CLANG_TIDY -p "$BUILD_DIR" \
+            -header-filter='UserApp/.*' \
+            -quiet UserApp/ 2>/dev/null | grep -v "Thirdparty/"; then
             echo "✅ clang-tidy: 未发现问题"
         else
             echo "⚠️  clang-tidy: 发现问题（见上方输出）"

@@ -31,6 +31,7 @@ setup(
             'heartbeat = upper_examples.heartbeat:main',
             'motion_control = upper_examples.motion_control:main',
             'gui = upper_examples.gui:main',
+            'hitl_test = upper_examples.hitl_test:main',
         ],
     },
 )

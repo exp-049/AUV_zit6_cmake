@@ -58,8 +58,8 @@ WarningsAsErrors: >
   clang-analyzer-cplusplus.*,
   bugprone-undefined-memory-manipulation,
 
-# 只检查 UserApp 下的用户代码，跳过 HAL/FreeRTOS/micro-ROS 等第三方库
-HeaderFilterRegex: "UserApp/.*"
+# 只检查 UserApp 下的用户代码，跳过 Thirdparty 和 HAL 等第三方库
+HeaderFilterRegex: "UserApp/(?!Thirdparty/|Peripherals/HAL/).*"
 
 FormatStyle: none
 
