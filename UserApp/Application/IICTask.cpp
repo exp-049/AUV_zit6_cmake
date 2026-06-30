@@ -2,11 +2,28 @@
 #include "AppMain.hpp"
 #include "FreeRTOS.h"
 #include "SoftWatchdog.hpp"
+#include "SystemConfig.hpp"
 #include "SystemContext.hpp"
 #include "task.h"
 #include <cmath>
 
 void IICTask::run() {
+#ifdef USE_DEPTH_CALC_BOARD
+  // ======== 解算板方案（UART）========
+  // TODO: 解算板 Porting 就绪后实现
+  // - 初始化解算板 UART (DepthCalcBoard_Porting)
+  // - 循环读取 UART 行数据
+  // - 调用 DepthSensor_ParseData() 解析
+  // - 调用 ctx_->depth_sensor->setMS5837Z() 注入深度
+  // - 喂狗
+
+  last_wake_time_ = xTaskGetTickCount();
+  for (;;) {
+    // 占位：后续替换为 UART 读取逻辑
+    vTaskDelayUntil(&last_wake_time_, pdMS_TO_TICKS(20));
+  }
+#else
+  // ======== I2C 方案（MS5837 直连，当前方案）========
   ctx_->depth_sensor->Init();
 
   // Validation state
@@ -69,6 +86,7 @@ void IICTask::run() {
     vTaskDelayUntil(&last_wake_time_, pdMS_TO_TICKS(
         8)); // ~125Hz loop; with 2-step conversion yields ~62.5Hz samples
   }
+#endif
 }
 
 void UserApp_IICTask(void *argument) {

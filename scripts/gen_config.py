@@ -103,14 +103,15 @@ def gen_system_config(json_path, out_dir):
     template_dir = os.path.join(script_dir, 'templates')
     env = Environment(loader=FileSystemLoader(template_dir))
     template = env.get_template('SystemConfig.hpp.j2')
-    content = template.render()
+    depth_calc_board = bool(config.get('depth_calc_board', False))
+    content = template.render(depth_calc_board=depth_calc_board)
 
     # 生成注册表源文件 (SystemConfig.cpp)
     if isinstance(config.get("types"), dict):
         type_overrides = config.get("types")
     else:
         type_overrides = load_type_overrides(json_path)
-    config_for_params = {k: v for k, v in config.items() if k != "types"}
+    config_for_params = {k: v for k, v in config.items() if k not in ("types", "depth_calc_board")}
     params = collect_params(config_for_params, type_overrides=type_overrides)
 
     z_src = str(config.get('z_data_sourse', 'use_ins_integrated_z'))

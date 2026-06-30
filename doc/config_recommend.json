@@ -1,4 +1,5 @@
 {
+  "depth_calc_board": false,
   "z_data_sourse": "use_ms5837_z",
   "soft_watchdog": {
     "timeout_ms": 3000,

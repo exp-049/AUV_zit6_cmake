@@ -4,6 +4,11 @@
 #include <stdint.h>
 #include <stddef.h>
 
+// 深度传感器方案选择（由 gen_config.py 根据 config.json 生成）
+{% if depth_calc_board %}
+#define USE_DEPTH_CALC_BOARD
+{% endif %}
+
 namespace auv {
 namespace config {
 

@@ -57,6 +57,34 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define AGX_TX_Pin GPIO_PIN_2
+#define AGX_TX_GPIO_Port GPIOA
+#define AGX_RX_Pin GPIO_PIN_3
+#define AGX_RX_GPIO_Port GPIOA
+#define INS_TX_Pin GPIO_PIN_7
+#define INS_TX_GPIO_Port GPIOE
+#define INS_RX_Pin GPIO_PIN_8
+#define INS_RX_GPIO_Port GPIOE
+#define TTL232_TX_Pin GPIO_PIN_10
+#define TTL232_TX_GPIO_Port GPIOB
+#define TTL232_RX_Pin GPIO_PIN_11
+#define TTL232_RX_GPIO_Port GPIOB
+#define MS5837_RX_Pin GPIO_PIN_12
+#define MS5837_RX_GPIO_Port GPIOB
+#define MS5837_TX_Pin GPIO_PIN_13
+#define MS5837_TX_GPIO_Port GPIOB
+#define USBL_TX_Pin GPIO_PIN_14
+#define USBL_TX_GPIO_Port GPIOB
+#define USBL_RX_Pin GPIO_PIN_15
+#define USBL_RX_GPIO_Port GPIOB
+#define VIT6_TX_Pin GPIO_PIN_6
+#define VIT6_TX_GPIO_Port GPIOC
+#define VIT6_RX_Pin GPIO_PIN_7
+#define VIT6_RX_GPIO_Port GPIOC
+#define MS5837_SDA_Pin GPIO_PIN_7
+#define MS5837_SDA_GPIO_Port GPIOB
+#define MS5837_SCL_Pin GPIO_PIN_8
+#define MS5837_SCL_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
