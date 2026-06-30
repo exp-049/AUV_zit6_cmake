@@ -4,6 +4,7 @@
 #include "RosLogger.hpp"
 #include "SystemConfig.hpp"
 #include "SystemContext.hpp"
+#include "main.h" // HAL_GetTick
 #include "task.h"
 #include <cmath>
 #include <rcl/error_handling.h>

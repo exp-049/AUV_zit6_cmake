@@ -9,6 +9,7 @@ namespace peripheral {
 class MS5837_Driver {
 public:
   void Init() {}
+  void start() {}
   int Read() { return 0; }
   void Depth(float *p) { *p = 0; }
   float getMS5837Z() { return 0; }

@@ -43,6 +43,10 @@ void ControlTask::init() {
         xQueueCreate(3, sizeof(auv::motion::NavState));
   }
 
+  /* 深度传感器初始化（Init 内部注册回调 + 初始化，start 创建任务/启动 DMA） */
+  ctx_->depth_sensor->Init();
+  ctx_->depth_sensor->start();
+
   ROS_LOG_INFO("System ControlTask initialized");
 
   last_wake_time_ = xTaskGetTickCount();

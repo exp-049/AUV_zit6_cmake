@@ -1,11 +1,22 @@
 #include "MS5837_Porting.hpp"
-#include "cmsis_os2.h"
+#include "I2C_DepthBackend.hpp" // pollingTask
+#include "cmsis_os2.h"          // osThreadNew, osDelay
 
 namespace auv {
 namespace porting {
 
-MS5837_Porting::MS5837_Porting(I2C_HandleTypeDef *hi2c, uint8_t addr)
-    : hi2c_(hi2c), addr_(addr) {}
+MS5837_Porting::MS5837_Porting(I2C_HandleTypeDef *hi2c, uint8_t addr,
+                               auv::peripheral::I2C_DepthBackend *backend)
+    : hi2c_(hi2c), addr_(addr), backend_(backend) {}
+
+void MS5837_Porting::start() {
+  osThreadAttr_t depth_poll_attr = {0};
+  depth_poll_attr.name = "depth_i2c_poll";
+  depth_poll_attr.stack_size = 1024;
+  depth_poll_attr.priority = osPriorityNormal;
+  osThreadNew(auv::peripheral::I2C_DepthBackend::pollingTask, backend_,
+              &depth_poll_attr);
+}
 
 bool MS5837_Porting::writePort(void *ctx, uint8_t cmd) {
   return static_cast<MS5837_Porting *>(ctx)->writeByte(cmd);
@@ -18,6 +29,10 @@ bool MS5837_Porting::readPort(void *ctx, uint8_t *data, uint16_t size) {
 }
 void MS5837_Porting::delayPort(void *ctx, uint32_t ms) {
   static_cast<MS5837_Porting *>(ctx)->delay(ms);
+}
+
+void MS5837_Porting::startPort(void *ctx) {
+  static_cast<MS5837_Porting *>(ctx)->start();
 }
 
 bool MS5837_Porting::writeByte(uint8_t cmd) {

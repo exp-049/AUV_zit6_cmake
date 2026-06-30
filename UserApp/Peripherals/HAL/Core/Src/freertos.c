@@ -65,19 +65,12 @@ const osThreadAttr_t micro_ros_task_attributes = {
   .stack_size = 5000 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal7,
 };
-/* Definitions for hardware_bridge */
-osThreadId_t hardware_bridgeHandle;
-const osThreadAttr_t hardware_bridge_attributes = {
-  .name = "hardware_bridge",
+/* Definitions for controll_task */
+osThreadId_t controll_taskHandle;
+const osThreadAttr_t controll_task_attributes = {
+  .name = "controll_task",
   .stack_size = 2048 * 4,
   .priority = (osPriority_t) osPriorityHigh,
-};
-/* Definitions for iic_task */
-osThreadId_t iic_taskHandle;
-const osThreadAttr_t iic_task_attributes = {
-  .name = "iic_task",
-  .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for monitor_task */
 osThreadId_t monitor_taskHandle;
@@ -110,7 +103,6 @@ void *microros_zero_allocate(size_t number_of_elements, size_t size_of_element,
 
 void Entry_MicroRosTask(void *argument);
 void Entry_ControlTask(void *argument);
-void Entry_IICTask(void *argument);
 void Entry_MonitorTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
@@ -160,11 +152,8 @@ void MX_FREERTOS_Init(void) {
   /* creation of micro_ros_task */
   micro_ros_taskHandle = osThreadNew(Entry_MicroRosTask, NULL, &micro_ros_task_attributes);
 
-  /* creation of hardware_bridge */
-  hardware_bridgeHandle = osThreadNew(Entry_ControlTask, NULL, &hardware_bridge_attributes);
-
-  /* creation of iic_task */
-  iic_taskHandle = osThreadNew(Entry_IICTask, NULL, &iic_task_attributes);
+  /* creation of controll_task */
+  controll_taskHandle = osThreadNew(Entry_ControlTask, NULL, &controll_task_attributes);
 
   /* creation of monitor_task */
   monitor_taskHandle = osThreadNew(Entry_MonitorTask, NULL, &monitor_task_attributes);
@@ -205,20 +194,6 @@ void Entry_ControlTask(void *argument)
   /* USER CODE BEGIN Entry_ControlTask */
   UserApp_ControlTask(argument);
   /* USER CODE END Entry_ControlTask */
-}
-
-/* USER CODE BEGIN Header_Entry_IICTask */
-/**
- * @brief Function implementing the iic_task thread.
- * @param argument: Not used
- * @retval None
- */
-/* USER CODE END Header_Entry_IICTask */
-void Entry_IICTask(void *argument)
-{
-  /* USER CODE BEGIN Entry_IICTask */
-  UserApp_IICTask(argument);
-  /* USER CODE END Entry_IICTask */
 }
 
 /* USER CODE BEGIN Header_Entry_MonitorTask */

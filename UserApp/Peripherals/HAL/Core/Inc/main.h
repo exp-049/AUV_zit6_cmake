@@ -69,10 +69,6 @@ void Error_Handler(void);
 #define TTL232_TX_GPIO_Port GPIOB
 #define TTL232_RX_Pin GPIO_PIN_11
 #define TTL232_RX_GPIO_Port GPIOB
-#define MS5837_RX_Pin GPIO_PIN_12
-#define MS5837_RX_GPIO_Port GPIOB
-#define MS5837_TX_Pin GPIO_PIN_13
-#define MS5837_TX_GPIO_Port GPIOB
 #define USBL_TX_Pin GPIO_PIN_14
 #define USBL_TX_GPIO_Port GPIOB
 #define USBL_RX_Pin GPIO_PIN_15
@@ -81,6 +77,10 @@ void Error_Handler(void);
 #define VIT6_TX_GPIO_Port GPIOC
 #define VIT6_RX_Pin GPIO_PIN_7
 #define VIT6_RX_GPIO_Port GPIOC
+#define MS5837_RX_Pin GPIO_PIN_11
+#define MS5837_RX_GPIO_Port GPIOA
+#define MS5837_TX_Pin GPIO_PIN_12
+#define MS5837_TX_GPIO_Port GPIOA
 #define MS5837_SDA_Pin GPIO_PIN_7
 #define MS5837_SDA_GPIO_Port GPIOB
 #define MS5837_SCL_Pin GPIO_PIN_8

@@ -3,6 +3,7 @@
 #include "RosLogger.hpp"
 #include "SoftWatchdog.hpp"
 #include "SystemContext.hpp"
+#include "main.h" // HAL_GetTick, HAL_Delay
 #include <cmath>
 #include <cstdint>
 

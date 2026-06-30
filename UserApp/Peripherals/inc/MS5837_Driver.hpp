@@ -1,101 +1,111 @@
 #ifndef __MS5837_DRIVER_HPP
 #define __MS5837_DRIVER_HPP
 
-#include "MS5837_Porting.hpp"
 #include <math.h>
-
-#define MS5837_ADDR 0x76 << 1
-#define MS5837_RESET 0x1E
-#define MS5837_ADC_READ 0x00
-#define MS5837_PROM_READ 0xA0
-#define MS5837_CONVERT_D1_8192 0x4A
-#define MS5837_CONVERT_D2_8192 0x5A
-
-// Models:
-#define MS5837_30BA 0x00
-#define MS5837_02BA 0x01
-
-#define waterDensity 1029
+#include <stdint.h>
 
 namespace auv {
 namespace peripheral {
 
-/**
- * @struct DepthPortOps
- * @brief 深度传感器硬件操作接口（函数指针表）
- */
+/** @brief 数据就绪回调类型 */
+struct DepthDataReadyCallback {
+  void (*onDepthReady)(void *ctx, float depth, float temperature);
+  void *ctx;
+};
+
+/** @brief 深度传感器硬件操作接口（I2C 函数指针表） */
 struct DepthPortOps {
   void *ctx;
   bool (*writeByte)(void *ctx, uint8_t cmd);
   bool (*readByte)(void *ctx, uint8_t *data);
   bool (*read)(void *ctx, uint8_t *data, uint16_t size);
   void (*delay)(void *ctx, uint32_t ms);
+  void (*start)(void *ctx);
 };
 
-// Values red from MS5837
-typedef struct {
-  int32_t TEMP;
-  int32_t P;
-  uint16_t C[8];
-  uint32_t D1;
-  uint32_t D2;
-} MS5837_values;
+struct DepthBackend {
+  virtual ~DepthBackend() = default;
 
+  /** @brief 初始化传感器 */
+  virtual bool init() = 0;
+
+  /**
+   * @brief 轮询数据源（DMA 双缓冲需要先 poll 再 read）
+   * I2C 后端此方法为空操作
+   */
+  virtual void poll() = 0;
+
+  /** @brief 读取数据，返回 true 表示有新数据就绪 */
+  virtual bool read() = 0;
+
+  /**
+   * @brief 注册数据就绪回调
+   * Init 内部会调用此方法将数据管道接至 MS5837_Driver::setMS5837Z()
+   */
+  virtual void setCallback(DepthDataReadyCallback cb) = 0;
+
+  /**
+   * @brief 启动后端工作
+   * I2C: 创建 FreeRTOS 轮询任务
+   * UART: 启动 DMA 接收
+   * 在 Init() 之后调用
+   */
+  virtual void start() = 0;
+
+  /** @brief 传感器是否已连接 */
+  virtual bool isConnected() const = 0;
+
+  /** @brief 获取最新深度值（米） */
+  virtual float getDepth() const = 0;
+
+  /** @brief 获取最新温度值（摄氏度） */
+  virtual float getTemperature() const = 0;
+};
+
+/**
+ * @class MS5837_Driver
+ * @brief 深度传感器驱动（Facade）
+ *
+ * 对外提供稳定的公开接口（getMS5837Z/setMS5837Z/Depth/Init/Read），
+ * 内部通过 DepthBackend* 委托给具体硬件实现（I2C / UART）。
+ *
+ * 下游（ControlTask 等）通过此接口访问深度，不受后端切换影响。
+ */
 class MS5837_Driver {
-private:
-  DepthPortOps ops_;
-  uint8_t slave_address;
-  // MS5837 model(Default MS5837_30BA)
-  uint8_t model;
-  // Fluid density (Default 1029)
-  float fluidDensity;
-  // Pressure unit (Default mBar)
-  float temperture = 0;
-  float pressure = 0;
-  MS5837_values m_MS5837_values = {};
-  // Last validated values (to avoid transient invalid reads like zeros)
-  float last_valid_pressure;
-  float last_valid_depth;
-  bool has_valid_depth;
-
-private:
-  bool transmitByte(uint8_t *pData);
-  bool receiveByte(uint8_t *pData);
-  bool receive(uint8_t *pData, uint16_t Size);
-
-  inline int8_t read8(uint8_t addr);
-  inline bool read16(uint8_t addr, uint16_t &out_data);
-  inline bool read32(uint8_t addr, uint32_t &out_data);
-  uint8_t crc4(uint16_t n_prom[]);
-  void calculate();
-
 public:
-  bool is_connected = false;
+  MS5837_Driver(DepthBackend *backend);
+  ~MS5837_Driver();
 
-public:
+  /** @name 初始化与读取*/
+  /**@{*/
   void Init(void);
-  // Read operates as a non-blocking state machine:
-  //  return 1 : a new sample (D1+D2) was completed and processed
-  //  return 0 : conversion in progress (no new sample yet)
-  //  return -1: error (I2C failure)
+  void start();
   int Read();
-  // Set conversion waiting time (ms) used between convert command and ADC read.
-  // Lower value -> higher sample rate but may risk conversion not finished.
-  void setConversionDelay(uint16_t ms) { conv_delay_ms = ms; }
+  /**@}*/
+
+  /** @name 深度数据访问（数据容器） */
+  /**@{*/
   void Depth(float *p);
   float getMS5837Z();
   void setMS5837Z(float z);
-
   inline void altitude(float *p);
-  // Internal non-blocking conversion state
-  enum ConvState : uint8_t { CS_IDLE = 0, CS_WAIT_D1 = 1, CS_WAIT_D2 = 2 };
-  ConvState conv_state = CS_IDLE;
-  uint32_t conv_start_ms = 0;
-  uint16_t conv_delay_ms = 10; // default 10ms -> target ~60Hz when interleaving
+  /**@}*/
 
-  MS5837_Driver(DepthPortOps ops, uint8_t SLAVE_ADDRESS = MS5837_ADDR,
-                uint16_t MemAddSize = 0);
-  ~MS5837_Driver();
+  /** @brief 传感器连接状态（由 Backend 更新） */
+  bool is_connected = false;
+
+  /** @brief 最近一次压力值（mBar），供 Depth() fallback 使用 */
+  float pressure = 0;
+
+  /** @brief 最近一次温度值（摄氏度） */
+  float temperture = 0;
+
+private:
+  DepthBackend *backend_;
+
+  // 深度数据容器（临界区保护）
+  float last_valid_depth = 0.0f;
+  bool has_valid_depth = false;
 };
 
 } // namespace peripheral
