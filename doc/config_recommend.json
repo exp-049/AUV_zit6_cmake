@@ -1,11 +1,19 @@
 {
-  "depth_calc_board": false,
-  "z_data_sourse": "use_ms5837_z",
-  "soft_watchdog": {
-    "timeout_ms": 3000,
-    "check_microros": true,
-    "check_ins": false,
-    "check_depth": false
+  "system": {
+    "depth_calc_board": {
+      "enabled": false
+    },
+    "debug": {
+      "rtt_debug": false,
+      "rtt_ms5837_cal_debug": false
+    },
+    "z_data_sourse": "use_ms5837_z",
+    "soft_watchdog": {
+      "timeout_ms": 3000,
+      "check_microros": true,
+      "check_ins": false,
+      "check_depth": false
+    }
   },
   "chassis": {
     "planner_enabled": false,
@@ -117,8 +125,5 @@
     "drag": 15.0,
     "thrust_k": 1000.0,
     "metacentric_height": 0.05
-  },
-  "types": {
-    "soft_watchdog.timeout_ms": "uint32"
   }
 }

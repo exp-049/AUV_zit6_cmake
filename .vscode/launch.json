@@ -16,7 +16,7 @@
         {
             "name": "Cortex Debug (OpenOCD)",
             "cwd": "${workspaceFolder}",
-            "executable": "${workspaceFolder}/build/Debug/AUV_zit6.elf",
+            "executable": "${workspaceFolder}/build/Debug/UserApp/AUV_zit6.elf",
             "request": "launch",
             "type": "cortex-debug",
             "runToEntryPoint": "main",
@@ -26,6 +26,10 @@
             "configFiles": [
                 "interface/stlink.cfg",
                 "target/stm32h7x.cfg"
+            ],
+            "openOCDPreCommands": [
+                "transport select hla_swd",
+                "adapter speed 100"
             ],
             "postLaunchCommands": [
                 "set $sp = *(unsigned int*)0x08000000",

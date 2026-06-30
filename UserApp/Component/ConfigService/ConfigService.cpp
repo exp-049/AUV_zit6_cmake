@@ -199,7 +199,7 @@ bool ConfigService::updateParams(const char *json, const char **paths,
     auv::system::g_app_ctx.chassis->applyConfig(
         auv::config::sys_config.chassis);
     auv::system::g_app_ctx.watchdog->init(
-        auv::config::sys_config.soft_watchdog);
+        auv::config::sys_config.system.soft_watchdog);
     auv::system::system_context.planner_replan_flag = true;
     if (out_buf)
       strncpy(out_buf, "ok", out_size - 1);

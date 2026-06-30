@@ -37,20 +37,30 @@ UserApp/
 
 ## 三、两个宏定义
 
-### 3.1 `#define RTT_DEBUG`
+### 3.1 `RTT_DEBUG`（通过 `config.json` 控制）
+
+```json
+{ "rtt_debug": true }
+```
+
+→ `gen_config.py` → `SystemConfig.hpp` → `#define RTT_DEBUG`
 
 | 行为 | 说明 |
 |------|------|
-| 条件 | 在编译命令行或 `UserApp/CMakeLists.txt` 中全局定义 |
 | 效果 | 不运行正常飞控程序，只初始化 RTT + 运行单一调试任务 |
 | 用途 | 隔离硬件调试，避免飞控逻辑干扰 |
-| 入口 | `Debug/rtt_ms5837_cal_debug/main.c` 中的 `main()`（替代原有的 `main.c`） |
+| 入口 | `Debug/rtt_ms5837_cal_debug/main.c` 中的 `main()` |
 
-### 3.2 `#define RTT_MS5837_CAL_DEBUG`
+### 3.2 `RTT_MS5837_CAL_DEBUG`
+
+```json
+{ "rtt_ms5837_cal_debug": true }
+```
+
+→ `gen_config.py` → `SystemConfig.hpp` → `#define RTT_MS5837_CAL_DEBUG`
 
 | 行为 | 说明 |
 |------|------|
-| 额外条件 | 在 `RTT_DEBUG` 基础上额外定义 |
 | 效果 | 运行深度计标定程序 |
 | 功能 | 1. 初始化 MS5837 (I2C/UART) |
 |       | 2. 循环读取深度/温度 |
@@ -99,9 +109,14 @@ endif()
 
 ### Step 4 — 编译与测试
 
+```json
+// config.json 中设置
+{ "rtt_debug": true, "rtt_ms5837_cal_debug": true }
+```
+
 ```bash
-cmake -DRTT_DEBUG=ON -B build_debug
-cmake --build build_debug
+# gen_config.py 在 cmake 时自动执行，生成宏定义
+cmake --build build/Debug
 # 用 J-Link + RTT Viewer 查看输出
 ```
 

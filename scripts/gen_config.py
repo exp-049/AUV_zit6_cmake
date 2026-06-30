@@ -57,7 +57,7 @@ def get_cpp_type(val, path="", type_overrides=None):
     if isinstance(val, bool):
         return "ParamType::BOOL", "bool"
     if isinstance(val, int):
-        return "ParamType::FLOAT", "float"
+        return "ParamType::UINT32", "uint32_t"
     if isinstance(val, float):
         return "ParamType::FLOAT", "float"
     if isinstance(val, str):
@@ -103,18 +103,30 @@ def gen_system_config(json_path, out_dir):
     template_dir = os.path.join(script_dir, 'templates')
     env = Environment(loader=FileSystemLoader(template_dir))
     template = env.get_template('SystemConfig.hpp.j2')
-    depth_calc_board = bool(config.get('depth_calc_board', False))
-    content = template.render(depth_calc_board=depth_calc_board)
+    sys_cfg = config.get('system', {})
+    depth_calc_board = bool(sys_cfg.get('depth_calc_board', {}).get('enabled', False))
+    rtt_debug = bool(sys_cfg.get('debug', {}).get('rtt_debug', False))
+    rtt_ms5837_cal_debug = bool(sys_cfg.get('debug', {}).get('rtt_ms5837_cal_debug', False))
+    content = template.render(
+        depth_calc_board=depth_calc_board,
+        rtt_debug=rtt_debug,
+        rtt_ms5837_cal_debug=rtt_ms5837_cal_debug)
 
     # 生成注册表源文件 (SystemConfig.cpp)
     if isinstance(config.get("types"), dict):
         type_overrides = config.get("types")
     else:
         type_overrides = load_type_overrides(json_path)
-    config_for_params = {k: v for k, v in config.items() if k not in ("types", "depth_calc_board")}
+    config_for_params = {k: v for k, v in config.items() if k != "types"}
+    # 剥离 system 中不需要注册为运行时参数的部分
+    if "system" in config_for_params:
+        sys_params = dict(config_for_params["system"])
+        sys_params.pop("depth_calc_board", None)
+        sys_params.pop("debug", None)
+        config_for_params["system"] = sys_params
     params = collect_params(config_for_params, type_overrides=type_overrides)
 
-    z_src = str(config.get('z_data_sourse', 'use_ins_integrated_z'))
+    z_src = str(sys_cfg.get('z_data_sourse', 'use_ins_integrated_z'))
     if z_src == 'use_ms5837_z':
         z_enum = 'USE_MS5837_Z'
     elif z_src in ('use_ins_pressure_z', 'use_manometer_z'):
@@ -128,18 +140,10 @@ namespace auv {{
 namespace config {{
 
 SystemConfig sys_config = {{
-    .chassis = {{
-        .planner_enabled = {str(config['chassis']['planner_enabled']).lower()},
-        .x = {{ {config['chassis']['x']['pos_kp']}, {config['chassis']['x']['pos_ki']}, {config['chassis']['x']['pos_kd']}, {config['chassis']['x']['pos_i_limit']}, {config['chassis']['x']['pos_output_limit']}, {config['chassis']['x']['vel_kp']}, {config['chassis']['x']['vel_ki']}, {config['chassis']['x']['vel_kd']}, {config['chassis']['x']['vel_i_limit']}, {config['chassis']['x']['vel_output_limit']}, {config['chassis']['x']['max_v']}, {config['chassis']['x']['max_a']}, {config['chassis']['x']['mass']}, {config['chassis']['x']['drag']} }},
-        .y = {{ {config['chassis']['y']['pos_kp']}, {config['chassis']['y']['pos_ki']}, {config['chassis']['y']['pos_kd']}, {config['chassis']['y']['pos_i_limit']}, {config['chassis']['y']['pos_output_limit']}, {config['chassis']['y']['vel_kp']}, {config['chassis']['y']['vel_ki']}, {config['chassis']['y']['vel_kd']}, {config['chassis']['y']['vel_i_limit']}, {config['chassis']['y']['vel_output_limit']}, {config['chassis']['y']['max_v']}, {config['chassis']['y']['max_a']}, {config['chassis']['y']['mass']}, {config['chassis']['y']['drag']} }},
-        .z = {{ {config['chassis']['z']['pos_kp']}, {config['chassis']['z']['pos_ki']}, {config['chassis']['z']['pos_kd']}, {config['chassis']['z']['pos_i_limit']}, {config['chassis']['z']['pos_output_limit']}, {config['chassis']['z']['vel_kp']}, {config['chassis']['z']['vel_ki']}, {config['chassis']['z']['vel_kd']}, {config['chassis']['z']['vel_i_limit']}, {config['chassis']['z']['vel_output_limit']}, {config['chassis']['z']['max_v']}, {config['chassis']['z']['max_a']}, {config['chassis']['z']['mass']}, {config['chassis']['z']['drag']} }},
-        .roll = {{ {config['chassis']['roll']['pos_kp']}, {config['chassis']['roll']['pos_ki']}, {config['chassis']['roll']['pos_kd']}, {config['chassis']['roll']['pos_i_limit']}, {config['chassis']['roll']['pos_output_limit']}, {config['chassis']['roll']['vel_kp']}, {config['chassis']['roll']['vel_ki']}, {config['chassis']['roll']['vel_kd']}, {config['chassis']['roll']['vel_i_limit']}, {config['chassis']['roll']['vel_output_limit']}, {config['chassis']['roll']['max_v']}, {config['chassis']['roll']['max_a']}, {config['chassis']['roll']['mass']}, {config['chassis']['roll']['drag']} }},
-        .pitch = {{ {config['chassis']['pitch']['pos_kp']}, {config['chassis']['pitch']['pos_ki']}, {config['chassis']['pitch']['pos_kd']}, {config['chassis']['pitch']['pos_i_limit']}, {config['chassis']['pitch']['pos_output_limit']}, {config['chassis']['pitch']['vel_kp']}, {config['chassis']['pitch']['vel_ki']}, {config['chassis']['pitch']['vel_kd']}, {config['chassis']['pitch']['vel_i_limit']}, {config['chassis']['pitch']['vel_output_limit']}, {config['chassis']['pitch']['max_v']}, {config['chassis']['pitch']['max_a']}, {config['chassis']['pitch']['mass']}, {config['chassis']['pitch']['drag']} }},
-        .yaw = {{ {config['chassis']['yaw']['pos_kp']}, {config['chassis']['yaw']['pos_ki']}, {config['chassis']['yaw']['pos_kd']}, {config['chassis']['yaw']['pos_i_limit']}, {config['chassis']['yaw']['pos_output_limit']}, {config['chassis']['yaw']['vel_kp']}, {config['chassis']['yaw']['vel_ki']}, {config['chassis']['yaw']['vel_kd']}, {config['chassis']['yaw']['vel_i_limit']}, {config['chassis']['yaw']['vel_output_limit']}, {config['chassis']['yaw']['max_v']}, {config['chassis']['yaw']['max_a']}, {config['chassis']['yaw']['mass']}, {config['chassis']['yaw']['drag']} }}
+    .system = {{
+        .soft_watchdog = {{ {sys_cfg['soft_watchdog']['timeout_ms']}, {str(sys_cfg['soft_watchdog']['check_microros']).lower()}, {str(sys_cfg['soft_watchdog']['check_ins']).lower()}, {str(sys_cfg['soft_watchdog']['check_depth']).lower()} }},
+        .sensors = {{ ZDataSource::{z_enum} }},
     }},
-    .ins = {{ {config['ins']['init_lat']}, {config['ins']['init_lon']} }},
-    .soft_watchdog = {{ {config['soft_watchdog']['timeout_ms']}, {str(config['soft_watchdog']['check_microros']).lower()}, {str(config['soft_watchdog']['check_ins']).lower()}, {str(config['soft_watchdog']['check_depth']).lower()} }},
-    .sensors = {{ ZDataSource::{z_enum} }},
     .simulation = {{ {str(config['simulation']['hitl_enabled']).lower()}, {str(config['simulation']['sitl_enabled']).lower()}, {config['simulation']['mass']}, {config['simulation']['drag']}, {config['simulation']['thrust_k']}, {config['simulation']['metacentric_height']} }},
     .firmware_version = "26_06_21"
 }};
@@ -150,7 +154,8 @@ const ParamMeta SYSTEM_PARAMS[] = {{
     for p in params:
         cpp_path = p['path']
         # 修正 JSON 路径到 C++ 成员路径的映射
-        if cpp_path == "z_data_sourse": cpp_path = "sensors.z_data_source"
+        if cpp_path == "z_data_sourse" or cpp_path == "system.z_data_sourse":
+            cpp_path = "system.sensors.z_data_source"
         # 不再需要旧的 PID 映射，因为现在是扁平化的 AxisConfig
 
         cpp_content += f'    {{"{p["path"]}", &sys_config.{cpp_path}, {p["type"]}}},\n'

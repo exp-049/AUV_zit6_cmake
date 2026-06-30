@@ -11,9 +11,16 @@
             ]
         },
         {
-            "label": "Flash Firmware (OpenOCD)",
+            "label": "Flash Firmware (ST-Link)",
             "type": "shell",
-            "command": "openocd -f interface/stlink.cfg -c 'transport select hla_swd' -c 'adapter speed 100' -f target/stm32h7x.cfg -c 'program build/Debug/AUV_zit6.elf verify reset exit'",
+            "command": "openocd -f interface/stlink.cfg -c 'transport select hla_swd' -c 'adapter speed 100' -f target/stm32h7x.cfg -c 'program build/Debug/UserApp/AUV_zit6.elf verify reset exit'",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash Firmware (J-Link)",
+            "type": "shell",
+            "command": "openocd -f interface/jlink.cfg -c 'transport select swd' -c 'adapter speed 100' -c 'reset_config srst_only srst_nogate connect_assert_srst' -f target/stm32h7x.cfg -c 'program build/Debug/UserApp/AUV_zit6.elf verify reset exit'",
             "group": "build",
             "problemMatcher": []
         }

@@ -111,6 +111,10 @@ void MicroRosTask::disconnectAgent() {
 // ============================================================================
 
 void UserApp_MicroRosTask(void *argument) {
+#ifdef RTT_DEBUG
+  for (;;)
+    vTaskSuspend(NULL);
+#endif
   (void)argument;
   MicroRosTask runner(&auv::system::g_app_ctx);
   runner.run();

@@ -102,6 +102,7 @@ add_subdirectory(Application)
 add_subdirectory(Common)
 add_subdirectory(Config)
 add_subdirectory(Component)
+add_subdirectory(Debug)
 add_subdirectory(Peripherals)
 add_subdirectory(Porting)
 add_subdirectory(Thirdparty)
@@ -127,12 +128,16 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
   Peripherals/HAL/Core/Src/stm32h7xx_hal_msp.c
   Peripherals/HAL/Core/Src/stm32h7xx_hal_timebase_tim.c
     Thirdparty/micro_ros_stm32cubemx_utils/extra_sources/microros_transports/dma_transport.c
+    Thirdparty/RTT/RTT/SEGGER_RTT.c
+    Thirdparty/RTT/RTT/SEGGER_RTT_printf.c
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     Thirdparty/micro_ros_stm32cubemx_utils/microros_static_library_ide/libmicroros/include
+    Thirdparty/RTT/RTT
+    Thirdparty/RTT/Config
 )
 
 # Add project symbols (macros)

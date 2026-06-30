@@ -19,10 +19,9 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
-#include "task.h"
-#include "main.h"
-#include "FreeRTOS.h"
 #include "cmsis_os2.h"
+#include "main.h"
+#include "task.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -34,7 +33,6 @@
 #include <rmw_microros/rmw_microros.h>
 #include <std_msgs/msg/int32.h>
 #include <uxr/client/transport.h>
-
 
 /* USER CODE END Includes */
 
@@ -61,29 +59,27 @@ std_msgs__msg__Int32 msg;
 /* Definitions for micro_ros_task */
 osThreadId_t micro_ros_taskHandle;
 const osThreadAttr_t micro_ros_task_attributes = {
-  .name = "micro_ros_task",
-  .stack_size = 5000 * 4,
-  .priority = (osPriority_t) osPriorityAboveNormal7,
+    .name = "micro_ros_task",
+    .stack_size = 5000 * 4,
+    .priority = (osPriority_t)osPriorityAboveNormal7,
 };
 /* Definitions for controll_task */
 osThreadId_t controll_taskHandle;
 const osThreadAttr_t controll_task_attributes = {
-  .name = "controll_task",
-  .stack_size = 2048 * 4,
-  .priority = (osPriority_t) osPriorityHigh,
+    .name = "controll_task",
+    .stack_size = 2048 * 4,
+    .priority = (osPriority_t)osPriorityHigh,
 };
 /* Definitions for monitor_task */
 osThreadId_t monitor_taskHandle;
 const osThreadAttr_t monitor_task_attributes = {
-  .name = "monitor_task",
-  .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+    .name = "monitor_task",
+    .stack_size = 512 * 4,
+    .priority = (osPriority_t)osPriorityNormal,
 };
 /* Definitions for imu_queue */
 osMessageQueueId_t imu_queueHandle;
-const osMessageQueueAttr_t imu_queue_attributes = {
-  .name = "imu_queue"
-};
+const osMessageQueueAttr_t imu_queue_attributes = {.name = "imu_queue"};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -119,10 +115,10 @@ void vApplicationStackOverflowHook(xTaskHandle xTask, char *pcTaskName) {
 /* USER CODE END 4 */
 
 /**
-  * @brief  FreeRTOS initialization
-  * @param  None
-  * @retval None
-  */
+ * @brief  FreeRTOS initialization
+ * @param  None
+ * @retval None
+ */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
 
@@ -142,7 +138,8 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the queue(s) */
   /* creation of imu_queue */
-  imu_queueHandle = osMessageQueueNew (16, sizeof(uint32_t), &imu_queue_attributes);
+  imu_queueHandle =
+      osMessageQueueNew(16, sizeof(uint32_t), &imu_queue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -150,22 +147,25 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the thread(s) */
   /* creation of micro_ros_task */
-  micro_ros_taskHandle = osThreadNew(Entry_MicroRosTask, NULL, &micro_ros_task_attributes);
+  micro_ros_taskHandle =
+      osThreadNew(Entry_MicroRosTask, NULL, &micro_ros_task_attributes);
 
   /* creation of controll_task */
-  controll_taskHandle = osThreadNew(Entry_ControlTask, NULL, &controll_task_attributes);
+  controll_taskHandle =
+      osThreadNew(Entry_ControlTask, NULL, &controll_task_attributes);
 
   /* creation of monitor_task */
-  monitor_taskHandle = osThreadNew(Entry_MonitorTask, NULL, &monitor_task_attributes);
+  monitor_taskHandle =
+      osThreadNew(Entry_MonitorTask, NULL, &monitor_task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  extern void UserApp_CreateDebugTask(void);
+  UserApp_CreateDebugTask();
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
   /* USER CODE END RTOS_EVENTS */
-
 }
 
 /* USER CODE BEGIN Header_Entry_MicroRosTask */
@@ -175,8 +175,7 @@ void MX_FREERTOS_Init(void) {
  * @retval None
  */
 /* USER CODE END Header_Entry_MicroRosTask */
-void Entry_MicroRosTask(void *argument)
-{
+void Entry_MicroRosTask(void *argument) {
   /* USER CODE BEGIN Entry_MicroRosTask */
   UserApp_MicroRosTask(argument);
   /* USER CODE END Entry_MicroRosTask */
@@ -189,8 +188,7 @@ void Entry_MicroRosTask(void *argument)
  * @retval None
  */
 /* USER CODE END Header_Entry_ControlTask */
-void Entry_ControlTask(void *argument)
-{
+void Entry_ControlTask(void *argument) {
   /* USER CODE BEGIN Entry_ControlTask */
   UserApp_ControlTask(argument);
   /* USER CODE END Entry_ControlTask */
@@ -203,8 +201,7 @@ void Entry_ControlTask(void *argument)
  * @retval None
  */
 /* USER CODE END Header_Entry_MonitorTask */
-void Entry_MonitorTask(void *argument)
-{
+void Entry_MonitorTask(void *argument) {
   /* USER CODE BEGIN Entry_MonitorTask */
   UserApp_MonitorTask(argument);
   /* USER CODE END Entry_MonitorTask */
@@ -214,4 +211,3 @@ void Entry_MonitorTask(void *argument)
 /* USER CODE BEGIN Application */
 
 /* USER CODE END Application */
-

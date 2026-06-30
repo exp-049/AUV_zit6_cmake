@@ -37,7 +37,8 @@ void ControlTask::init() {
 
   ctx_->logger->init();
 
-  /* 创建 SITL 导航数据队列（长度 3，生产者 onSimNav → 消费者 updateNavigation） */
+  /* 创建 SITL 导航数据队列（长度 3，生产者 onSimNav → 消费者 updateNavigation）
+   */
   if (auv::motion::motion_context.sitl_nav_queue == nullptr) {
     auv::motion::motion_context.sitl_nav_queue =
         xQueueCreate(3, sizeof(auv::motion::NavState));
@@ -77,8 +78,8 @@ void ControlTask::updateNavigation() {
     /* 从队列 drain 到最新（FIFO → 丢弃旧帧，只保留最新一帧） */
     {
       bool got_new = false;
-      while (xQueueReceive(auv::motion::motion_context.sitl_nav_queue,
-                           &state, 0) == pdTRUE) {
+      while (xQueueReceive(auv::motion::motion_context.sitl_nav_queue, &state,
+                           0) == pdTRUE) {
         last_sitl_state_ = state;
         got_new = true;
       }
@@ -96,10 +97,10 @@ void ControlTask::updateNavigation() {
     state = ctx_->ins_driver->getNavState();
     ctx_->ins_driver->update(state);
 
-    if (auv::config::sys_config.sensors.z_data_source ==
+    if (auv::config::sys_config.system.sensors.z_data_source ==
         auv::config::ZDataSource::USE_MS5837_Z) {
       state.pos_world[2] = ctx_->depth_sensor->getMS5837Z();
-    } else if (auv::config::sys_config.sensors.z_data_source ==
+    } else if (auv::config::sys_config.system.sensors.z_data_source ==
                auv::config::ZDataSource::USE_INS_PRESSURE_Z) {
       state.pos_world[2] = ctx_->ins_driver->getManometerZ();
     }
@@ -150,6 +151,11 @@ void ControlTask::computeAndPublish() {
 }
 
 void UserApp_ControlTask(void *argument) {
+#ifdef RTT_DEBUG
+  /* RTT 调试模式：ControlTask 不运行 */
+  for (;;)
+    vTaskSuspend(NULL);
+#endif
   (void)argument;
   ControlTask runner(&auv::system::g_app_ctx);
   runner.run();

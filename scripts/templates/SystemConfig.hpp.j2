@@ -4,9 +4,15 @@
 #include <stdint.h>
 #include <stddef.h>
 
-// 深度传感器方案选择（由 gen_config.py 根据 config.json 生成）
+// 编译时选项（由 gen_config.py 根据 config.json 生成）
 {% if depth_calc_board %}
 #define USE_DEPTH_CALC_BOARD
+{% endif %}
+{% if rtt_debug %}
+#define RTT_DEBUG
+{% endif %}
+{% if rtt_ms5837_cal_debug %}
+#define RTT_MS5837_CAL_DEBUG
 {% endif %}
 
 namespace auv {
@@ -90,11 +96,15 @@ struct SimulationConfig {
     float metacentric_height;
 };
 
-struct SystemConfig {
-    ChassisConfig chassis;
-    InsConfig ins;
+struct SystemSubConfig {
     SoftWatchdogConfig soft_watchdog;
     SensorsConfig sensors;
+};
+
+struct SystemConfig {
+    SystemSubConfig system;
+    ChassisConfig chassis;
+    InsConfig ins;
     SimulationConfig simulation;
     char firmware_version[32];
 };

@@ -1,0 +1,8 @@
+device STM32H743
+si SWD
+speed 100
+connect
+loadfile build/Debug/UserApp/AUV_zit6.elf
+r
+g
+exit
