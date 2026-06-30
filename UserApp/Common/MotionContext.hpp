@@ -10,6 +10,9 @@
 #include <cmath>
 #include <stdint.h>
 
+/* queue.h 提供 QueueHandle_t，已在 FreeRTOS 源码树中 */
+#include "queue.h"
+
 namespace auv {
 namespace motion {
 
@@ -91,7 +94,10 @@ public:
   LockedField<float> last_dt_ms_{0.0f};
   LockedField<uint32_t> last_received_seq_{0};
   LockedField<std::array<float, 6>> last_output_forces_{};
-  LockedField<bool> sim_data_valid_{false};
+
+  /** SITL 仿真导航数据队列（生产者：onSimNav，消费者：ControlTask）
+   *  长度 3，xQueueSend 非阻塞入队，消费端 drain 到最新 */
+  QueueHandle_t sitl_nav_queue = nullptr;
 
   LockedField<HomeOffset> home_offset_{};
 

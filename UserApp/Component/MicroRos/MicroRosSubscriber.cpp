@@ -213,6 +213,6 @@ void MicroRosSubscriber::onSimNav(const void *msgin) {
     state.pos_world[i] = msg->data.data[i];
     state.vel_body[i] = msg->data.data[i + 6];
   }
-  auv::motion::motion_context.nav_state_.set(state);
-  auv::motion::motion_context.sim_data_valid_.set(true);
+  /* 推入队列，非阻塞；队列满则丢弃旧帧（FIFO，消费者 drain 到最新） */
+  xQueueSend(auv::motion::motion_context.sitl_nav_queue, &state, 0);
 }

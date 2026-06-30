@@ -36,6 +36,13 @@ void ControlTask::init() {
   ctx_->chassis->applyConfig(auv::config::sys_config.chassis);
 
   ctx_->logger->init();
+
+  /* 创建 SITL 导航数据队列（长度 3，生产者 onSimNav → 消费者 updateNavigation） */
+  if (auv::motion::motion_context.sitl_nav_queue == nullptr) {
+    auv::motion::motion_context.sitl_nav_queue =
+        xQueueCreate(3, sizeof(auv::motion::NavState));
+  }
+
   ROS_LOG_INFO("System ControlTask initialized");
 
   last_wake_time_ = xTaskGetTickCount();
@@ -63,24 +70,23 @@ void ControlTask::updateNavigation() {
   } else
 #endif
       if (auv::config::sys_config.simulation.sitl_enabled) {
-    if (auv::motion::motion_context.sim_data_valid_.get()) {
-      state = auv::motion::motion_context.nav_state_.get();
-      {
-        auto ns = auv::system::system_context.nav_status_.get();
-        ns.imu_state = 4;
-        ns.timestamp = HAL_GetTick();
-        auv::system::system_context.nav_status_.set(ns);
+    /* 从队列 drain 到最新（FIFO → 丢弃旧帧，只保留最新一帧） */
+    {
+      bool got_new = false;
+      while (xQueueReceive(auv::motion::motion_context.sitl_nav_queue,
+                           &state, 0) == pdTRUE) {
+        last_sitl_state_ = state;
+        got_new = true;
       }
-    } else {
-      for (int i = 0; i < 6; ++i) {
-        state.pos_world[i] = 0.0f;
-        state.vel_body[i] = 0.0f;
+      if (!got_new) {
+        state = last_sitl_state_;
       }
-      {
-        auto ns = auv::system::system_context.nav_status_.get();
-        ns.imu_state = 0;
-        auv::system::system_context.nav_status_.set(ns);
-      }
+    }
+    {
+      auto ns = auv::system::system_context.nav_status_.get();
+      ns.imu_state = 4;
+      ns.timestamp = HAL_GetTick();
+      auv::system::system_context.nav_status_.set(ns);
     }
   } else {
     state = ctx_->ins_driver->getNavState();
