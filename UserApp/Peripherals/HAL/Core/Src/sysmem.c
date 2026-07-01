@@ -53,11 +53,9 @@ static uint8_t *__sbrk_heap_end = NULL;
  */
 void *_sbrk(ptrdiff_t incr)
 {
-  extern uint8_t _end; /* Symbol defined in the linker script */
-  extern uint8_t _estack; /* Symbol defined in the linker script */
-  extern uint32_t _Min_Stack_Size; /* Symbol defined in the linker script */
-  const uint32_t stack_limit = (uint32_t)&_estack - (uint32_t)&_Min_Stack_Size;
-  const uint8_t *max_heap = (uint8_t *)stack_limit;
+  extern uint8_t _end;    /* defined in linker script: start of heap in RAM (AXI SRAM) */
+  extern uint32_t _Ram_end; /* defined in linker script: ORIGIN(RAM) + LENGTH(RAM) */
+  const uint8_t *max_heap = (const uint8_t *)&_Ram_end;
   uint8_t *prev_heap_end;
 
   /* Initialize heap end at first call */
@@ -66,7 +64,7 @@ void *_sbrk(ptrdiff_t incr)
     __sbrk_heap_end = &_end;
   }
 
-  /* Protect heap from growing into the reserved MSP stack */
+  /* Protect heap from growing beyond AXI SRAM */
   if (__sbrk_heap_end + incr > max_heap)
   {
     errno = ENOMEM;

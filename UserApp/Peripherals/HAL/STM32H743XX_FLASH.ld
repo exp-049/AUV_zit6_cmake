@@ -64,11 +64,13 @@ FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 2048K
 }
 
 /* Highest address of the user mode stack */
-_estack = ORIGIN(DTCMRAM) + LENGTH(DTCMRAM);    /* end of RAM */
+_estack = ORIGIN(DTCMRAM) + LENGTH(DTCMRAM);    /* end of DTCMRAM */
 _sstack = _estack - _Min_Stack_Size;
 /* Generate a link error if heap and stack don't fit into RAM */
 _Min_Heap_Size = 0x1000;      /* required amount of heap  */
 _Min_Stack_Size = 0x2000; /* required amount of stack */
+/* End of AXI SRAM (RAM region) — used by _sbrk for heap limit */
+_Ram_end = ORIGIN(RAM) + LENGTH(RAM);
 
 /* Define output sections */
 SECTIONS
