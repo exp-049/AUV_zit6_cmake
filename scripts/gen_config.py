@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from datetime import datetime
 from jinja2 import Environment, FileSystemLoader
 
 TYPE_MAP = {
@@ -91,6 +92,35 @@ def collect_params(data, prefix="", type_overrides=None):
                 })
     return params
 
+AXIS_FIELDS = [
+    "pos_kp", "pos_ki", "pos_kd", "pos_i_limit", "pos_output_limit",
+    "vel_kp", "vel_ki", "vel_kd", "vel_i_limit", "vel_output_limit",
+    "max_v", "max_a", "mass", "drag",
+]
+
+
+def _format_literal(v):
+    """将 Python 值格式化为 C++ 字面量"""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, float):
+        return f"{v}f"
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, str):
+        return f'"{v}"'
+    return str(v)
+
+
+def _gen_axis_init(axis_dict):
+    """生成单个 AxisConfig 的初始化字符串"""
+    parts = []
+    for field in AXIS_FIELDS:
+        if field in axis_dict:
+            parts.append(f".{field} = {_format_literal(axis_dict[field])}")
+    return "{\n            " + ",\n            ".join(parts) + "\n        }"
+
+
 def gen_system_config(json_path, out_dir):
     with open(json_path, 'r') as f:
         config = json.load(f)
@@ -118,6 +148,8 @@ def gen_system_config(json_path, out_dir):
     else:
         type_overrides = load_type_overrides(json_path)
     config_for_params = {k: v for k, v in config.items() if k != "types"}
+    # 剥离不需要注册为运行时参数的顶层键
+    config_for_params.pop("firmware", None)  # 由手动注册处理
     # 剥离 system 中不需要注册为运行时参数的部分
     if "system" in config_for_params:
         sys_params = dict(config_for_params["system"])
@@ -134,6 +166,21 @@ def gen_system_config(json_path, out_dir):
     else:
         z_enum = 'USE_INS_INTEGRATED_Z'
 
+    # ---- 生成 chassis 初始化 ----
+    chassis_cfg = config.get("chassis", {})
+    chassis_lines = [f"        .planner_enabled = {_format_literal(chassis_cfg.get('planner_enabled', False))}"]
+    for axis_name in ("x", "y", "z", "roll", "pitch", "yaw"):
+        axis_dict = chassis_cfg.get(axis_name, {})
+        chassis_lines.append(f"        .{axis_name} = {_gen_axis_init(axis_dict)}")
+    chassis_init = ",\n".join(chassis_lines)
+
+    # ---- 生成 ins 初始化 ----
+    ins_cfg = config.get("ins", {})
+    ins_init = f".init_lat = {_format_literal(ins_cfg.get('init_lat', 0.0))}, .init_lon = {_format_literal(ins_cfg.get('init_lon', 0.0))}"
+
+    # ---- 自动生成固件版本 (YY_MM_DD-HHMM) ----
+    fw_version = datetime.now().strftime("%y_%m_%d-%H%M")
+
     cpp_content = f"""#include "SystemConfig.hpp"
 
 namespace auv {{
@@ -144,8 +191,12 @@ SystemConfig sys_config = {{
         .soft_watchdog = {{ {sys_cfg['soft_watchdog']['timeout_ms']}, {str(sys_cfg['soft_watchdog']['check_microros']).lower()}, {str(sys_cfg['soft_watchdog']['check_ins']).lower()}, {str(sys_cfg['soft_watchdog']['check_depth']).lower()} }},
         .sensors = {{ ZDataSource::{z_enum} }},
     }},
+    .chassis = {{
+{chassis_init}
+    }},
+    .ins = {{ {ins_init} }},
     .simulation = {{ {str(config['simulation']['hitl_enabled']).lower()}, {str(config['simulation']['sitl_enabled']).lower()}, {config['simulation']['mass']}, {config['simulation']['drag']}, {config['simulation']['thrust_k']}, {config['simulation']['metacentric_height']} }},
-    .firmware_version = "26_06_21"
+    .firmware_version = "{fw_version}"
 }};
 
 const ParamMeta SYSTEM_PARAMS[] = {{

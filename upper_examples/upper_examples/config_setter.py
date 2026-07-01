@@ -30,6 +30,7 @@ class ConfigWidget(QWidget):
     """
     get_signal = pyqtSignal(dict)
     update_signal = pyqtSignal(bool, str)
+    fetch_signal = pyqtSignal(bool, str)
 
     def __init__(self, node):
         super().__init__()
@@ -40,7 +41,8 @@ class ConfigWidget(QWidget):
         
         self.params_map = {}
         # 从脚本位置推导项目根
-        self._project_root = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        # __file__ = build/upper_examples/upper_examples/config_setter.py -> 需上3层到项目根
+        self._project_root = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
         self.config_path = os.path.join(self._project_root, 'UserApp', 'Config', 'config.json')
         self._int_paths = {"soft_watchdog.timeout_ms"}
         self._bool_paths = {
@@ -67,10 +69,12 @@ class ConfigWidget(QWidget):
         
         self.init_ui()
         self.get_signal.connect(self.update_table_values)
-        self.update_signal.connect(self.show_update_result)
+        self.fetch_signal.connect(self.show_fetch_result)
         
+        # 从本地 config.json 加载默认值到"新值"列
         self.load_structure()
-        QTimer.singleShot(1000, lambda: self.fetch_params([]))
+        # 启动后从固件拉取当前值刷新"当前值"列（静默不弹窗）
+        QTimer.singleShot(1000, lambda: self.fetch_params([], show_popup=False))
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -202,6 +206,7 @@ class ConfigWidget(QWidget):
             return s
 
     def load_structure(self):
+        """从本地 config.json 加载参数路径和默认值（作为"新值"列）"""
         from ament_index_python.packages import get_package_share_directory
         search_paths = [
             self.config_path,
@@ -239,30 +244,39 @@ class ConfigWidget(QWidget):
                         val = self._normalize_enum_value(path, val)
                     self.table.setItem(i, 0, QTableWidgetItem(path))
                     self.table.item(i, 0).setFlags(Qt.ItemIsEnabled)
+                    # 当前值列 (column 1) 先用 config.json 值占位，拉取后会被覆盖
                     self.table.setItem(i, 1, QTableWidgetItem(self._format_value(val)))
                     self.table.item(i, 1).setFlags(Qt.ItemIsEnabled)
+                    # 新值列 (column 2) 从本地 config.json 读取
                     self.table.setItem(i, 2, QTableWidgetItem(self._format_value(val)))
                     self.params_map[path] = i
         except Exception as e:
             print(f"Failed to load config.json: {e}")
 
-    def fetch_params(self, paths=[]):
+    def fetch_params(self, paths=[], show_popup=True):
         if not self.get_client.wait_for_service(timeout_sec=1.0):
-            print("GetParams service not available.")
+            if show_popup:
+                self.fetch_signal.emit(False, "无法连接到参数获取服务！\n请检查 Agent 是否在线。")
             return
         req = GetParams.Request()
         req.paths = paths
         future = self.get_client.call_async(req)
-        future.add_done_callback(self._fetch_done)
+        future.add_done_callback(lambda f: self._fetch_done(f, show_popup))
 
-    def _fetch_done(self, future):
+    def _fetch_done(self, future, show_popup=True):
         try:
             res = future.result()
             if res.success:
                 data = json.loads(res.config_json)
                 self.get_signal.emit(data)
+                if show_popup:
+                    self.fetch_signal.emit(True, f"参数获取成功！共 {len(data)} 项")
+            else:
+                if show_popup:
+                    self.fetch_signal.emit(False, f"获取失败：{res.message}")
         except Exception as e:
-            print(f"Fetch failed: {e}")
+            if show_popup:
+                self.fetch_signal.emit(False, f"获取异常：{e}")
 
     def update_table_values(self, data):
         for path, val in data.items():
@@ -283,6 +297,8 @@ class ConfigWidget(QWidget):
                 self.table.setItem(row, 2, QTableWidgetItem(self._format_value(val)))
                 self.params_map[path] = row
 
+    MAX_BATCH = 16  # 与固件 MicroRosService 中 paths/values 数组容量一致
+
     def on_apply(self):
         paths, values = [], []
         invalid_enums = []
@@ -302,14 +318,26 @@ class ConfigWidget(QWidget):
             lines = "\n".join([f"{p}: {v}" for p, v in invalid_enums])
             QMessageBox.warning(self, "非法Enum值", f"参数包含未被允许的Enum项:\n{lines}")
         
-        if paths:
-            self.push_params(paths, values)
-        else:
+        if not paths:
             QMessageBox.information(self, "提示", "参数未发生任何修改。")
+            return
 
-    def push_params(self, paths, values):
+        # 分批发送，每批最多 MAX_BATCH 条（固件缓冲区限制）
+        total = len(paths)
+        batches = (total + self.MAX_BATCH - 1) // self.MAX_BATCH
+        self._pending_batches = batches
+        self._batch_ok = 0
+        self._batch_fail = 0
+
+        for b in range(batches):
+            start = b * self.MAX_BATCH
+            end = min(start + self.MAX_BATCH, total)
+            self._push_batch(paths[start:end], values[start:end])
+
+    def _push_batch(self, paths, values):
         if not self.update_client.wait_for_service(timeout_sec=1.0):
-            QMessageBox.critical(self, "连接错误", "无法连接到参数更新服务！")
+            self._batch_fail += 1
+            self._check_batch_done()
             return
         req = UpdateParams.Request()
         req.paths = paths
@@ -320,16 +348,37 @@ class ConfigWidget(QWidget):
     def _update_done(self, future):
         try:
             res = future.result()
-            self.update_signal.emit(res.success, res.message)
+            if res.success:
+                self._batch_ok += 1
+            else:
+                self._batch_fail += 1
         except Exception as e:
-            self.update_signal.emit(False, str(e))
+            self._batch_fail += 1
+        self._check_batch_done()
 
-    def show_update_result(self, success, message):
-        if success:
-            QMessageBox.information(self, "成功", f"参数更新成功!\n{message}")
-            self.fetch_params([])
+    def _check_batch_done(self):
+        if self._pending_batches is None:
+            return
+        done = self._batch_ok + self._batch_fail
+        if done < self._pending_batches:
+            return  # 还有批次在途中
+        total = self._pending_batches
+        self._pending_batches = None
+        if self._batch_fail == 0:
+            QMessageBox.information(self, "成功",
+                f"全部 {total} 批参数更新成功！")
+            self.fetch_params([], show_popup=False)
         else:
-            QMessageBox.critical(self, "失败", f"更新失败:\n{message}")
+            QMessageBox.critical(self, "失败",
+                f"共 {total} 批，{self._batch_ok} 批成功，"
+                f"{self._batch_fail} 批失败。\n"
+                "请检查固件缓冲区或 Agent 连接。")
+
+    def show_fetch_result(self, success, message):
+        if success:
+            QMessageBox.information(self, "获取成功", message)
+        else:
+            QMessageBox.critical(self, "获取失败", message)
 
     def on_save_json(self):
         flat_data = {}
