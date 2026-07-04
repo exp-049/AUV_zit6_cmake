@@ -12,7 +12,7 @@ namespace component {
 void RosLogger::init() {
   SEGGER_RTT_Init(); // 初始化 RTT（J-Link 连接后即可查看）
   if (log_queue_ == nullptr) {
-    log_queue_ = xQueueCreate(3, sizeof(LogEntry));
+    log_queue_ = xQueueCreate(10, sizeof(LogEntry));
   }
 }
 

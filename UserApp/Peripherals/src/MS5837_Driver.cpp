@@ -1,5 +1,6 @@
 #include "MS5837_Driver.hpp"
 #include "FreeRTOS.h"
+#include "RosLogger.hpp"
 #include "task.h"
 
 namespace auv {
@@ -8,27 +9,38 @@ namespace peripheral {
 MS5837_Driver::MS5837_Driver(DepthBackend *backend) : backend_(backend) {
   last_valid_depth = 0.0f;
   has_valid_depth = false;
+  ROS_LOG_DEBUG("[MS5837] Driver constructed, backend=%p", backend_);
 }
 
 MS5837_Driver::~MS5837_Driver() {}
 
 void MS5837_Driver::Init(void) {
+  ROS_LOG_DEBUG("[MS5837] Init() enter, backend=%p", backend_);
   if (backend_) {
     // 注册数据就绪回调：backend 新数据 → setMS5837Z()
     backend_->setCallback(DepthDataReadyCallback{
         .onDepthReady =
             [](void *ctx, float d, float t) {
+              ROS_LOG_DEBUG("[MS5837] callback onDepthReady(d=%.4f, t=%.2f)", d,
+                            t);
               static_cast<MS5837_Driver *>(ctx)->setMS5837Z(d);
             },
         .ctx = this,
     });
     is_connected = backend_->init();
+    ROS_LOG_DEBUG("[MS5837] Init() backend->init -> connected=%d",
+                  is_connected);
+  } else {
+    ROS_LOG_DEBUG("[MS5837] Init() FAIL: backend_ is NULL!");
   }
 }
 
 void MS5837_Driver::start() {
+  ROS_LOG_DEBUG("[MS5837] start()");
   if (backend_) {
     backend_->start();
+  } else {
+    ROS_LOG_DEBUG("[MS5837] start() FAIL: backend_ is NULL!");
   }
 }
 
@@ -43,6 +55,8 @@ int MS5837_Driver::Read() {
       if (backend_->isConnected()) {
         is_connected = true;
       }
+      ROS_LOG_DEBUG("[MS5837] Read() got new data: depth=%.4f, temp=%.2f",
+                    backend_->getDepth(), temperture);
       return 1;
     }
   }
@@ -77,6 +91,7 @@ void MS5837_Driver::setMS5837Z(float z) {
   last_valid_depth = z;
   has_valid_depth = true;
   taskEXIT_CRITICAL();
+  ROS_LOG_DEBUG("[MS5837] setMS5837Z(%.4f) -> cache updated", z);
 }
 
 } // namespace peripheral

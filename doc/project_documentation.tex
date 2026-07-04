@@ -1,0 +1,508 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[UTF8]{ctex}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+\geometry{left=2.5cm,right=2.5cm,top=3cm,bottom=3cm}
+\setlength{\headheight}{15pt}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue}\bfseries,
+    commentstyle=\color{gray},
+    stringstyle=\color{red},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    frame=single,
+    breaklines=true,
+    tabsize=4,
+    showstringspaces=false
+}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=cyan,
+    pdftitle={AUV ZIT6 Firmware System Documentation}
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{AUV ZIT6 固件系统}
+\fancyhead[R]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\titleformat{\section}{\Large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{1em}{}
+
+\title{\textbf{AUV ZIT6 固件系统}\\ \Large 详细设计与实现文档}
+\author{ZIT6 开发团队}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\newpage
+
+\tableofcontents
+\newpage
+
+% ============================================================================
+\section{项目概述}
+
+\subsection{项目简介}
+
+AUV ZIT6 是一款基于 STM32H7 系列微控制器的自主水下航行器（Autonomous Underwater Vehicle, AUV）固件系统。项目采用现代 C++17 模块化架构设计，实现了 6-DOF（六自由度）级联控制，支持位置环、速度环和直接推力控制三种工作模式。
+
+\subsection{硬件平台}
+
+\begin{itemize}
+    \item \textbf{微控制器}：STM32H743ZI（ARM Cortex-M7，双精度 FPU）
+    \item \textbf{通信外设}：
+    \begin{itemize}
+        \item USART2 — micro-ROS（DDS 协议，与上位机通信）
+        \item UART6 — VIT6 下位机（推进器控制板）
+        \item UART7 — NAV-300 惯导
+        \item USART1 — USBL 超短基线定位系统
+        \item I2C1/2 — MS5837 深度传感器
+    \end{itemize}
+    \item \textbf{传感器}：NAV-300 惯导（INS）、MS5837 压力传感器、DVL 多普勒测速仪
+    \item \textbf{操作系统}：FreeRTOS（CMSIS-RTOS V2 封装）
+\end{itemize}
+
+\subsection{软件栈}
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+\textbf{组件} & \textbf{技术选型} \\
+\midrule
+微控制器 & STM32H743ZI（ARM Cortex-M7） \\
+RTOS & FreeRTOS + CMSIS-RTOS V2 \\
+通信 & micro-ROS（基于 DDS/UXR-CE） \\
+编程语言 & C++17，部分 C \\
+数值计算 & Eigen 3.4+（仅 Core，零动态内存） \\
+构建系统 & CMake 3.22+（STM32CubeMX 集成） \\
+调试 & SEGGER RTT / J-Link / UART \\
+推进器协议 & 定长帧 FA AF [ID] [Payload] FB BF \\
+\bottomrule
+\end{tabularx}
+\caption{软件栈概览}
+\end{table}
+
+\subsection{目录结构}
+
+\begin{lstlisting}[caption={项目顶层目录结构}]
+UserApp/
+├── Algorithm/           # 纯数值算法（无 RTOS 依赖）
+├── Application/         # FreeRTOS 任务层
+├── Common/             # 全局上下文与工具类
+├── Component/          # 高内聚功能组件
+│   ├── Chassis/        # 底盘控制
+│   ├── ConfigService/  # 参数配置服务
+│   ├── HitlSimulator/  # HIL 仿真器
+│   ├── MicroRos/       # micro-ROS 封装
+│   ├── RosLogger/      # 日志队列
+│   └── Safety/         # 安全监控
+├── Peripherals/        # 外设驱动与 HAL
+├── Porting/            # 硬件适配层
+└── Config/             # 配置管理
+\end{lstlisting}
+
+% ============================================================================
+\section{Safety — 安全监控}
+
+\subsection{SafetyMonitor}
+
+独立安全监控模块，从 ControlTask 中抽离，在 MonitorTask 中以 10Hz 运行。
+
+\subsubsection{ARM / DISARM 逻辑}
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+\textbf{参数} & \textbf{值} \\
+\midrule
+最小解锁心跳数 & 10 次 \\
+最小解锁持续时间 & 1000 ms \\
+已解锁心跳超时 & 500 ms \\
+未解锁心跳超时清零 & 1000 ms \\
+PWM 输出使能 & 推力 $[-1.0, 1.0]$ 映射为 $[-1000, 1000]$ \\
+\bottomrule
+\end{tabularx}
+\caption{安全监控参数}
+\end{table}
+
+\subsubsection{解锁条件}
+\begin{enumerate}
+    \item 心跳计数 $\geq$ 10 且持续 $\geq$ 1000 ms
+    \item \texttt{last\_heartbeat\_data == 1} + 导航有效，或 \texttt{data == 3} 跳过导航检查
+    \item 解锁时自动记录 Home Offset（当前位置为原点）
+\end{enumerate}
+
+\subsubsection{上锁条件}
+\begin{enumerate}
+    \item 已解锁状态下 500 ms 内未收到心跳 $\rightarrow$ 强制上锁
+    \item 上锁时清空 Home Offset，控制层级切回 NONE
+\end{enumerate}
+
+\subsection{SoftWatchdog}
+
+软件看门狗，监控三个组件的心跳状态：
+
+\begin{itemize}
+    \item \texttt{MICROROS} — micro-ROS 通信状态
+    \item \texttt{INS} — 惯导数据接收状态
+    \item \texttt{DEPTH} — 深度传感器数据状态
+\end{itemize}
+
+所有组件正常时，MonitorTask 喂硬件看门狗（IWDG）。
+
+% ============================================================================
+\section{Peripherals — 外设驱动}
+
+\subsection{INS\_Driver（NAV-300 惯导）}
+
+采用函数指针接口解耦硬件操作：
+
+\begin{itemize}
+    \item \texttt{InsPortOps} 结构体封装 \texttt{init/read/transmit} 三个函数指针
+    \item 字节流解析，帧长 133-256 字节
+    \item 输出 \texttt{MotionContext::NavState}（6-DOF 位姿 + 6-DOF 速度）
+    \item 支持命令：DVL 开关、重启、位置重置、经纬度装订
+\end{itemize}
+
+\subsection{MotionController\_Driver（动力控制板）}
+
+通过 VIT6 下位机通信协议控制执行器：
+
+\begin{lstlisting}[caption={协议数据包格式}]
+struct ThrustPacket {
+    uint8_t head[2];   // FA AF
+    uint8_t id;        // 0x01(推力)
+    float Fx, Fy, Fz;  // 三轴力 (N)
+    float Fyaw, Fpitch, Froll;  // 三轴力矩
+    uint8_t tail[2];   // FB BF
+};
+\end{lstlisting}
+
+支持命令 ID：\texttt{0x01（推力）}、\texttt{0x02（舵机）}、\texttt{0x03（灯光）}、\texttt{0x07（推力曲线）}
+
+\subsection{USBL\_Driver（超短基线定位）}
+
+通过 USART1 + DMA 接收 USBL 数据：
+\begin{itemize}
+    \item 帧头 \texttt{EB BE}，帧尾 \texttt{ED DE}
+    \item 133 字节定长帧，异或校验
+    \item 输出：信标北向/东向/深度、基阵姿态、信号能量
+\end{itemize}
+
+\subsection{MS5837\_Driver（深度传感器）}
+
+支持 I2C 和 UART 两种通信后端（通过 DepthCalcBoard 解算板），提供深度和温度测量。
+
+\subsection{External Drivers}
+\begin{itemize}
+    \item \textbf{HAL}：STM32CubeMX 生成的 HAL 驱动（I2C、UART、DMA、IWDG、TIM）
+    \item \textbf{FreeRTOS}：CMSIS-RTOS V2 封装，heap\_4 内存管理
+\end{itemize}
+
+% ============================================================================
+\section{Porting — 硬件适配层}
+
+Porting 层封装具体硬件引脚和中断服务，提供 \textbf{函数指针接口表} 供上层驱动使用。
+
+\subsection{函数指针解耦模式}
+
+驱动类（如 INS\_Driver）的构造函数接收 \texttt{PortOps} 结构体，运行时绑定具体硬件实现：
+
+\begin{lstlisting}[caption={PortOps 接口模式示例}]
+struct InsPortOps {
+    void *ctx;
+    bool (*init)(void *ctx);
+    uint16_t (*read)(void *ctx, uint8_t *buf, uint16_t max_len);
+    bool (*transmit)(void *ctx, const uint8_t *data, uint16_t len);
+};
+
+struct MotorPortOps {
+    void *ctx;
+    bool (*transmitDMA)(void *ctx, const uint8_t *data, uint16_t size);
+    void *(*getTxPacket)(void *ctx);
+};
+\end{lstlisting}
+
+\subsection{Porting 实现}
+
+\begin{itemize}
+    \item \textbf{INS\_Porting}：UART7 DMA 实现 INS\_Driver 的 InsPortOps
+    \item \textbf{MotionController\_Porting}：UART6 DMA 实现 MotionController\_Driver 的 MotorPortOps
+    \item \textbf{MS5837\_Porting}：I2C/UART 实现深度传感器后端
+    \item \textbf{DepthCalcBoard\_Porting}：深度解算板通信适配
+\end{itemize}
+
+% ============================================================================
+\section{Common — 全局上下文}
+
+\subsection{AppContext — 依赖注入容器}
+
+使用结构体聚合所有驱动和组件指针，通过构造函数注入任务：
+
+\begin{lstlisting}[caption={AppContext 定义}]
+struct AppContext {
+    INS_Driver *ins_driver;
+    MotionController_Driver *motor_driver;
+    MS5837_Driver *depth_sensor;
+    RosLogger *logger;
+    SoftWatchdog *watchdog;
+    ChassisManager *chassis;
+};
+extern AppContext g_app_ctx;
+\end{lstlisting}
+
+\subsection{MotionContext — 运动状态共享}
+
+跨任务共享的运动状态，所有字段使用 \texttt{LockedField<T>} 临界区保护：
+\begin{itemize}
+    \item \texttt{nav\_state\_} — 导航状态（6-DOF 位姿 + 6-DOF 速度）
+    \item \texttt{current\_setpoint\_} — 当前目标设定值
+    \item \texttt{last\_output\_forces\_} — 6-DOF 输出力快照
+    \item \texttt{home\_offset\_} — 解锁原点偏移
+\end{itemize}
+
+\subsection{SystemContext — 系统状态}
+
+\begin{itemize}
+    \item \texttt{arm\_state\_} — 解锁/上锁状态 + 心跳计数
+    \item \texttt{nav\_status\_} — 惯导/DVL 状态标志
+    \item \texttt{is\_planner\_active} — 规划器启用标志
+\end{itemize}
+
+\subsection{LockedField — 线程安全字段}
+
+模板类，对任意可拷贝类型 T 自动加 \texttt{taskENTER\_CRITICAL()} / \texttt{taskEXIT\_CRITICAL()}：
+\begin{itemize}
+    \item \texttt{get()} — 临界区读取
+    \item \texttt{set(v)} — 临界区写入
+\end{itemize}
+
+% ============================================================================
+\section{Application — 任务层}
+
+\subsection{ControlTask（100Hz 控制主循环）}
+
+\begin{lstlisting}[caption={ControlTask 主循环}]
+void ControlTask::run() {
+    init();
+    for (;;) {
+        updateNavigation();    // 1. 获取 INS / SITL / HIL 导航数据
+        computeAndPublish();    // 2. 执行底盘控制 + 推力输出
+        vTaskDelayUntil(&last_wake_time_, pdMS_TO_TICKS(10));
+    }
+}
+\end{lstlisting}
+
+\texttt{updateNavigation()} 数据源选择：
+\begin{itemize}
+    \item HITL 模式：由 \texttt{HitlSimulator} 提供
+    \item SITL 模式：由 \texttt{/zit6/sim/nav} 话题队列提供
+    \item 实物模式：\texttt{INS\_Driver::getNavState()}，并融合 MS5837 深度
+\end{itemize}
+
+\subsection{MicroRosTask（通信任务）}
+
+封装 micro-ROS 初始化、发布、订阅和服务：
+
+\begin{lstlisting}[caption={MicroRosTask 结构}]
+class MicroRosTask {
+    MicroRosTransport transport_;
+    MicroRosPublisher  publisher_;
+    MicroRosSubscriber subscriber_;
+    MicroRosService    service_;
+};
+\end{lstlisting}
+
+\subsection{MonitorTask（10Hz 安全监控）}
+
+\begin{lstlisting}[caption={MonitorTask 主循环}]
+void MonitorTask::run() {
+    init();
+    for (;;) {
+        refreshHardwareWatchdogIfNeeded();  // 软狗检查 $\rightarrow$ 喂硬狗
+        safety_monitor_.check(HAL_GetTick()); // ARM/DISARM 状态机
+        vTaskDelayUntil(&last_wake_time_, pdMS_TO_TICKS(100));
+    }
+}
+\end{lstlisting}
+
+% ============================================================================
+\section{通信协议}
+
+\subsection{控制指令 — ZitSetpoint}
+
+\subsubsection{消息结构}
+
+\begin{lstlisting}[caption={ZitSetpoint 消息定义}]
+# zit6_interfaces/msg/ZitSetpoint.msg
+uint8 control_key   # 控制模式 + 标志位
+uint8 type_mask     # 轴掩码
+float32 x y z       # 目标值（m/m/s/N）
+float32 yaw         # 偏航（rad/rad/s）
+uint32 seq          # 序列号（可选）
+\end{lstlisting}
+
+\subsubsection{control\_key}
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+\textbf{位域} & \textbf{含义} \\
+\midrule
+Bit 0-1 & 模式：0=POSITION, 1=VELOCITY, 2=FORCE \\
+Bit 4 (0x10) & 机体系坐标（默认世界系 NED） \\
+Bit 5 (0x20) & 增量模式 \\
+\bottomrule
+\end{tabularx}
+\caption{control\_key 定义}
+\end{table}
+
+\subsection{状态发布}
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{lXl}
+\toprule
+\textbf{话题} & \textbf{内容} & \textbf{频率} \\
+\midrule
+/zit6/state/pos & NED 位置 $[x,y,z,yaw]$ & 30Hz \\
+/zit6/state/vel & FRD 速度 $[vx,vy,vz,vyaw]$ & 50Hz \\
+/zit6/state/thr & 归一化推力 $[Fx,Fy,Fz,Myaw]$ & 30Hz \\
+/zit6/state/status & 系统状态（ARM、层级、INS） & 10Hz \\
+/zit6/state/zithbt & 节点心跳 & 1Hz \\
+/zit6/log & ROS2 日志 & 事件驱动 \\
+\bottomrule
+\end{tabularx}
+\caption{状态发布话题}
+\end{table}
+
+\subsection{订阅指令}
+
+\begin{itemize}
+    \item \texttt{/zit6/cmd/setpoint} — 控制设定点（ZitSetpoint）
+    \item \texttt{/zit6/cmd/agxhbt} — 上位机心跳（UInt32，用于 ARM）
+    \item \texttt{/zit6/cmd/ins} — 惯导指令（UInt8）
+    \item \texttt{/zit6/cmd/servo} — 舵机角度（Float32）
+    \item \texttt{/zit6/cmd/light} — LED 灯控（UInt8）
+    \item \texttt{/zit6/sim/nav} — SITL 仿真导航（Float32MultiArray[12]）
+\end{itemize}
+
+\subsection{参数服务}
+
+\begin{itemize}
+    \item \texttt{/zit6/update\_params} — JSON 格式实时更新参数
+    \item \texttt{/zit6/get\_params} — 按路径查询参数
+\end{itemize}
+
+% ============================================================================
+\section{配置系统}
+
+\subsection{config.json $\rightarrow$ C++ 结构体}
+
+配置通过 \texttt{gen\_config.py} 脚本生成 C++ 头文件：
+
+\begin{lstlisting}[caption={配置结构体示例}]
+struct AxisConfig {
+    float pos_kp, pos_ki, pos_kd;
+    float pos_i_limit, pos_output_limit;
+    float vel_kp, vel_ki, vel_kd;
+    float vel_i_limit, vel_output_limit;
+    float max_v, max_a, mass, drag;
+};
+
+struct ChassisConfig {
+    bool planner_enabled;
+    AxisConfig x, y, z, roll, pitch, yaw;
+};
+\end{lstlisting}
+
+运行时通过 \texttt{/zit6/update\_params} 服务实时重载。
+
+\subsection{全局配置实例}
+
+\begin{lstlisting}[caption={全局配置访问}]
+namespace auv::config {
+    extern SystemConfig sys_config;  // 只读运行时配置
+    extern const ParamMeta SYSTEM_PARAMS[];  // 参数注册表
+    extern const size_t SYSTEM_PARAMS_COUNT;
+}
+\end{lstlisting}
+
+% ============================================================================
+\section{坐标系定义}
+
+采用两套坐标系，\textbf{轴向定义不同}：
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{llll}
+\toprule
+\textbf{坐标系} & \textbf{约定} & \textbf{X/Y/Z} & \textbf{原点} \\
+\midrule
+机体系 & FRD & 前/右/下 & AUV 重心 \\
+世界系 & NED & 北/东/下 & INS 上电零点 \\
+\bottomrule
+\end{tabularx}
+\caption{坐标系定义}
+\end{table}
+
+6-DOF 全量运动学变换：
+\begin{equation}
+\nu_{world} = R(\phi, \theta, \psi) \cdot \nu_{body}
+\end{equation}
+
+其中 $R(\eta)$ 为 $6\times6$ 分块矩阵：
+\begin{equation}
+R(\eta) = \begin{bmatrix}
+R_{ZYX}(\phi,\theta,\psi) & 0_{3\times3} \\
+0_{3\times3} & T(\phi,\theta)
+\end{bmatrix}
+\end{equation}
+
+% ============================================================================
+\section{仿真支持}
+
+\subsection{SITL（Software-in-the-Loop）}
+\begin{itemize}
+    \item 通过 \texttt{/zit6/sim/nav} 话题接收仿真导航数据
+    \item 队列长度 3，消费端 drain 到最新帧
+    \item 可在无硬件条件下测试控制逻辑
+\end{itemize}
+
+\subsection{HITL（Hardware-in-the-Loop）}
+\begin{itemize}
+    \item \texttt{HitlSimulator} 类在固件内部模拟 AUV 动力学
+    \item 每步积分推进器推力，更新位姿
+    \item 用于推进器分配和 PID 参数调优
+\end{itemize}
+
+仿真模式切换通过 \texttt{config.json} 中的 \texttt{simulation} 字段控制。
+
+\end{document}
+
+
+

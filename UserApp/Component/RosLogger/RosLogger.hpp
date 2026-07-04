@@ -3,6 +3,10 @@
 
 #include <stdint.h>
 
+// ========== DEBUG 日志开关 ==========
+// 取消下一行的注释以启用 DEBUG 级别日志输出
+#define DEBUG_LOG
+
 namespace auv {
 namespace component {
 
@@ -29,8 +33,14 @@ extern auv::component::RosLogger g_ros_logger;
 } // namespace component
 } // namespace auv
 
+// ========== 日志宏 ==========
+// DEBUG 级别：仅在定义了 DEBUG_LOG 时编译
+#ifdef DEBUG_LOG
 #define ROS_LOG_DEBUG(fmt, ...)                                                \
   auv::component::g_ros_logger.log(10, fmt, ##__VA_ARGS__)
+#else
+#define ROS_LOG_DEBUG(fmt, ...) ((void)0)
+#endif
 #define ROS_LOG_INFO(fmt, ...)                                                 \
   auv::component::g_ros_logger.log(20, fmt, ##__VA_ARGS__)
 #define ROS_LOG_WARN(fmt, ...)                                                 \

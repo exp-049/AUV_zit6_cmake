@@ -1,7 +1,7 @@
 {
   "system": {
     "depth_calc_board": {
-      "enabled": false
+      "enabled": true
     },
     "debug": {
       "rtt_debug": false,

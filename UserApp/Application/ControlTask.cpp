@@ -99,6 +99,8 @@ void ControlTask::updateNavigation() {
 
     if (auv::config::sys_config.system.sensors.z_data_source ==
         auv::config::ZDataSource::USE_MS5837_Z) {
+      // 调用 Read() 以触发 backend->poll() → 将 DMA 数据喂给 onRxByte()
+      ctx_->depth_sensor->Read();
       state.pos_world[2] = ctx_->depth_sensor->getMS5837Z();
     } else if (auv::config::sys_config.system.sensors.z_data_source ==
                auv::config::ZDataSource::USE_INS_PRESSURE_Z) {

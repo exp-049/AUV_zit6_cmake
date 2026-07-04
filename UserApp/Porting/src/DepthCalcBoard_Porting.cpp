@@ -1,4 +1,5 @@
 #include "DepthCalcBoard_Porting.hpp"
+#include "RosLogger.hpp"
 
 // DMA 双缓冲（位于 RAM_D2，DMA 可访问）
 __attribute__((section(".dma_buffer"))) static uint8_t s_dma_buf_a[256];
@@ -14,12 +15,18 @@ DepthCalcBoard_Porting::DepthCalcBoard_Porting(
     : huart_(huart), backend_(backend), dma_buf_a_(s_dma_buf_a),
       dma_buf_b_(s_dma_buf_b) {
   active_instance = this;
+  ROS_LOG_DEBUG("[DepthPorting] constructed, huart=%p, backend=%p", huart_,
+                backend_);
 }
 
 bool DepthCalcBoard_Porting::transmitPort(void *ctx, const uint8_t *data,
                                           uint16_t len) {
   auto *self = static_cast<DepthCalcBoard_Porting *>(ctx);
-  return HAL_UART_Transmit(self->huart_, (uint8_t *)data, len, 100) == HAL_OK;
+  ROS_LOG_DEBUG("[DepthPorting] transmit len=%u", len);
+  HAL_StatusTypeDef ret =
+      HAL_UART_Transmit(self->huart_, (uint8_t *)data, len, 100);
+  ROS_LOG_DEBUG("[DepthPorting] transmit -> HAL_Status=%d", (int)ret);
+  return ret == HAL_OK;
 }
 
 void DepthCalcBoard_Porting::pollPort(void *ctx) {
@@ -27,58 +34,57 @@ void DepthCalcBoard_Porting::pollPort(void *ctx) {
 }
 
 bool DepthCalcBoard_Porting::startRxPort(void *ctx) {
-  return static_cast<DepthCalcBoard_Porting *>(ctx)->startRx();
+  bool ok = static_cast<DepthCalcBoard_Porting *>(ctx)->startRx();
+  ROS_LOG_DEBUG("[DepthPorting] startRxPort -> %d", ok);
+  return ok;
 }
 
 bool DepthCalcBoard_Porting::startRx() {
   active_buf_ = dma_buf_a_;
-  ready_buf_ = nullptr;
-  buf_ready_ = false;
-  return HAL_UART_Receive_DMA(huart_, dma_buf_a_, kBufSize) == HAL_OK;
+  dma_pos_ = 0;
+  HAL_StatusTypeDef ret = HAL_UART_Receive_DMA(huart_, dma_buf_a_, kBufSize);
+  ROS_LOG_DEBUG("[DepthPorting] startRx() -> HAL_UART_Receive_DMA=%d, "
+                "buf_a=%p, buf_b=%p, hdmarx=%p",
+                (int)ret, dma_buf_a_, dma_buf_b_, huart_->hdmarx);
+  return ret == HAL_OK;
 }
 
 void DepthCalcBoard_Porting::startDma(uint8_t *buf) {
+  ROS_LOG_DEBUG("[DepthPorting] startDma -> buf=%p", buf);
   active_buf_ = buf;
-  HAL_UART_Receive_DMA(huart_, buf, kBufSize);
+  HAL_StatusTypeDef ret = HAL_UART_Receive_DMA(huart_, buf, kBufSize);
+  if (ret != HAL_OK) {
+    ROS_LOG_DEBUG("[DepthPorting] startDma FAILED! HAL_Status=%d", (int)ret);
+  }
 }
 
 void DepthCalcBoard_Porting::poll() {
-  if (!buf_ready_ || !ready_buf_ || !backend_)
+  if (!huart_ || !backend_)
     return;
 
-  // 将就绪缓冲中的字节逐个喂给 backend
-  for (uint16_t i = 0; i < kBufSize; i++) {
-    backend_->onRxByte(ready_buf_[i]);
+  // 读取 DMA 剩余计数，计算已接收字节数
+  uint16_t remaining = __HAL_DMA_GET_COUNTER(huart_->hdmarx);
+  uint16_t received = kBufSize - remaining;
+
+  // 处理新收到的字节（增量方式，不触发任何额外中断）
+  while (dma_pos_ < received) {
+    backend_->onRxByte(active_buf_[dma_pos_]);
+    dma_pos_++;
   }
 
-  // 释放缓冲
-  ready_buf_ = nullptr;
-  buf_ready_ = false;
-}
-
-void DepthCalcBoard_Porting::onDmaComplete() {
-  // 当前 active_buf_ 填满了，标记为就绪
-  ready_buf_ = active_buf_;
-
-  // 切到另一个缓冲继续接收
-  uint8_t *next_buf = (active_buf_ == dma_buf_a_) ? dma_buf_b_ : dma_buf_a_;
-  startDma(next_buf);
-
-  // 内存屏障保证 buf_ready_ 在 active_buf_ 切换后写入
-  __DSB();
-  buf_ready_ = true;
+  // 缓冲区已满：DMA 已停止（NORMAL 模式），切到另一个缓冲重启
+  if (remaining == 0 && received > 0) {
+    // 打印缓冲前几个字节用于诊断
+    ROS_LOG_DEBUG("[DepthPorting] BUF_FULL: active=%p dma_pos=%u, "
+                  "first4=[%02x %02x %02x %02x]",
+                  active_buf_, dma_pos_,
+                  active_buf_[0], active_buf_[1], active_buf_[2],
+                  active_buf_[3]);
+    uint8_t *next_buf = (active_buf_ == dma_buf_a_) ? dma_buf_b_ : dma_buf_a_;
+    dma_pos_ = 0;
+    startDma(next_buf);
+  }
 }
 
 } // namespace porting
 } // namespace auv
-
-// ============================================================================
-// DMA 传输完成中断
-// 切缓冲 → 标记就绪 → 重启 DMA，不做解析
-// ============================================================================
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-  auto *port = auv::porting::DepthCalcBoard_Porting::active_instance;
-  if (port && huart == port->getUart()) {
-    port->onDmaComplete();
-  }
-}

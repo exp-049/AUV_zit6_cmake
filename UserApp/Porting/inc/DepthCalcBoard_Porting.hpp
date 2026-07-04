@@ -43,34 +43,33 @@ public:
   UART_HandleTypeDef *getUart() const { return huart_; }
 
   /**
-   * @brief 轮询：若有就绪缓冲，将字节逐个喂给 backend->onRxByte()
-   * 由 MS5837_Driver::Read() 或 IICTask 调用
+   * @brief 轮询：读取 DMA 计数器检查新数据，增量喂给 backend->onRxByte()
+   * 由 MS5837_Driver::Read() → backend->poll() 调用（50Hz）
+   *
+   * 不依赖 DMA 完成中断或 UART 空闲中断，纯轮询方式，
+   * 避免中断风暴导致系统无法喂狗。
    */
   void poll();
 
-  /** @brief 由 HAL_UART_RxCpltCallback 调用，切缓冲 + 重启 DMA */
-  void onDmaComplete();
-
-  /** @brief 静态实例指针，供 DMA 中断回调路由 */
+  /** @brief 静态实例指针 */
   static DepthCalcBoard_Porting *active_instance;
 
   /** @brief 单缓冲大小 */
   static constexpr uint16_t kBufSize = 256;
 
 private:
-  /** @brief 启动/重启 DMA 填充指定缓冲 */
+  /** @brief 启动/重启 DMA 接收 */
   void startDma(uint8_t *buf);
 
   UART_HandleTypeDef *huart_;
   auv::peripheral::UART_DepthBackend *backend_;
 
   /** @brief DMA 双缓冲（位于 RAM_D2） */
-  uint8_t *dma_buf_a_; // 实际缓冲在 .cpp 中分配（RAM_D2）
+  uint8_t *dma_buf_a_;
   uint8_t *dma_buf_b_;
 
-  uint8_t *active_buf_ = nullptr;         // DMA 当前填充的缓冲
-  uint8_t *volatile ready_buf_ = nullptr; // 已填满待处理的缓冲（中断中写入）
-  volatile bool buf_ready_ = false;       // 中断中置位
+  uint8_t *active_buf_ = nullptr;  // DMA 当前填充的缓冲
+  uint16_t dma_pos_ = 0;           // 当前缓冲中已处理的字节位置（poll 中更新）
 };
 
 } // namespace porting
