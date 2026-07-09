@@ -136,13 +136,17 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
   if (now_ms - last_status_pub_tick_ >= 100) {
     last_status_pub_tick_ = now_ms;
     auto forces = auv::motion::motion_context.last_output_forces_.get();
-    float cycle_time = auv::motion::motion_context.last_dt_ms_.get();
+    const float cycle_time = auv::motion::motion_context.last_dt_ms_.get();
+    const float exec_time = auv::motion::motion_context.last_exec_ms_.get();
+    const uint32_t overrun_count =
+        auv::motion::motion_context.control_overrun_count_.get();
+    const uint32_t thrust_tx_fail_count =
+        auv::motion::motion_context.thrust_tx_fail_count_.get();
 
     auto arm = auv::system::system_context.arm_state_.get();
     auto nav = auv::system::system_context.nav_status_.get();
     bool nav_valid = auv::system::system_context.getNavigationValid();
 
-    taskENTER_CRITICAL();
     status_msg_.is_armed = arm.is_armed;
     status_msg_.arm_mode = (uint8_t)arm.last_heartbeat_data;
     status_msg_.control_level = (uint8_t)ctx_->chassis->getControlLevel();
@@ -155,7 +159,9 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
     status_msg_.cycle_time_ms = cycle_time;
     status_msg_.battery_voltage = 0.0f;
     status_msg_.error_flags = 0;
-    taskEXIT_CRITICAL();
+    status_msg_.control_overrun_count = overrun_count;
+    status_msg_.thrust_tx_fail_count = thrust_tx_fail_count;
+    (void)exec_time;
 
     rcl_publish(&status_pub_, &status_msg_, NULL);
   }

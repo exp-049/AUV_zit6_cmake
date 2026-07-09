@@ -8,7 +8,9 @@ namespace peripheral {
 
 class MotionController_Driver {
 public:
-  void publishThrust(float a, float b, float c, float d, float e, float f) {}
+  bool publishThrust(float a, float b, float c, float d, float e, float f) {
+    return true;
+  }
 };
 
 } // namespace peripheral

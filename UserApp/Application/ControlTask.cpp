@@ -1,14 +1,16 @@
 #include "ControlTask.hpp"
 #include "AppMain.hpp"
-#include "FreeRTOS.h"
-#include "HitlSimulator.hpp"
-#include "INS_Porting.hpp"
-#include "MotionContext.hpp"
-#include "RosLogger.hpp"
-#include "SystemConfig.hpp"
-#include "SystemContext.hpp"
-#include "task.h"
-#include <cstdio>
+#include "../Component/Chassis/ChassisManager.hpp"
+#include "../Component/HitlSimulator/HitlSimulator.hpp"
+#include "../Component/RosLogger/RosLogger.hpp"
+#include "../Config/SystemConfig.hpp"
+#include "../Common/SystemContext.hpp"
+#include "../Peripherals/HAL/Core/Inc/main.h"
+#include "../Peripherals/HAL/Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h"
+#include "../Peripherals/HAL/Middlewares/Third_Party/FreeRTOS/Source/include/task.h"
+#include "../Porting/inc/INS_Porting.hpp"
+#include "../Peripherals/inc/INS_Driver.hpp"
+#include "../Peripherals/inc/MS5837_Driver.hpp"
 #include <cstring>
 
 #if AUV_SIMULATION_ENABLE
@@ -18,14 +20,38 @@ static auv::component::HitlSimulator g_hitl_sim(0.01f);
 void ControlTask::run() {
   init();
 
-  for (;;) {
-    auv::motion::motion_context.last_dt_ms_.set(
-        static_cast<float>(kLoopPeriodMs));
+  last_tick_ = static_cast<uint32_t>(xTaskGetTickCount());
+  first_cycle_ = true;
 
+  for (;;) {
+    const uint32_t loop_start_tick =
+        static_cast<uint32_t>(xTaskGetTickCount());
+    if (first_cycle_) {
+      auv::motion::motion_context.last_dt_ms_.set(
+          static_cast<float>(kLoopPeriodMs));
+      first_cycle_ = false;
+    } else {
+      auv::motion::motion_context.last_dt_ms_.set(static_cast<float>(
+          (loop_start_tick - last_tick_) * portTICK_PERIOD_MS));
+    }
+    last_tick_ = loop_start_tick;
+
+    const uint32_t exec_start_ms = HAL_GetTick();
     updateNavigation();
     computeAndPublish();
+    const uint32_t exec_ms = HAL_GetTick() - exec_start_ms;
+    auv::motion::motion_context.last_exec_ms_.set(static_cast<float>(exec_ms));
 
-    vTaskDelayUntil(&last_wake_time_, pdMS_TO_TICKS(kLoopPeriodMs));
+    if (exec_ms > kLoopPeriodMs) {
+      overrun_count_++;
+      auv::motion::motion_context.control_overrun_count_.set(overrun_count_);
+      ROS_LOG_WARN("ControlTask overrun: exec=%lu ms, count=%lu",
+                   (unsigned long)exec_ms, (unsigned long)overrun_count_);
+    }
+
+    TickType_t wake_tick = static_cast<TickType_t>(last_wake_time_);
+    vTaskDelayUntil(&wake_tick, pdMS_TO_TICKS(kLoopPeriodMs));
+    last_wake_time_ = static_cast<uint32_t>(wake_tick);
   }
 }
 
@@ -143,12 +169,16 @@ void ControlTask::computeAndPublish() {
   auv::motion::motion_context.last_output_forces_.set(forces);
 
   const bool armed = auv::system::system_context.arm_state_.get().is_armed;
+  const bool thrust_ok = armed
+                             ? ctx_->motor_driver->publishThrust(
+                                   forces[0], forces[1], forces[2], forces[5],
+                                   forces[4], forces[3])
+                             : ctx_->motor_driver->publishThrust(0, 0, 0, 0, 0, 0);
 
-  if (armed) {
-    ctx_->motor_driver->publishThrust(forces[0], forces[1], forces[2],
-                                      forces[5], forces[4], forces[3]);
-  } else {
-    ctx_->motor_driver->publishThrust(0, 0, 0, 0, 0, 0);
+  if (!thrust_ok) {
+    const uint32_t fail_count =
+        auv::motion::motion_context.thrust_tx_fail_count_.get() + 1;
+    auv::motion::motion_context.thrust_tx_fail_count_.set(fail_count);
   }
 }
 

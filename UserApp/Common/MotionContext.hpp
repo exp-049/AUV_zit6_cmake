@@ -92,6 +92,9 @@ public:
   LockedField<NavState> nav_state_{};
   LockedField<TargetSetpoint> current_setpoint_{};
   LockedField<float> last_dt_ms_{0.0f};
+  LockedField<float> last_exec_ms_{0.0f};
+  LockedField<uint32_t> control_overrun_count_{0};
+  LockedField<uint32_t> thrust_tx_fail_count_{0};
   LockedField<uint32_t> last_received_seq_{0};
   LockedField<std::array<float, 6>> last_output_forces_{};
 

@@ -1,10 +1,7 @@
 #ifndef MOTION_CONTROLLER_DRIVER_HPP
 #define MOTION_CONTROLLER_DRIVER_HPP
 
-#include "FreeRTOS.h"
-#include "task.h"
 #include <cstdint>
-#include <cstring>
 
 // SCB cache maintenance is provided by CMSIS headers (core_cm7)
 
@@ -63,16 +60,16 @@ struct MotorPortOps {
  */
 class MotionController_Driver {
 public:
-  MotionController_Driver(MotorPortOps ops, ThrustPacket *ext_pkt = nullptr);
+  explicit MotionController_Driver(MotorPortOps ops, ThrustPacket *ext_pkt = nullptr);
   ~MotionController_Driver();
 
   // 公共接口
-  void publishThrust(float fx, float fy, float fz, float fyaw, float fp = 0,
+  bool publishThrust(float fx, float fy, float fz, float fyaw, float fp = 0,
                      float fr = 0);
-  void setThrustCurve(uint8_t mode, uint8_t index, const float pwm[4],
+  bool setThrustCurve(uint8_t mode, uint8_t index, const float pwm[4],
                       const float thrust[4]);
-  void setServoAngle(float angle);
-  void setLightState(uint8_t state);
+  bool setServoAngle(float angle);
+  bool setLightState(uint8_t state);
 
 private:
   template <typename T> void initPacket(T *pkt, uint8_t id) {
@@ -83,8 +80,8 @@ private:
     pkt->tail[1] = 0xBF;
   }
 
-  void sendThrustPacketDMA();
-  void transmitDMA(uint8_t *data, uint16_t size);
+  bool sendThrustPacketDMA();
+  bool transmitDMA(uint8_t *data, uint16_t size);
 
   MotorPortOps ops_;         ///< 硬件操作接口
   ThrustPacket *thrust_pkt_ptr_;
