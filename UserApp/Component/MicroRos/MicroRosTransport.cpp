@@ -1,12 +1,11 @@
 #include "MicroRosTransport.hpp"
+#include "SerialHandles.hpp"
 #include "main.h"
 #include <rcl/error_handling.h>
 #include <rmw_microros/rmw_microros.h>
 
 // 自定义传输回调（由 STM32CubeMX 生成的 usart.c 提供）
 extern "C" {
-extern UART_HandleTypeDef huart2;
-
 bool cubemx_transport_open(struct uxrCustomTransport *transport);
 bool cubemx_transport_close(struct uxrCustomTransport *transport);
 size_t cubemx_transport_write(struct uxrCustomTransport *transport,
@@ -22,7 +21,8 @@ void *microros_zero_allocate(size_t number_of_elements,
 
 MicroRosTransport::MicroRosTransport() {
   // 传输层回调只需配置一次（rmw_uros_set_custom_transport 可重复调用但无必要）
-  rmw_uros_set_custom_transport(true, (void *)&huart2, cubemx_transport_open,
+  rmw_uros_set_custom_transport(true, (void *)&AUV_UART_MICROROS,
+                                cubemx_transport_open,
                                 cubemx_transport_close, cubemx_transport_write,
                                 cubemx_transport_read);
 

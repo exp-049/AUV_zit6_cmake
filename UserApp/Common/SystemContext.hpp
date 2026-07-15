@@ -9,12 +9,14 @@
 #include "INS_Driver.hpp"
 #include "MS5837_Driver.hpp"
 #include "MotionController_Driver.hpp"
+#include "USBL_Driver.hpp"
 
 // --- 底层驱动实例（通过 AppContext 访问，此处为定义提供 extern）---
 namespace auv::peripheral {
 extern INS_Driver ins_driver;
 extern MotionController_Driver motor_driver;
 extern MS5837_Driver depth_sensor;
+extern USBL_Driver usbl_driver;
 } // namespace auv::peripheral
 namespace auv::component {
 extern ChassisManager chassis;

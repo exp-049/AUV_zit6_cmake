@@ -5,7 +5,10 @@
 #include "MS5837_Driver.hpp"
 #include "MotionController_Driver.hpp"
 #include "MotionController_Porting.hpp"
+#include "USBL_Driver.hpp"
+#include "USBL_Porting.hpp"
 #include "RosLogger.hpp"
+#include "SerialHandles.hpp"
 #include "SoftWatchdog.hpp"
 #include "SystemConfig.hpp" // USE_DEPTH_CALC_BOARD (由 gen_config.py 生成)
 #include "cmsis_os2.h"      // osThreadNew, osThreadAttr_t
@@ -20,7 +23,7 @@
 #include "UART_DepthBackend.hpp"
 
 // 构造顺序：Porting → Backend → 链接
-static auv::porting::DepthCalcBoard_Porting g_depth_port(&huart4);
+static auv::porting::DepthCalcBoard_Porting g_depth_port(&AUV_UART_DEPTH_CAL);
 static auv::peripheral::UART_DepthBackend
     g_depth_backend(auv::peripheral::UartPortOps{
         .ctx = &g_depth_port,
@@ -54,9 +57,12 @@ __attribute__((unused)) static bool g_depth_i2c_link =
 #endif
 
 // --- 全局 Porting 实例（硬件适配） ---
-static auv::porting::INS_Porting g_ins_port(&huart7, &huart7, ins_rx_buffer,
+static auv::porting::INS_Porting g_ins_port(&AUV_UART_INS, &AUV_UART_INS, ins_rx_buffer,
                                             512);
-static auv::porting::MotionController_Porting g_motor_port(&huart6);
+static auv::porting::MotionController_Porting g_motor_port(&AUV_UART_MOTOR);
+static auv::porting::USBL_Porting g_usbl_port(
+    &AUV_UART_USBL, auv::porting::usbl_rx_buffer,
+    auv::porting::USBL_Porting::kBufferSize);
 
 // --- 全局驱动实例 ---
 namespace auv {
@@ -74,6 +80,13 @@ auv::peripheral::MotionController_Driver
         .getTxPacket = &auv::porting::MotionController_Porting::getTxPacket,
     });
 auv::peripheral::MS5837_Driver depth_sensor(&g_depth_backend);
+auv::peripheral::USBL_Driver usbl_driver(auv::peripheral::UsblPortOps{
+    .ctx = &g_usbl_port,
+    .init = &auv::porting::USBL_Porting::initPort,
+    .read = &auv::porting::USBL_Porting::readPort,
+    .getDiagnostics = &auv::porting::USBL_Porting::diagnosticsPort,
+    .getTickMs = &auv::porting::USBL_Porting::getTickPort,
+});
 } // namespace peripheral
 } // namespace auv
 
@@ -93,6 +106,7 @@ AppContext g_app_ctx = {
     .ins_driver = &auv::peripheral::ins_driver,
     .motor_driver = &auv::peripheral::motor_driver,
     .depth_sensor = &auv::peripheral::depth_sensor,
+    .usbl_driver = &auv::peripheral::usbl_driver,
     .logger = &auv::component::g_ros_logger,
     .watchdog = &auv::component::g_soft_watchdog,
     .chassis = &auv::component::chassis,

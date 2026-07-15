@@ -4,15 +4,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
-// 编译时选项（由 gen_config.py 根据 config.json 生成）
+// 配置文件导出的编译时选项。
 {% if depth_calc_board %}
 #define USE_DEPTH_CALC_BOARD
-{% endif %}
-{% if rtt_debug %}
-#define RTT_DEBUG
-{% endif %}
-{% if rtt_ms5837_cal_debug %}
-#define RTT_MS5837_CAL_DEBUG
 {% endif %}
 
 namespace auv {

@@ -34,11 +34,6 @@ void MonitorTask::refreshHardwareWatchdogIfNeeded() {
 }
 
 void UserApp_MonitorTask(void *argument) {
-#ifdef RTT_DEBUG
-  /* RTT 调试模式：MonitorTask 不运行，DebugTask 在 freertos.c 中创建 */
-  for (;;)
-    vTaskSuspend(NULL);
-#endif
   (void)argument;
   MonitorTask runner(&auv::system::g_app_ctx);
   runner.run();

@@ -14,30 +14,27 @@
             "args": []
         },
         {
-            "name": "Cortex Debug (OpenOCD)",
+            "name": "Cortex Debug (DAPLink/pyOCD)",
             "cwd": "${workspaceFolder}",
             "executable": "${workspaceFolder}/build/Debug/UserApp/AUV_zit6.elf",
             "request": "launch",
             "type": "cortex-debug",
             "runToEntryPoint": "main",
-            "servertype": "openocd",
+            "servertype": "pyocd",
+            "serverpath": "/home/doc049/.local/bin/pyocd-gdbserver",
             "gdbPath": "/usr/bin/gdb-multiarch",
             "device": "STM32H743ZIT6",
-            "configFiles": [
-                "interface/stlink.cfg",
-                "target/stm32h7x.cfg"
-            ],
-            "openOCDPreCommands": [
-                "transport select hla_swd",
-                "adapter speed 100"
-            ],
-            "postLaunchCommands": [
-                "set $sp = *(unsigned int*)0x08000000",
-                "set $pc = *(unsigned int*)0x08000004"
-            ],
-            "postRestartCommands": [
-                "set $sp = *(unsigned int*)0x08000000",
-                "set $pc = *(unsigned int*)0x08000004"
+            "targetId": "stm32h743xx",
+            "boardId": "6894719E6D7C",
+            "serverArgs": [
+                "--frequency",
+                "2000000",
+                "--option",
+                "reset_type=sysresetreq",
+                "--option",
+                "load.pre_reset=off",
+                "--option",
+                "load.post_reset=sysresetreq"
             ],
             "preLaunchTask": "Build Firmware"
         }

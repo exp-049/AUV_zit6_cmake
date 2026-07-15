@@ -3,6 +3,7 @@
 
 #include "../Common/AppContext.hpp"
 #include "../Common/MotionContext.hpp"
+#include "../Peripherals/inc/USBL_Driver.hpp"
 #include <cstdint>
 
 class ControlTask {
@@ -21,6 +22,7 @@ private:
 
   /** SITL 模式下无新数据时保持的上次有效导航状态 */
   auv::motion::NavState last_sitl_state_{};
+  auv::peripheral::UsblState usbl_state_{};
 
   void init();
   void updateNavigation();

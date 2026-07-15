@@ -59,6 +59,8 @@ void ControlTask::init() {
   memset(ins_rx_buffer, 0, sizeof(ins_rx_buffer));
 
   ctx_->ins_driver->init();
+  // NORMAL 只负责接收并缓存 USBL 数据，不改变当前 INS/深度数据源选择。
+  ctx_->usbl_driver->init();
   ctx_->chassis->applyConfig(auv::config::sys_config.chassis);
 
   ctx_->logger->init();
@@ -122,6 +124,9 @@ void ControlTask::updateNavigation() {
   } else {
     state = ctx_->ins_driver->getNavState();
     ctx_->ins_driver->update(state);
+    // 轮询 DMA 环形缓冲并解包最新 USBL 帧。数据暂不参与融合，供后续
+    // 数据源选择/融合模块通过 AppContext::usbl_driver 读取。
+    ctx_->usbl_driver->update(usbl_state_);
 
     if (auv::config::sys_config.system.sensors.z_data_source ==
         auv::config::ZDataSource::USE_MS5837_Z) {
@@ -183,11 +188,6 @@ void ControlTask::computeAndPublish() {
 }
 
 void UserApp_ControlTask(void *argument) {
-#ifdef RTT_DEBUG
-  /* RTT 调试模式：ControlTask 不运行 */
-  for (;;)
-    vTaskSuspend(NULL);
-#endif
   (void)argument;
   ControlTask runner(&auv::system::g_app_ctx);
   runner.run();

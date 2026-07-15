@@ -11,7 +11,7 @@ namespace porting {
 
 /**
  * @class INS_Porting
- * @brief INS 惯导硬件适配层（UART7 DMA）
+ * @brief INS 惯导硬件适配层（由 SerialHandles.hpp 选择 UART）
  *
  * 封装 UART DMA 接收环形缓冲和指令发送。
  * 替代原 SerialPort + 裸 HAL 调用的模式。

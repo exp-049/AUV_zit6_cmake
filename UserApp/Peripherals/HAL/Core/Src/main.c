@@ -138,8 +138,8 @@ int main(void)
   MX_USART3_UART_Init();
   MX_USART6_UART_Init();
   MX_IWDG1_Init();
-  MX_UART7_Init();
   MX_UART4_Init();
+  MX_UART7_Init();
   /* USER CODE BEGIN 2 */
   /* 追加自定义 MPU 区域（DMA 缓冲区 Non-cacheable），不覆盖 CubeMX 的默认配置 */
   UserApp_MPU_Config();

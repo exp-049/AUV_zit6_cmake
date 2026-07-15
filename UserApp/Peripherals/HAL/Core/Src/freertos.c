@@ -19,9 +19,10 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
-#include "cmsis_os2.h"
-#include "main.h"
 #include "task.h"
+#include "main.h"
+#include "FreeRTOS.h"
+#include "cmsis_os2.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -56,30 +57,13 @@
 rcl_publisher_t publisher;
 std_msgs__msg__Int32 msg;
 /* USER CODE END Variables */
-/* Definitions for micro_ros_task */
-osThreadId_t micro_ros_taskHandle;
-const osThreadAttr_t micro_ros_task_attributes = {
-    .name = "micro_ros_task",
-    .stack_size = 5000 * 4,
-    .priority = (osPriority_t)osPriorityAboveNormal7,
+/* Definitions for app_bootstrap */
+osThreadId_t app_bootstrapHandle;
+const osThreadAttr_t app_bootstrap_attributes = {
+  .name = "app_bootstrap",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityRealtime,
 };
-/* Definitions for controll_task */
-osThreadId_t controll_taskHandle;
-const osThreadAttr_t controll_task_attributes = {
-    .name = "controll_task",
-    .stack_size = 2048 * 4,
-    .priority = (osPriority_t)osPriorityHigh,
-};
-/* Definitions for monitor_task */
-osThreadId_t monitor_taskHandle;
-const osThreadAttr_t monitor_task_attributes = {
-    .name = "monitor_task",
-    .stack_size = 512 * 4,
-    .priority = (osPriority_t)osPriorityNormal,
-};
-/* Definitions for imu_queue */
-osMessageQueueId_t imu_queueHandle;
-const osMessageQueueAttr_t imu_queue_attributes = {.name = "imu_queue"};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -97,9 +81,7 @@ void *microros_zero_allocate(size_t number_of_elements, size_t size_of_element,
                              void *state);
 /* USER CODE END FunctionPrototypes */
 
-void Entry_MicroRosTask(void *argument);
-void Entry_ControlTask(void *argument);
-void Entry_MonitorTask(void *argument);
+void Entry_AppBootstrap(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -115,10 +97,10 @@ void vApplicationStackOverflowHook(xTaskHandle xTask, char *pcTaskName) {
 /* USER CODE END 4 */
 
 /**
- * @brief  FreeRTOS initialization
- * @param  None
- * @retval None
- */
+  * @brief  FreeRTOS initialization
+  * @param  None
+  * @retval None
+  */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
 
@@ -136,78 +118,40 @@ void MX_FREERTOS_Init(void) {
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
 
-  /* Create the queue(s) */
-  /* creation of imu_queue */
-  imu_queueHandle =
-      osMessageQueueNew(16, sizeof(uint32_t), &imu_queue_attributes);
-
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* creation of micro_ros_task */
-  micro_ros_taskHandle =
-      osThreadNew(Entry_MicroRosTask, NULL, &micro_ros_task_attributes);
-
-  /* creation of controll_task */
-  controll_taskHandle =
-      osThreadNew(Entry_ControlTask, NULL, &controll_task_attributes);
-
-  /* creation of monitor_task */
-  monitor_taskHandle =
-      osThreadNew(Entry_MonitorTask, NULL, &monitor_task_attributes);
+  /* creation of app_bootstrap */
+  app_bootstrapHandle = osThreadNew(Entry_AppBootstrap, NULL, &app_bootstrap_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  extern void UserApp_CreateDebugTask(void);
-  UserApp_CreateDebugTask();
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
   /* USER CODE END RTOS_EVENTS */
+
 }
 
-/* USER CODE BEGIN Header_Entry_MicroRosTask */
+/* USER CODE BEGIN Header_Entry_AppBootstrap */
 /**
- * @brief  Function implementing the micro_ros_task thread.
- * @param  argument: Not used
- * @retval None
- */
-/* USER CODE END Header_Entry_MicroRosTask */
-void Entry_MicroRosTask(void *argument) {
-  /* USER CODE BEGIN Entry_MicroRosTask */
-  UserApp_MicroRosTask(argument);
-  /* USER CODE END Entry_MicroRosTask */
-}
-
-/* USER CODE BEGIN Header_Entry_ControlTask */
-/**
- * @brief Function implementing the hardware_bridge thread.
- * @param argument: Not used
- * @retval None
- */
-/* USER CODE END Header_Entry_ControlTask */
-void Entry_ControlTask(void *argument) {
-  /* USER CODE BEGIN Entry_ControlTask */
-  UserApp_ControlTask(argument);
-  /* USER CODE END Entry_ControlTask */
-}
-
-/* USER CODE BEGIN Header_Entry_MonitorTask */
-/**
- * @brief Function implementing the monitor_task thread.
- * @param argument: Not used
- * @retval None
- */
-/* USER CODE END Header_Entry_MonitorTask */
-void Entry_MonitorTask(void *argument) {
-  /* USER CODE BEGIN Entry_MonitorTask */
-  UserApp_MonitorTask(argument);
-  /* USER CODE END Entry_MonitorTask */
+  * @brief  Function implementing the app_bootstrap thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_Entry_AppBootstrap */
+void Entry_AppBootstrap(void *argument)
+{
+  /* USER CODE BEGIN Entry_AppBootstrap */
+  (void)argument;
+  UserApp_Start();
+  /* USER CODE END Entry_AppBootstrap */
 }
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
 /* USER CODE END Application */
+

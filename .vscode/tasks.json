@@ -4,11 +4,101 @@
         {
             "label": "Build Firmware",
             "type": "shell",
-            "command": "cmake --build build/Debug",
+            "command": "cmake --build --preset Debug",
             "group": "build",
             "problemMatcher": [
                 "$gcc"
             ]
+        },
+        {
+            "label": "Build MS5837 CAL Debug",
+            "type": "shell",
+            "command": "cmake --build --preset MS5837_CAL_DEBUG",
+            "group": "build",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Build USBL Debug",
+            "type": "shell",
+            "command": "cmake --build --preset USBL_DEBUG",
+            "group": "build",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Flash Firmware (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "load",
+                "--target",
+                "stm32h743xx",
+                "--uid",
+                "6894719E6D7C",
+                "--frequency",
+                "2m",
+                "--connect",
+                "attach",
+                "--erase",
+                "sector",
+                "-O",
+                "load.pre_reset=off",
+                "-O",
+                "load.post_reset=sysresetreq",
+                "${workspaceFolder}/build/Debug/UserApp/AUV_zit6.elf"
+            ],
+            "dependsOn": "Build Firmware",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Reset Target (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "commander",
+                "--target",
+                "stm32h743xx",
+                "--uid",
+                "6894719E6D7C",
+                "--frequency",
+                "2m",
+                "--connect",
+                "attach",
+                "--command",
+                "reset sysresetreq"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash MS5837 CAL Debug (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "load", "--target", "stm32h743xx", "--uid", "6894719E6D7C",
+                "--frequency", "2m", "--connect", "attach", "--erase", "sector",
+                "-O", "load.pre_reset=off", "-O", "load.post_reset=sysresetreq",
+                "${workspaceFolder}/build/MS5837_CAL_DEBUG/UserApp/AUV_zit6.elf"
+            ],
+            "dependsOn": "Build MS5837 CAL Debug",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash USBL Debug (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "load", "--target", "stm32h743xx", "--uid", "6894719E6D7C",
+                "--frequency", "2m", "--connect", "attach", "--erase", "sector",
+                "-O", "load.pre_reset=off", "-O", "load.post_reset=sysresetreq",
+                "${workspaceFolder}/build/USBL_DEBUG/UserApp/AUV_zit6.elf"
+            ],
+            "dependsOn": "Build USBL Debug",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
         },
         {
             "label": "Flash Firmware (ST-Link)",

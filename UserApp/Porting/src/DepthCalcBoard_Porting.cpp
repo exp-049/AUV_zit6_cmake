@@ -50,39 +50,24 @@ bool DepthCalcBoard_Porting::startRx() {
 }
 
 void DepthCalcBoard_Porting::startDma(uint8_t *buf) {
-  ROS_LOG_DEBUG("[DepthPorting] startDma -> buf=%p", buf);
-  active_buf_ = buf;
-  HAL_StatusTypeDef ret = HAL_UART_Receive_DMA(huart_, buf, kBufSize);
-  if (ret != HAL_OK) {
-    ROS_LOG_DEBUG("[DepthPorting] startDma FAILED! HAL_Status=%d", (int)ret);
-  }
+  // Kept as a compatibility helper; the configured UART DMA is circular, so
+  // it must not be restarted when the counter wraps.
+  (void)buf;
 }
 
 void DepthCalcBoard_Porting::poll() {
   if (!huart_ || !backend_)
     return;
 
-  // 读取 DMA 剩余计数，计算已接收字节数
+  // Circular DMA producer position. The low-rate depth protocol is consumed
+  // before one full lap, so a single ring buffer is sufficient.
   uint16_t remaining = __HAL_DMA_GET_COUNTER(huart_->hdmarx);
+  if (remaining > kBufSize) return;
   uint16_t received = kBufSize - remaining;
 
-  // 处理新收到的字节（增量方式，不触发任何额外中断）
-  while (dma_pos_ < received) {
+  while (dma_pos_ != received) {
     backend_->onRxByte(active_buf_[dma_pos_]);
-    dma_pos_++;
-  }
-
-  // 缓冲区已满：DMA 已停止（NORMAL 模式），切到另一个缓冲重启
-  if (remaining == 0 && received > 0) {
-    // 打印缓冲前几个字节用于诊断
-    ROS_LOG_DEBUG("[DepthPorting] BUF_FULL: active=%p dma_pos=%u, "
-                  "first4=[%02x %02x %02x %02x]",
-                  active_buf_, dma_pos_,
-                  active_buf_[0], active_buf_[1], active_buf_[2],
-                  active_buf_[3]);
-    uint8_t *next_buf = (active_buf_ == dma_buf_a_) ? dma_buf_b_ : dma_buf_a_;
-    dma_pos_ = 0;
-    startDma(next_buf);
+    dma_pos_ = static_cast<uint16_t>((dma_pos_ + 1U) % kBufSize);
   }
 }
 

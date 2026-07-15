@@ -11,6 +11,7 @@ namespace auv::peripheral {
 class INS_Driver;
 class MotionController_Driver;
 class MS5837_Driver;
+class USBL_Driver;
 } // namespace auv::peripheral
 
 namespace auv::component {
@@ -33,6 +34,7 @@ struct AppContext {
   auv::peripheral::INS_Driver *ins_driver;
   auv::peripheral::MotionController_Driver *motor_driver;
   auv::peripheral::MS5837_Driver *depth_sensor;
+  auv::peripheral::USBL_Driver *usbl_driver;
   auv::component::RosLogger *logger;
   auv::component::SoftWatchdog *watchdog;
   auv::component::ChassisManager *chassis;

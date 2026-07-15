@@ -135,12 +135,8 @@ def gen_system_config(json_path, out_dir):
     template = env.get_template('SystemConfig.hpp.j2')
     sys_cfg = config.get('system', {})
     depth_calc_board = bool(sys_cfg.get('depth_calc_board', {}).get('enabled', False))
-    rtt_debug = bool(sys_cfg.get('debug', {}).get('rtt_debug', False))
-    rtt_ms5837_cal_debug = bool(sys_cfg.get('debug', {}).get('rtt_ms5837_cal_debug', False))
     content = template.render(
-        depth_calc_board=depth_calc_board,
-        rtt_debug=rtt_debug,
-        rtt_ms5837_cal_debug=rtt_ms5837_cal_debug)
+        depth_calc_board=depth_calc_board)
 
     # 生成注册表源文件 (SystemConfig.cpp)
     if isinstance(config.get("types"), dict):
@@ -154,7 +150,6 @@ def gen_system_config(json_path, out_dir):
     if "system" in config_for_params:
         sys_params = dict(config_for_params["system"])
         sys_params.pop("depth_calc_board", None)
-        sys_params.pop("debug", None)
         config_for_params["system"] = sys_params
     params = collect_params(config_for_params, type_overrides=type_overrides)
 

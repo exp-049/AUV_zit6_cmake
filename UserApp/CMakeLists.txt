@@ -23,6 +23,15 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Debug")
 endif()
 
+# Firmware application mode is deliberately a configure-time choice. Debug
+# modes do not coexist with the NORMAL control, micro-ROS, or monitor tasks.
+set(AUV_APP_MODE "NORMAL" CACHE STRING "Firmware application mode")
+set_property(CACHE AUV_APP_MODE PROPERTY STRINGS NORMAL MS5837_CAL_DEBUG USBL_DEBUG)
+set(_auv_app_modes NORMAL MS5837_CAL_DEBUG USBL_DEBUG)
+if(NOT AUV_APP_MODE IN_LIST _auv_app_modes)
+    message(FATAL_ERROR "Unsupported AUV_APP_MODE='${AUV_APP_MODE}'")
+endif()
+
 # Generate config header from JSON (run on build when config.json changes)
 set(GEN_CONFIG_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/gen_config.py)
 set(CONFIG_JSON ${CMAKE_CURRENT_SOURCE_DIR}/Config/config.json)
@@ -92,6 +101,14 @@ enable_language(C ASM CXX)
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
 add_dependencies(${CMAKE_PROJECT_NAME} gen_system_config)
+
+if(AUV_APP_MODE STREQUAL "NORMAL")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE AUV_APP_MODE=0)
+elseif(AUV_APP_MODE STREQUAL "MS5837_CAL_DEBUG")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE AUV_APP_MODE=1)
+elseif(AUV_APP_MODE STREQUAL "USBL_DEBUG")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE AUV_APP_MODE=2)
+endif()
 
 # Add STM32CubeMX generated sources (HAL/Core/Drivers/Middlewares)
 add_subdirectory(Peripherals/HAL)
