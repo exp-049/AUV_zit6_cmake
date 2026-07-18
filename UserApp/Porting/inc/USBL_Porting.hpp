@@ -37,6 +37,7 @@ public:
   static void diagnosticsPort(void *ctx,
                               auv::peripheral::UsblPortDiagnostics *out);
   static uint32_t getTickPort(void *ctx);
+  static void handleHalRxEvent(UART_HandleTypeDef *huart, uint16_t size);
 
   bool init();
   uint16_t read(uint8_t *buffer, uint16_t max_len);

@@ -6,6 +6,6 @@
 
 #define AUV_UART_USBL huart3
 #define AUV_UART_INS huart1
-#define AUV_UART_DEPTH_CAL huart7
+#define AUV_UART_DEPTH_CAL huart4
 #define AUV_UART_MOTOR huart6
 #define AUV_UART_MICROROS huart2

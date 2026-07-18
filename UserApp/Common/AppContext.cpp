@@ -18,18 +18,31 @@
 
 // --- 深度传感器方案选择 ---
 #ifdef USE_DEPTH_CALC_BOARD
-// ======== UART 解算板方案 ========
-#include "DepthCalcBoard_Porting.hpp"
-#include "UART_DepthBackend.hpp"
+// ======== UART4 + MS5837 protocol-v1 方案 ========
+#include "MS5837_UART_Porting.hpp"
+#include "UART_MS5837Backend.hpp"
 
 // 构造顺序：Porting → Backend → 链接
-static auv::porting::DepthCalcBoard_Porting g_depth_port(&AUV_UART_DEPTH_CAL);
-static auv::peripheral::UART_DepthBackend
-    g_depth_backend(auv::peripheral::UartPortOps{
+static auv::porting::MS5837_UART_Porting g_depth_port(&huart4);
+static auv::peripheral::UART_MS5837Backend
+    g_depth_backend(auv::peripheral::UART_MS5837PortOps{
         .ctx = &g_depth_port,
-        .transmit = &auv::porting::DepthCalcBoard_Porting::transmitPort,
-        .poll = &auv::porting::DepthCalcBoard_Porting::pollPort,
-        .startRx = &auv::porting::DepthCalcBoard_Porting::startRxPort,
+        .transmit = &auv::porting::MS5837_UART_Porting::transmitPort,
+        .poll = &auv::porting::MS5837_UART_Porting::pollPort,
+        .startRx = &auv::porting::MS5837_UART_Porting::startRxPort,
+        .getTickMs = &auv::porting::MS5837_UART_Porting::getTickPort,
+        .getRxRecoveryCount =
+            &auv::porting::MS5837_UART_Porting::getRxRecoveryCountPort,
+        .getRxErrorCount =
+            &auv::porting::MS5837_UART_Porting::getRxErrorCountPort,
+        .getLastRxError =
+            &auv::porting::MS5837_UART_Porting::getLastRxErrorPort,
+        .getLastRxRecoveryReason =
+            &auv::porting::MS5837_UART_Porting::getLastRxRecoveryReasonPort,
+        .getRxEventCount =
+            &auv::porting::MS5837_UART_Porting::getRxEventCountPort,
+        .getDmaWritePos =
+            &auv::porting::MS5837_UART_Porting::getDmaWritePosPort,
     });
 // 链接 Porting → Backend（两个对象都已构造，地址安全）
 __attribute__((unused)) static bool g_depth_link =

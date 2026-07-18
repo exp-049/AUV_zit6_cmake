@@ -301,7 +301,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     hdma_uart4_rx.Init.MemInc = DMA_MINC_ENABLE;
     hdma_uart4_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
     hdma_uart4_rx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-    hdma_uart4_rx.Init.Mode = DMA_NORMAL;
+    hdma_uart4_rx.Init.Mode = DMA_CIRCULAR;
     hdma_uart4_rx.Init.Priority = DMA_PRIORITY_LOW;
     hdma_uart4_rx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
     if (HAL_DMA_Init(&hdma_uart4_rx) != HAL_OK)
@@ -704,9 +704,12 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 
 /* USER CODE BEGIN 1 */
 extern uint8_t dma_buffer[];
-
+extern void UserApp_UART4_ErrorHook(UART_HandleTypeDef *huart);
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
+  if (huart->Instance == UART4) {
+      UserApp_UART4_ErrorHook(huart);
+  }
   /* 自动清除 UART 错误（如溢出 ORE、奇偶校验 PE 等），防止串口死锁 */
   if (__HAL_UART_GET_FLAG(huart, UART_FLAG_ORE)) {
       __HAL_UART_CLEAR_FLAG(huart, UART_CLEAR_OREF);

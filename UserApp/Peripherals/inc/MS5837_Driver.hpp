@@ -55,6 +55,17 @@ struct DepthBackend {
   /** @brief 传感器是否已连接 */
   virtual bool isConnected() const = 0;
 
+  /** @brief UART 协议握手是否收到 ACK；非 UART 后端默认不适用 */
+  virtual bool isHandshakeAcknowledged() const { return false; }
+
+  /** @brief UART 接收层自恢复次数；非 UART 后端默认返回 0 */
+  virtual uint32_t getRxRecoveryCount() const { return 0U; }
+  virtual uint32_t getRxErrorCount() const { return 0U; }
+  virtual uint32_t getLastRxError() const { return 0U; }
+  virtual uint32_t getLastRxRecoveryReason() const { return 0U; }
+  virtual uint32_t getRxEventCount() const { return 0U; }
+  virtual uint32_t getDmaWritePos() const { return 0U; }
+
   /** @brief 获取最新深度值（米） */
   virtual float getDepth() const = 0;
 
@@ -93,6 +104,17 @@ public:
 
   /** @brief 传感器连接状态（由 Backend 更新） */
   bool is_connected = false;
+
+  /** @brief UART 协议握手 ACK 状态（非 UART 后端返回 false） */
+  bool isHandshakeAcknowledged() const;
+
+  /** @brief UART 接收层自恢复次数（非 UART 后端返回 0） */
+  uint32_t getRxRecoveryCount() const;
+  uint32_t getRxErrorCount() const;
+  uint32_t getLastRxError() const;
+  uint32_t getLastRxRecoveryReason() const;
+  uint32_t getRxEventCount() const;
+  uint32_t getDmaWritePos() const;
 
   /** @brief 最近一次压力值（mBar），供 Depth() fallback 使用 */
   float pressure = 0;

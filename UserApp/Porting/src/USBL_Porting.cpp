@@ -119,8 +119,8 @@ uint32_t USBL_Porting::getTick() const { return HAL_GetTick(); }
 } // namespace porting
 } // namespace auv
 
-extern "C" void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart,
-                                             uint16_t size) {
+void auv::porting::USBL_Porting::handleHalRxEvent(UART_HandleTypeDef *huart,
+                                                  uint16_t size) {
   if (auv::porting::USBL_Porting::active_instance == nullptr ||
       huart != auv::porting::USBL_Porting::active_instance->getUart()) {
     return;

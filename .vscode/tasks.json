@@ -93,6 +93,24 @@
             "problemMatcher": []
         },
         {
+            "label": "View MS5837 RTT (DAPLink)",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "${workspaceFolder}/scripts/view_ms5837_rtt.sh"
+            ],
+            "dependsOn": "Flash MS5837 CAL Debug (DAPLink)",
+            "dependsOrder": "sequence",
+            "presentation": {
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "Flash USBL Debug (DAPLink)",
             "type": "shell",
             "command": "${env:HOME}/.local/bin/pyocd",
