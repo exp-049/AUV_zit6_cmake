@@ -72,6 +72,7 @@ auv::peripheral::INS_Driver ins_driver(auv::peripheral::InsPortOps{
     .init = &auv::porting::INS_Porting::initPort,
     .read = &auv::porting::INS_Porting::readPort,
     .transmit = &auv::porting::INS_Porting::transmitPort,
+    .getDiagnostics = &auv::porting::INS_Porting::diagnosticsPort,
 });
 auv::peripheral::MotionController_Driver
     motor_driver(auv::peripheral::MotorPortOps{

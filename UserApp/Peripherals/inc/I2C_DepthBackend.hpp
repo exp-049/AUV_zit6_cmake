@@ -1,3 +1,4 @@
+//IIC直连方案,载板上不稳定,已弃用
 #pragma once
 
 #include "MS5837_Driver.hpp" // DepthBackend, DepthPortOps

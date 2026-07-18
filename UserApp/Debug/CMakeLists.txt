@@ -8,6 +8,10 @@ elseif(AUV_APP_MODE STREQUAL "USBL_DEBUG")
     target_sources(${PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/rtt_usbl_debug/UsblDebugTask.cpp
     )
+elseif(AUV_APP_MODE STREQUAL "INS_DEBUG")
+    target_sources(${PROJECT_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/rtt_ins_debug/InsDebugTask.cpp
+    )
 endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE

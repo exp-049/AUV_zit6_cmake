@@ -3,6 +3,12 @@
 #include "stm32h7xx_hal.h"
 #include <stdint.h>
 
+namespace auv {
+namespace peripheral {
+struct InsPortDiagnostics;
+}
+} // namespace auv
+
 // DMA 接收缓冲区（在 INS_Porting.cpp 中定义，位于 RAM_D2 段）
 extern uint8_t ins_rx_buffer[512];
 
@@ -25,10 +31,13 @@ public:
   static bool initPort(void *ctx);
   static uint16_t readPort(void *ctx, uint8_t *buf, uint16_t max_len);
   static bool transmitPort(void *ctx, const uint8_t *data, uint16_t len);
+  static void diagnosticsPort(
+      void *ctx, auv::peripheral::InsPortDiagnostics *out);
 
   bool init();
   uint16_t read(uint8_t *buf, uint16_t max_len);
   bool transmit(const uint8_t *data, uint16_t len);
+  void diagnostics(auv::peripheral::InsPortDiagnostics *out) const;
 
   /** @brief 检查是否在超时内收到过新数据 */
   bool isDataFresh(uint32_t timeout_ms) const;
@@ -44,9 +53,10 @@ private:
   UART_HandleTypeDef *tx_uart_;
   uint8_t *rx_buf_;
   uint16_t rx_buf_size_;
-  volatile uint16_t rx_write_idx_ = 0;
   uint16_t rx_read_idx_ = 0;
   volatile uint32_t last_rx_tick_ = 0;
+  volatile uint32_t read_events_ = 0;
+  volatile uint32_t total_bytes_ = 0;
 };
 
 } // namespace porting

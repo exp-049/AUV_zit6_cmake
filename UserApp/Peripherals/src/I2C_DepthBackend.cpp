@@ -1,3 +1,4 @@
+// IIC直连方案,载板上不稳定,已弃用
 #include "I2C_DepthBackend.hpp"
 #include "FreeRTOS.h"
 #include "cmsis_os2.h"

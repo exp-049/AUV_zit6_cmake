@@ -6,6 +6,7 @@ extern "C" {
 
 void UserApp_Ms5837CalDebugTask(void *argument);
 void UserApp_UsblDebugTask(void *argument);
+void UserApp_InsDebugTask(void *argument);
 
 #ifdef __cplusplus
 }

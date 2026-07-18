@@ -47,6 +47,12 @@ constexpr osThreadAttr_t kUsblDebugTaskAttributes = {
     .priority = osPriorityNormal,
 };
 
+constexpr osThreadAttr_t kInsDebugTaskAttributes = {
+    .name = "ins_debug",
+    .stack_size = 2048U * 4U,
+    .priority = osPriorityNormal,
+};
+
 } // namespace
 
 extern "C" void UserApp_Start(void) {
@@ -78,6 +84,12 @@ extern "C" void UserApp_Start(void) {
 #elif AUV_APP_MODE == 2
   if (osThreadNew(UserApp_UsblDebugTask, nullptr,
                   &kUsblDebugTaskAttributes) == nullptr) {
+    Error_Handler();
+  }
+  osThreadExit();
+#elif AUV_APP_MODE == 3
+  if (osThreadNew(UserApp_InsDebugTask, nullptr,
+                  &kInsDebugTaskAttributes) == nullptr) {
     Error_Handler();
   }
   osThreadExit();

@@ -25,6 +25,13 @@
             "problemMatcher": ["$gcc"]
         },
         {
+            "label": "Build INS Debug",
+            "type": "shell",
+            "command": "cmake --build --preset INS_DEBUG",
+            "group": "build",
+            "problemMatcher": ["$gcc"]
+        },
+        {
             "label": "Flash Firmware (DAPLink)",
             "type": "shell",
             "command": "${env:HOME}/.local/bin/pyocd",
@@ -96,6 +103,21 @@
                 "${workspaceFolder}/build/USBL_DEBUG/UserApp/AUV_zit6.elf"
             ],
             "dependsOn": "Build USBL Debug",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash INS Debug (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "load", "--target", "stm32h743xx", "--uid", "6894719E6D7C",
+                "--frequency", "2m", "--connect", "attach", "--erase", "sector",
+                "-O", "load.pre_reset=off", "-O", "load.post_reset=sysresetreq",
+                "${workspaceFolder}/build/INS_DEBUG/UserApp/AUV_zit6.elf"
+            ],
+            "dependsOn": "Build INS Debug",
             "dependsOrder": "sequence",
             "group": "build",
             "problemMatcher": []

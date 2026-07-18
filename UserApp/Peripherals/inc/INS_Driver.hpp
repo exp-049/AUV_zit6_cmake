@@ -22,6 +22,20 @@ struct InsPortOps {
   bool (*init)(void *ctx);
   uint16_t (*read)(void *ctx, uint8_t *buf, uint16_t max_len);
   bool (*transmit)(void *ctx, const uint8_t *data, uint16_t len);
+  void (*getDiagnostics)(void *ctx, struct InsPortDiagnostics *out);
+};
+
+/** @brief INS UART/DMA 快照，供调试输出使用。 */
+struct InsPortDiagnostics {
+  uint32_t read_events = 0;
+  uint32_t total_bytes = 0;
+  uint32_t valid_frames = 0;
+  uint32_t invalid_frames = 0;
+  uint16_t write_pos = 0;
+  uint16_t dma_remaining = 0;
+  bool dma_enabled = false;
+  uint32_t uart_isr = 0;
+  uint8_t rx_preview[4] = {};
 };
 
 /**
@@ -30,6 +44,8 @@ struct InsPortOps {
  */
 class INS_Driver {
 public:
+  static constexpr uint16_t kFrameSize = 133;
+
   INS_Driver(InsPortOps ops) : ops_(ops) {}
 
   void init();
@@ -37,6 +53,12 @@ public:
   auv::motion::NavState getNavState() const { return state_; }
   float getManometerZ() const { return manometer_z_; }
   bool isDataFresh() const;
+
+  /** @brief 拷贝最近一次校验通过的原始帧，供 Debug 输出使用。 */
+  uint16_t copyLastFrame(uint8_t *dst, uint16_t max_len) const;
+
+  /** @brief 获取驱动和底层 DMA 的诊断快照。 */
+  void getDiagnostics(InsPortDiagnostics &out) const;
 
   void sendCommand(uint8_t cmd_id, uint8_t value);
   void sendCommand(uint8_t cmd_id, const uint8_t *data, uint8_t data_len);
@@ -59,6 +81,8 @@ private:
   auv::motion::NavState state_{};      ///< 缓存的最新有效位姿状态
   auv::motion::NavState prev_state_{}; ///< 上一帧状态，用于速度差分估计
   bool has_prev_state_ = false;
+  uint32_t valid_frames_ = 0;
+  uint32_t invalid_frames_ = 0;
 
   // 压力计深度 (m)
   float manometer_z_ = 0.0f;

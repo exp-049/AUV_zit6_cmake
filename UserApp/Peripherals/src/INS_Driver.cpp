@@ -16,6 +16,10 @@ void INS_Driver::init() {
       break;
     HAL_Delay(10);
   }
+  frame_len_ = 0;
+  rx_total_bytes_ = 0;
+  valid_frames_ = 0;
+  invalid_frames_ = 0;
   resetPosition();
 }
 
@@ -108,6 +112,7 @@ bool INS_Driver::isDataFresh() const {
 bool INS_Driver::update(auv::motion::NavState &state) {
   uint8_t temp_buf[256];
   uint16_t len = ops_.read(ops_.ctx, temp_buf, 256);
+  rx_total_bytes_ += len;
   bool has_new_frame = false;
 
   for (int i = 0; i < len; i++) {
@@ -115,11 +120,41 @@ bool INS_Driver::update(auv::motion::NavState &state) {
       if (validateFrame()) {
         decodePacket(state);
         last_update_ms_ = HAL_GetTick(); // 刷新时间戳
+        ++valid_frames_;
         has_new_frame = true;
+      } else {
+        ++invalid_frames_;
       }
     }
   }
   return has_new_frame;
+}
+
+uint16_t INS_Driver::copyLastFrame(uint8_t *dst, uint16_t max_len) const {
+  if (dst == nullptr || max_len == 0) {
+    return 0;
+  }
+  const uint16_t count = (max_len < kFrameSize) ? max_len : kFrameSize;
+  std::memcpy(dst, packet_buf_, count);
+  return count;
+}
+
+void INS_Driver::getDiagnostics(InsPortDiagnostics &out) const {
+  out = {};
+  out.total_bytes = rx_total_bytes_;
+  out.valid_frames = valid_frames_;
+  out.invalid_frames = invalid_frames_;
+  if (ops_.getDiagnostics != nullptr) {
+    InsPortDiagnostics port;
+    ops_.getDiagnostics(ops_.ctx, &port);
+    out.read_events = port.read_events;
+    out.total_bytes = port.total_bytes;
+    out.write_pos = port.write_pos;
+    out.dma_remaining = port.dma_remaining;
+    out.dma_enabled = port.dma_enabled;
+    out.uart_isr = port.uart_isr;
+    std::memcpy(out.rx_preview, port.rx_preview, sizeof(out.rx_preview));
+  }
 }
 
 namespace ProtoOff {
