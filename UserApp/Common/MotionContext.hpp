@@ -74,7 +74,7 @@ struct UsblTopicSample {
  */
 struct OffboardSetpoint {
   ControlLevel level;
-  float data[4];
+  float data[6];
   uint32_t type_mask;
 };
 

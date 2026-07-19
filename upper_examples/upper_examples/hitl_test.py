@@ -7,7 +7,7 @@ control_key 编码:
   bits 0-1: level (0=POSITION, 1=VELOCITY, 2=ACTUATOR)
   bit  4   : is_body  (0=world frame, 1=body frame)
   bit  5   : is_inc   (0=absolute, 1=incremental)
-  type_mask: bit set = skip axis (bit0=X, bit1=Y, bit2=Z, bit3=Yaw)
+  type_mask: bit set = skip axis (bit0=X, bit1=Y, bit2=Z, bit5=Yaw); Roll/Pitch are bypassed
 
 测试场景一览:
   1. frame_world_pos     世界系位置指令
@@ -339,8 +339,8 @@ class HitlTestNode(Node):
         self.status_count += 1
 
     def _cb_thr(self, msg):
-        if len(msg.data) >= 4:
-            self.last_forces = [msg.data[0], msg.data[1], msg.data[2], 0, 0, msg.data[3]]
+        if len(msg.data) >= 6:
+            self.last_forces = list(msg.data[:6])
 
     def _configure_sitl(self):
         """通过 UpdateParams 服务启用 SITL 模式（无需重刷固件）"""
@@ -548,15 +548,18 @@ class HitlTestNode(Node):
         self.pub_hb.publish(m)
         self.pub_hb.publish(m)
 
-    def _sp(self, ck, x=0.0, y=0.0, z=0.0, yaw=0.0, mask=0):
+    def _sp(self, ck, x=0.0, y=0.0, z=0.0, roll=0.0, pitch=0.0,
+            yaw=0.0, mask=0):
         """发 setpoint（2Hz，MCU 回调耗时可能挤占心跳处理）"""
         self._sp_tick += 1
-        self._last_sp = (x, y, z, yaw)
+        # Roll/Pitch 只保留函数签名兼容性，测试发送时固定为旁路值 0。
+        self._last_sp = (x, y, z, 0.0, 0.0, yaw)
         if self._sp_tick % 50 != 0:  # 每 500ms 发一次
             return
         m = ZitSetpoint()
         m.control_key = ck; m.type_mask = mask
-        m.x = float(x); m.y = float(y); m.z = float(z); m.yaw = float(yaw)
+        m.x = float(x); m.y = float(y); m.z = float(z)
+        m.roll = 0.0; m.pitch = 0.0; m.yaw = float(yaw)
         self.pub_sp.publish(m)
 
     def _sim(self, pos, vel):
@@ -595,7 +598,8 @@ class HitlTestNode(Node):
             "armed": self.armed,
             "x": p[0], "y": p[1], "z": p[2], "roll": p[3], "pitch": p[4], "yaw": p[5],
             "u": v[0], "v": v[1], "w": v[2],
-            "fx": f[0], "fy": f[1], "fz": f[2], "mz": f[5],
+            "fx": f[0], "fy": f[1], "fz": f[2],
+            "mroll": f[3], "mpitch": f[4], "myaw": f[5],
         })
 
     def _run_scenario(self, name, fn):
@@ -657,13 +661,14 @@ class HitlTestNode(Node):
             self._sp(CK_ACT_BODY_ABS, x=0.5)
 
     def scn_mask_single(self, t):
-        self._sp(CK_POS_WORLD_ABS, x=2.0, y=99.0, z=99.0, yaw=99.0, mask=0b1110)
+        self._sp(CK_POS_WORLD_ABS, x=2.0, y=99.0, z=99.0,
+                 roll=99.0, pitch=99.0, yaw=99.0, mask=0b111110)
 
     def scn_mask_multi(self, t):
-        self._sp(CK_POS_WORLD_ABS, x=2.0, yaw=0.5, mask=0b0110)
+        self._sp(CK_POS_WORLD_ABS, x=2.0, yaw=0.5, mask=0b011110)
 
     def scn_mask_all(self, t):
-        self._sp(CK_POS_WORLD_ABS, x=2.0, mask=0b1111)
+        self._sp(CK_POS_WORLD_ABS, x=2.0, mask=0b111111)
 
     def scn_planner_on(self, t):
         self._sp(CK_POS_WORLD_ABS, x=2.0)
@@ -716,7 +721,8 @@ class HitlTestNode(Node):
             "t": self.scn_t, "scenario": name, "armed": self.armed,
             "x": p[0], "y": p[1], "z": p[2], "roll": p[3], "pitch": p[4], "yaw": p[5],
             "u": v[0], "v": v[1], "w": v[2],
-            "fx": f[0], "fy": f[1], "fz": f[2], "mz": f[5],
+            "fx": f[0], "fy": f[1], "fz": f[2],
+            "mroll": f[3], "mpitch": f[4], "myaw": f[5],
         }
         self.scn_log.append(entry)
         self.log.append(entry)

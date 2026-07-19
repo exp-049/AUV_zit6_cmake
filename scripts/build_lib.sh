@@ -72,10 +72,20 @@ fi
 
 # 2. 编译 STM32 固件
 echo "[2/3] Building STM32 firmware..."
-mkdir -p build
+BUILD_DIR="build"
+# 如果历史构建目录使用了其他生成器，切换到独立 Ninja 目录，避免
+# CMake 因生成器不一致而中止，也不删除用户已有的构建结果。
+if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
+    CACHED_GENERATOR=$(sed -n 's/^CMAKE_GENERATOR:INTERNAL=//p' "$BUILD_DIR/CMakeCache.txt" | head -n 1)
+    if [ -n "$CACHED_GENERATOR" ] && [ "$CACHED_GENERATOR" != "Ninja" ]; then
+        BUILD_DIR="build_ninja"
+        echo ">>> Existing build uses '$CACHED_GENERATOR'; using $BUILD_DIR for Ninja."
+    fi
+fi
+mkdir -p "$BUILD_DIR"
 # 使用项目自带的 ARM 工具链文件重新生成配置
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=UserApp/Peripherals/HAL/gcc-arm-none-eabi.cmake
-cmake --build build
+cmake -S . -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=UserApp/Peripherals/HAL/gcc-arm-none-eabi.cmake
+cmake --build "$BUILD_DIR"
 
 # 3. 编译上位机接口
 echo "[3/3] Building ROS 2 host interfaces..."

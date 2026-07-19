@@ -1,4 +1,4 @@
-uint8 axis # 0:X, 1:Y, 2:Z, 3:Yaw
+uint8 axis # 0:X, 1:Y, 2:Z, 3:Roll, 4:Pitch, 5:Yaw
 bool is_pos_ring # true: 位置环(含规划器), false: 速度环
 float32 kp
 float32 ki

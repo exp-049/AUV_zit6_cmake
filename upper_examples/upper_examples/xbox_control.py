@@ -41,7 +41,7 @@ class GamepadVisualizer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumSize(420, 270)
-        self.axes = [0.0, 0.0, 0.0, 0.0]
+        self.axes = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self.btn_states = {'A': False, 'B': False, 'X': False, 'Y': False, 'LB': False, 'RB': False, 'back': False, 'start': False}
         self.hat_state = (0, 0)
         self.connected = False
@@ -149,8 +149,8 @@ class GamepadVisualizer(QWidget):
         painter.drawLine(rs_cx - 24, rs_cy, rs_cx + 24, rs_cy)
         painter.drawLine(rs_cx, rs_cy - 24, rs_cx, rs_cy + 24)
         
-        # 右摇杆默认物理位置 (Yaw=轴3X, Heave=轴4Y)
-        rs_x = self.axes[3] if self.connected else 0.0
+        # 右摇杆默认物理位置 (Yaw=轴5X, Heave=轴2Y)
+        rs_x = self.axes[5] if self.connected else 0.0
         rs_y = self.axes[2] if self.connected else 0.0
         
         cap_rx = rs_cx + int(rs_x * 16)
@@ -243,8 +243,8 @@ class XboxControlWidget(QWidget):
         self.joystick_connected = False
         self.control_active = False
         
-        # 内部底层映射的摇杆原始/目标物理轴值 [Surge, Sway, Heave, Yaw]
-        self.axes = [0.0, 0.0, 0.0, 0.0]
+        # 内部底层映射的摇杆原始/目标物理轴值 [Surge,Sway,Heave,Roll,Pitch,Yaw]
+        self.axes = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self.btn_states = {'A': False, 'B': False, 'X': False, 'Y': False, 'LB': False, 'RB': False, 'back': False, 'start': False}
         self.hat_state = (0, 0)
         self.last_a_state = False
@@ -412,16 +412,38 @@ class XboxControlWidget(QWidget):
         self.chk_heave_inv.setChecked(False)
         cfg_grid.addWidget(self.combo_heave, 3, 1)
         cfg_grid.addWidget(self.chk_heave_inv, 3, 2)
+
+        # 横滚 Roll
+        cfg_grid.addWidget(QLabel("横滚 (Roll，旁路):"), 4, 0)
+        self.combo_roll = QComboBox()
+        self.combo_roll.addItems(["未使用"] + [f"轴 {i}" for i in range(6)])
+        self.combo_roll.setCurrentIndex(0)
+        self.chk_roll_inv = QCheckBox()
+        self.combo_roll.setEnabled(False)
+        self.chk_roll_inv.setEnabled(False)
+        cfg_grid.addWidget(self.combo_roll, 4, 1)
+        cfg_grid.addWidget(self.chk_roll_inv, 4, 2)
+
+        # 俯仰 Pitch
+        cfg_grid.addWidget(QLabel("俯仰 (Pitch，旁路):"), 5, 0)
+        self.combo_pitch = QComboBox()
+        self.combo_pitch.addItems(["未使用"] + [f"轴 {i}" for i in range(6)])
+        self.combo_pitch.setCurrentIndex(0)
+        self.chk_pitch_inv = QCheckBox()
+        self.combo_pitch.setEnabled(False)
+        self.chk_pitch_inv.setEnabled(False)
+        cfg_grid.addWidget(self.combo_pitch, 5, 1)
+        cfg_grid.addWidget(self.chk_pitch_inv, 5, 2)
         
         # 转向 Yaw
-        cfg_grid.addWidget(QLabel("转向 (Yaw):"), 4, 0)
+        cfg_grid.addWidget(QLabel("转向 (Yaw):"), 6, 0)
         self.combo_yaw = QComboBox()
         self.combo_yaw.addItems([f"轴 {i}" for i in range(6)])
         self.combo_yaw.setCurrentIndex(3) # 默认 轴 3
         self.chk_yaw_inv = QCheckBox()
         self.chk_yaw_inv.setChecked(False)
-        cfg_grid.addWidget(self.combo_yaw, 4, 1)
-        cfg_grid.addWidget(self.chk_yaw_inv, 4, 2)
+        cfg_grid.addWidget(self.combo_yaw, 6, 1)
+        cfg_grid.addWidget(self.chk_yaw_inv, 6, 2)
         
         left_layout.addWidget(cfg_group)
         
@@ -508,7 +530,7 @@ class XboxControlWidget(QWidget):
             self.joystick = None
 
     def safe_get_axis(self, axis_index):
-        if self.joystick and axis_index < self.num_axes:
+        if self.joystick and 0 <= axis_index < self.num_axes:
             try:
                 return self.joystick.get_axis(axis_index)
             except Exception:
@@ -540,17 +562,23 @@ class XboxControlWidget(QWidget):
                 surge_axis = self.combo_surge.currentIndex()
                 sway_axis = self.combo_sway.currentIndex()
                 heave_axis = self.combo_heave.currentIndex()
+                roll_axis = self.combo_roll.currentIndex() - 1
+                pitch_axis = self.combo_pitch.currentIndex() - 1
                 yaw_axis = self.combo_yaw.currentIndex()
                 
                 s_inv = -1.0 if self.chk_surge_inv.isChecked() else 1.0
                 sw_inv = -1.0 if self.chk_sway_inv.isChecked() else 1.0
                 h_inv = -1.0 if self.chk_heave_inv.isChecked() else 1.0
+                r_inv = -1.0 if self.chk_roll_inv.isChecked() else 1.0
+                p_inv = -1.0 if self.chk_pitch_inv.isChecked() else 1.0
                 y_inv = -1.0 if self.chk_yaw_inv.isChecked() else 1.0
                 
                 self.axes[0] = self.safe_get_axis(surge_axis) * s_inv
                 self.axes[1] = self.safe_get_axis(sway_axis) * sw_inv
                 self.axes[2] = self.safe_get_axis(heave_axis) * h_inv
-                self.axes[3] = self.safe_get_axis(yaw_axis) * y_inv
+                self.axes[3] = 0.0  # Roll 兼容字段，固件控制路径旁路
+                self.axes[4] = 0.0  # Pitch 兼容字段，固件控制路径旁路
+                self.axes[5] = self.safe_get_axis(yaw_axis) * y_inv
                 
                 # 获取各个按键状态（经典 Xbox 布局索引）
                 self.btn_states['A'] = self.safe_get_button(0)
@@ -596,7 +624,7 @@ class XboxControlWidget(QWidget):
             self.btn_joy_toggle.setStyleSheet("background-color: #37474f; color: white;")
             
             # 手柄模型更新为离线状态
-            self.visualizer.update_state([0.0]*4, {'A': False, 'B': False, 'X': False, 'Y': False, 'LB': False, 'RB': False, 'back': False, 'start': False}, (0,0), False)
+            self.visualizer.update_state([0.0]*6, {'A': False, 'B': False, 'X': False, 'Y': False, 'LB': False, 'RB': False, 'back': False, 'start': False}, (0,0), False)
             return
             
         self.btn_joy_toggle.setEnabled(True)
@@ -618,7 +646,7 @@ class XboxControlWidget(QWidget):
             
         # 实时同步数据到右侧手柄绘图模型 (模型本身基于手柄的实际物理状态回显，
         # 我们用 combo box 选择的轴对应数值传给 visualizer 渲染以反映实际映射到的物理操作)
-        # 即：左摇杆表示Surge,Sway ；右摇杆表示Heave,Yaw
+        # 即：左摇杆表示 Surge/Sway；右摇杆回显 Heave/Yaw
         # 这里直接传入 axes 供回显，这会让摇杆模型在视觉上准确反应输出强度。
         self.visualizer.update_state(self.axes, self.btn_states, self.hat_state, True)
 
@@ -629,6 +657,8 @@ class XboxControlWidget(QWidget):
             msg.x = 0.0
             msg.y = 0.0
             msg.z = 0.0
+            msg.roll = 0.0
+            msg.pitch = 0.0
             msg.yaw = 0.0
             self.setpoint_pub.publish(msg)
         except Exception:
@@ -646,7 +676,9 @@ class XboxControlWidget(QWidget):
             msg.x = self.apply_deadzone(self.axes[0], s_dz)
             msg.y = self.apply_deadzone(self.axes[1], g_dz)
             msg.z = self.apply_deadzone(self.axes[2], g_dz)
-            msg.yaw = self.apply_deadzone(self.axes[3], g_dz)
+            msg.roll = 0.0  # 兼容字段；固件控制路径旁路
+            msg.pitch = 0.0  # 兼容字段；固件控制路径旁路
+            msg.yaw = self.apply_deadzone(self.axes[5], g_dz)
             self.setpoint_pub.publish(msg)
 
     def close(self):
@@ -743,6 +775,12 @@ def main(args=None):
                     if not active:
                         msg = ZitSetpoint()
                         msg.control_key = 16
+                        msg.x = 0.0
+                        msg.y = 0.0
+                        msg.z = 0.0
+                        msg.roll = 0.0
+                        msg.pitch = 0.0
+                        msg.yaw = 0.0
                         setpoint_pub.publish(msg)
                         
                 last_a_state = a_state
@@ -753,6 +791,8 @@ def main(args=None):
                 s_msg.x = -apply_deadzone(surge, parsed_args.deadzone)
                 s_msg.y = apply_deadzone(sway, parsed_args.deadzone)
                 s_msg.z = apply_deadzone(heave, parsed_args.deadzone)
+                s_msg.roll = 0.0
+                s_msg.pitch = 0.0
                 s_msg.yaw = apply_deadzone(yaw, parsed_args.deadzone)
                 setpoint_pub.publish(s_msg)
                 
@@ -760,6 +800,12 @@ def main(args=None):
         except KeyboardInterrupt:
             msg = ZitSetpoint()
             msg.control_key = 16
+            msg.x = 0.0
+            msg.y = 0.0
+            msg.z = 0.0
+            msg.roll = 0.0
+            msg.pitch = 0.0
+            msg.yaw = 0.0
             setpoint_pub.publish(msg)
         finally:
             pygame.quit()

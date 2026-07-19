@@ -17,9 +17,9 @@
  * @brief 高频状态发布模块
  *
  * 负责发布：
- * - /zit6/state/pos (30Hz) — 世界系位置 [x,y,z,yaw]
- * - /zit6/state/vel (50Hz) — 机体系速度 [vx,vy,vz,vyaw]
- * - /zit6/state/thr (30Hz) — 机体系推力 [Fx,Fy,Fz,Myaw]
+ * - /zit6/state/pos (30Hz) — 世界系位姿 [x,y,z,roll,pitch,yaw]
+ * - /zit6/state/vel (50Hz) — 机体系速度 [u,v,w,p,q,r]
+ * - /zit6/state/thr (30Hz) — 机体系推力/力矩 [Fx,Fy,Fz,Mroll,Mpitch,Myaw]
  * - /zit6/state/zithbt (1Hz) — 节点心跳
  * - /zit6/state/status (10Hz) — 核心状态汇总
  * - /zit6/state/USBL (事件驱动) — USBL 有效帧
@@ -62,10 +62,10 @@ private:
   zit6_interfaces__msg__ZitUsbl usbl_msg_;
   rcl_interfaces__msg__Log log_msg_;
 
-  // --- 原始数据缓冲区（协议为 4 元素 [X,Y,Z,Yaw]） ---
-  float pos_buf_[4] = {0};
-  float vel_buf_[4] = {0};
-  float thr_buf_[4] = {0};
+  // --- 原始数据缓冲区（协议为 6 元素 [X,Y,Z,Roll,Pitch,Yaw]） ---
+  float pos_buf_[6] = {0};
+  float vel_buf_[6] = {0};
+  float thr_buf_[6] = {0};
 
   // --- LOG 内部静态缓冲区 ---
   char log_msg_buf_[128] = {0};

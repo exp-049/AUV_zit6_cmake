@@ -19,7 +19,7 @@ auv::motion::ControlLevel ChassisManager::getControlLevel() const {
 std::array<float, 6> ChassisManager::update() { return controller_.update(); }
 
 void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level,
-                                    const float val[4], uint32_t mask,
+                                    const float val[6], uint32_t mask,
                                     bool is_body, bool is_inc) {
   auto lv = router_.route(controller_.getControlLevel(), new_level, val, mask,
                           is_body, is_inc);

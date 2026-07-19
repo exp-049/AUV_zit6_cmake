@@ -69,7 +69,7 @@ set(STUB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 
 # SafetyMonitor + 依赖的上下文对象
 set(SM_SOURCES
-    ${COMPONENT_DIR}/SafetyMonitor.cpp
+    ${COMPONENT_DIR}/Safety/SafetyMonitor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Common/MotionContext.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Common/SystemContext.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Config/SystemConfig.cpp
@@ -88,8 +88,11 @@ target_include_directories(test_safety_monitor PRIVATE
     ${EIGEN_DIR}             # Eigen
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Common   # MotionContext, SystemContext
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Config    # SystemConfig
-    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component # SafetyMonitor, RosLogger
-    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals # INS_Driver etc. (有桩时被覆盖)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Safety
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Chassis
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/inc # INS_Driver etc. (有桩时被覆盖)
 )
 
 target_link_libraries(test_safety_monitor
@@ -105,8 +108,8 @@ gtest_discover_tests(test_safety_monitor
 # ============================================================================
 
 set(COMPONENT_TEST_SOURCES
-    ${COMPONENT_DIR}/SetpointRouter.cpp
-    ${COMPONENT_DIR}/SoftWatchdog.cpp
+    ${COMPONENT_DIR}/Chassis/SetpointRouter.cpp
+    ${COMPONENT_DIR}/Safety/SoftWatchdog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Common/MotionContext.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Config/SystemConfig.cpp
 )
@@ -126,7 +129,10 @@ target_include_directories(test_component PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Common
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Config
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Safety
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Chassis
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/inc
 )
 
 target_link_libraries(test_component
@@ -143,7 +149,7 @@ gtest_discover_tests(test_component
 
 # CascadeController（核心控制链，需要算法源文件链接）
 set(CASCADE_SOURCES
-    ${COMPONENT_DIR}/CascadeController.cpp
+    ${COMPONENT_DIR}/Chassis/CascadeController.cpp
     ${ALGO_DIR}/PID_Controller.cpp
     ${ALGO_DIR}/KinematicProfile.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Common/MotionContext.cpp
@@ -164,7 +170,10 @@ target_include_directories(test_cascade PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Common
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Config
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Chassis
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Safety
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/inc
 )
 
 target_link_libraries(test_cascade
@@ -194,6 +203,9 @@ target_include_directories(test_config_service PRIVATE
     ${EIGEN_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Common
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Config
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Safety
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Chassis
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/inc
 )
 
 target_link_libraries(test_config_service
@@ -210,8 +222,8 @@ gtest_discover_tests(test_config_service
 # ============================================================================
 
 set(CONFIG_FULL_SOURCES
-    ${COMPONENT_DIR}/ConfigService.cpp
-    ${COMPONENT_DIR}/SoftWatchdog.cpp
+    ${COMPONENT_DIR}/ConfigService/ConfigService.cpp
+    ${COMPONENT_DIR}/Safety/SoftWatchdog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Common/SystemContext.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Config/SystemConfig.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Thirdparty/cJSON/cJSON.c
@@ -231,7 +243,10 @@ target_include_directories(test_config_full PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Common
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Config
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Safety
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Chassis
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Thirdparty/cJSON
 )
 

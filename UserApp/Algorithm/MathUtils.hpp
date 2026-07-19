@@ -242,6 +242,24 @@ inline void applyRotationToBody(const float world_in[6], float body_out[6],
   v_out.noalias() = eulerToRotationMatrixInverse(roll, pitch, yaw) * v_in;
 }
 
+/**
+ * @brief 将世界系 6DoF 力/力矩变换到机体系。
+ *
+ * Wrench 的线力和力矩都按同一个旋转矩阵变换；它不是欧拉角速度，
+ * 因此不能复用上面的 T(roll,pitch) 角速度逆变换。
+ */
+inline void applyWrenchToBody(const float world_in[6], float body_out[6],
+                              float roll, float pitch, float yaw) noexcept {
+  const auto full_rotation = eulerToRotationMatrix(roll, pitch, yaw);
+  const auto R = full_rotation.topLeftCorner<3, 3>();
+  Eigen::Map<const Eigen::Matrix<float, 3, 1>> force_world(world_in);
+  Eigen::Map<const Eigen::Matrix<float, 3, 1>> moment_world(world_in + 3);
+  Eigen::Map<Eigen::Matrix<float, 3, 1>> force_body(body_out);
+  Eigen::Map<Eigen::Matrix<float, 3, 1>> moment_body(body_out + 3);
+  force_body.noalias() = R.transpose() * force_world;
+  moment_body.noalias() = R.transpose() * moment_world;
+}
+
 } // namespace math
 } // namespace algorithm
 } // namespace auv

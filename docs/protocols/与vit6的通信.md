@@ -79,12 +79,12 @@ thrust_pkt_ptr_->Froll  = -fp;
 
 ### 3.3 当前实际使用情况
 
-- 上层 micro-ROS 主控指令仍然主要是 4-DOF：`X, Y, Z, Yaw`
+- 上层 micro-ROS 主控载荷统一为 6-DOF：`X, Y, Z, Roll, Pitch, Yaw`；其中 `Roll/Pitch` 为兼容/观测字段，即使下发也会被固件旁路，不进入控制目标
 - 但动力板链路已经支持 6 个 float：
   - 三轴力：`Fx, Fy, Fz`
   - 三轴力矩：`Fyaw, Fpitch, Froll`
 
-所以旧说明里“`fpitch` / `froll` 一直都是 0，不需要”不再适合作为当前协议描述。
+因此需要区分“载荷格式”和“控制语义”：协议与状态快照保留完整 6 个分量，但外部 setpoint 的 Roll/Pitch 不参与控制；现有推力矩阵和执行器映射不变。
 
 ---
 

@@ -18,7 +18,7 @@ uint8 arm_mode             # 解锁模式 (0:默认, 3:遥控模式/绕过导航
 uint8 control_level        # 当前控制层级 (见 LEVEL_* 常量)
 uint8 ins_state            # 惯导内部状态 (0:待机, 1:粗对准, 2:精对准, 3:SINS/GPS/DVL, 4:SINS/DVL, 5:MRU)
 bool navigation_ready      # 导航准备就绪 (惯导、DVL等传感器健康并对准)
-float32[4] forces          # 4-DOF 目标推力/力矩 [Fx, Fy, Fz, Mz] (归一化或单位N/Nm)
+float32[6] forces          # 6-DOF 目标推力/力矩 [Fx, Fy, Fz, Mroll, Mpitch, Myaw] (归一化或单位N/Nm)
 float32 cycle_time_ms      # 控制主循环真实周期 (单位: ms)
 uint32 control_overrun_count # 控制周期超预算次数
 uint32 thrust_tx_fail_count  # 推力下发失败次数

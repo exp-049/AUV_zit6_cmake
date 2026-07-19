@@ -13,18 +13,18 @@ bool MicroRosPublisher::init(rcl_node_t *node) {
   // 初始化零初始化消息
   std_msgs__msg__Float32MultiArray__init(&pos_fb_msg_);
   pos_fb_msg_.data.data = pos_buf_;
-  pos_fb_msg_.data.size = 4;
-  pos_fb_msg_.data.capacity = 4;
+  pos_fb_msg_.data.size = 6;
+  pos_fb_msg_.data.capacity = 6;
 
   std_msgs__msg__Float32MultiArray__init(&vel_fb_msg_);
   vel_fb_msg_.data.data = vel_buf_;
-  vel_fb_msg_.data.size = 4;
-  vel_fb_msg_.data.capacity = 4;
+  vel_fb_msg_.data.size = 6;
+  vel_fb_msg_.data.capacity = 6;
 
   std_msgs__msg__Float32MultiArray__init(&thr_fb_msg_);
   thr_fb_msg_.data.data = thr_buf_;
-  thr_fb_msg_.data.size = 4;
-  thr_fb_msg_.data.capacity = 4;
+  thr_fb_msg_.data.size = 6;
+  thr_fb_msg_.data.capacity = 6;
 
   std_msgs__msg__UInt32__init(&node_heartbeat_msg_);
   zit6_interfaces__msg__ZitStatus__init(&status_msg_);
@@ -152,7 +152,9 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
     vel_buf_[0] = nav.vel_body[0];
     vel_buf_[1] = nav.vel_body[1];
     vel_buf_[2] = nav.vel_body[2];
-    vel_buf_[3] = nav.vel_body[5];
+    vel_buf_[3] = nav.vel_body[3];
+    vel_buf_[4] = nav.vel_body[4];
+    vel_buf_[5] = nav.vel_body[5];
     rcl_publish(&vel_pub_, &vel_fb_msg_, NULL);
   }
 
@@ -163,7 +165,9 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
     thr_buf_[0] = forces[0];
     thr_buf_[1] = forces[1];
     thr_buf_[2] = forces[2];
-    thr_buf_[3] = forces[5];
+    thr_buf_[3] = forces[3];
+    thr_buf_[4] = forces[4];
+    thr_buf_[5] = forces[5];
     rcl_publish(&thr_pub_, &thr_fb_msg_, NULL);
   }
 
@@ -174,7 +178,9 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
     pos_buf_[0] = nav.pos_world[0];
     pos_buf_[1] = nav.pos_world[1];
     pos_buf_[2] = nav.pos_world[2];
-    pos_buf_[3] = nav.pos_world[5];
+    pos_buf_[3] = nav.pos_world[3];
+    pos_buf_[4] = nav.pos_world[4];
+    pos_buf_[5] = nav.pos_world[5];
     rcl_publish(&pos_pub_, &pos_fb_msg_, NULL);
   }
 
@@ -198,10 +204,8 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
     status_msg_.control_level = (uint8_t)ctx_->chassis->getControlLevel();
     status_msg_.ins_state = nav.imu_state;
     status_msg_.navigation_ready = nav_valid;
-    status_msg_.forces[0] = forces[0];
-    status_msg_.forces[1] = forces[1];
-    status_msg_.forces[2] = forces[2];
-    status_msg_.forces[3] = forces[5];
+    for (int i = 0; i < 6; ++i)
+      status_msg_.forces[i] = forces[i];
     status_msg_.cycle_time_ms = cycle_time;
     status_msg_.battery_voltage = 0.0f;
     status_msg_.error_flags = 0;

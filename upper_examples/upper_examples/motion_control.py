@@ -158,13 +158,20 @@ class MotionControlWidget(QWidget):
         self.btn_mask_x = QPushButton()
         self.btn_mask_y = QPushButton()
         self.btn_mask_z = QPushButton()
+        self.btn_mask_roll = QPushButton()
+        self.btn_mask_pitch = QPushButton()
         self.btn_mask_yaw = QPushButton()
-        
-        for btn in [self.btn_mask_x, self.btn_mask_y, self.btn_mask_z, self.btn_mask_yaw]:
+
+        for btn in [self.btn_mask_x, self.btn_mask_y, self.btn_mask_z,
+                    self.btn_mask_roll, self.btn_mask_pitch, self.btn_mask_yaw]:
             btn.setCheckable(True)
             btn.setChecked(True)
             btn.clicked.connect(self.update_mask_styles)
             mask_layout.addWidget(btn)
+
+        # Roll/Pitch 保留在消息和界面中用于协议兼容，但当前固件控制路径旁路。
+        self.btn_mask_roll.setEnabled(False)
+        self.btn_mask_pitch.setEnabled(False)
             
         left_layout.addWidget(mask_group)
         
@@ -190,11 +197,25 @@ class MotionControlWidget(QWidget):
         self.spin_z.setSingleStep(0.1)
         val_layout.addWidget(self.spin_z, 2, 1)
         
-        val_layout.addWidget(QLabel("偏航目标 (Yaw, rad):"), 3, 0)
+        val_layout.addWidget(QLabel("横滚目标 (Roll, rad，旁路):"), 3, 0)
+        self.spin_roll = QDoubleSpinBox()
+        self.spin_roll.setRange(-3.1416, 3.1416)
+        self.spin_roll.setSingleStep(0.05)
+        self.spin_roll.setEnabled(False)
+        val_layout.addWidget(self.spin_roll, 3, 1)
+
+        val_layout.addWidget(QLabel("俯仰目标 (Pitch, rad，旁路):"), 4, 0)
+        self.spin_pitch = QDoubleSpinBox()
+        self.spin_pitch.setRange(-3.1416, 3.1416)
+        self.spin_pitch.setSingleStep(0.05)
+        self.spin_pitch.setEnabled(False)
+        val_layout.addWidget(self.spin_pitch, 4, 1)
+
+        val_layout.addWidget(QLabel("偏航目标 (Yaw, rad):"), 5, 0)
         self.spin_yaw = QDoubleSpinBox()
         self.spin_yaw.setRange(-3.1416, 3.1416)
         self.spin_yaw.setSingleStep(0.05)
-        val_layout.addWidget(self.spin_yaw, 3, 1)
+        val_layout.addWidget(self.spin_yaw, 5, 1)
         
         left_layout.addWidget(val_group)
         
@@ -284,8 +305,8 @@ class MotionControlWidget(QWidget):
         forces_layout = QGridLayout(forces_group)
         forces_layout.setVerticalSpacing(8)
         self.lbl_forces = []
-        for i in range(4):
-            lbl_name = QLabel(f"通道 {i+1} Output:")
+        for i, name in enumerate(["Fx", "Fy", "Fz", "Mroll", "Mpitch", "Myaw"]):
+            lbl_name = QLabel(f"{name} Output:")
             lbl_val = QLabel("0.00 N")
             lbl_val.setStyleSheet("font-family: monospace; font-weight: bold; color: #00e5ff;")
             forces_layout.addWidget(lbl_name, i, 0)
@@ -343,8 +364,12 @@ class MotionControlWidget(QWidget):
             mask |= 2
         if not self.btn_mask_z.isChecked():
             mask |= 4
-        if not self.btn_mask_yaw.isChecked():
+        if not self.btn_mask_roll.isChecked():
             mask |= 8
+        if not self.btn_mask_pitch.isChecked():
+            mask |= 16
+        if not self.btn_mask_yaw.isChecked():
+            mask |= 32
         return mask
 
     def update_mask_styles(self):
@@ -352,6 +377,8 @@ class MotionControlWidget(QWidget):
             (self.btn_mask_x, "X轴控制中 🟢", "X轴未控制 🔴"),
             (self.btn_mask_y, "Y轴控制中 🟢", "Y轴未控制 🔴"),
             (self.btn_mask_z, "Z轴控制中 🟢", "Z轴未控制 🔴"),
+            (self.btn_mask_roll, "Roll旁路 ⚪", "Roll旁路 ⚪"),
+            (self.btn_mask_pitch, "Pitch旁路 ⚪", "Pitch旁路 ⚪"),
             (self.btn_mask_yaw, "Yaw控制中 🟢", "Yaw未控制 🔴")
         ]
         
@@ -400,6 +427,8 @@ class MotionControlWidget(QWidget):
             msg.x = float(self.spin_x.value())
             msg.y = float(self.spin_y.value())
             msg.z = float(self.spin_z.value())
+            msg.roll = 0.0  # 兼容字段；固件控制路径旁路
+            msg.pitch = 0.0  # 兼容字段；固件控制路径旁路
             msg.yaw = float(self.spin_yaw.value())
             self.seq += 1
             msg.seq = self.seq
@@ -417,6 +446,8 @@ class MotionControlWidget(QWidget):
             msg.x = 0.0
             msg.y = 0.0
             msg.z = 0.0
+            msg.roll = 0.0
+            msg.pitch = 0.0
             msg.yaw = 0.0
             self.pub.publish(msg)
         except Exception:
@@ -466,7 +497,7 @@ class MotionControlWidget(QWidget):
             self.lbl_nav_ready.setStyleSheet("font-weight: bold; color: #f44336;")
             
         # 6. 推进器输出
-        for i in range(min(4, len(msg.forces))):
+        for i in range(min(6, len(msg.forces))):
             val = msg.forces[i]
             self.lbl_forces[i].setText(f"{val:+.2f} N")
             
@@ -550,10 +581,12 @@ def main(args=None):
         time.sleep(0.5)
         msg = ZitSetpoint()
         msg.control_key = 0
-        msg.type_mask = 15
+        msg.type_mask = 63
         msg.x = 0.0
         msg.y = 0.0
         msg.z = 0.0
+        msg.roll = 0.0
+        msg.pitch = 0.0
         msg.yaw = 0.0
         msg.seq = 1
         pub.publish(msg)

@@ -65,7 +65,7 @@
 
 \subsection{项目简介}
 
-AUV ZIT6 是一款基于 STM32H7 系列微控制器的自主水下航行器（Autonomous Underwater Vehicle, AUV）固件系统。项目采用现代 C++17 模块化架构设计，实现了 6-DOF（六自由度）级联控制，支持位置环、速度环和直接推力控制三种工作模式。
+AUV ZIT6 是一款基于 STM32H7 系列微控制器的自主水下航行器（Autonomous Underwater Vehicle, AUV）固件系统。项目采用现代 C++17 模块化架构设计，实现了 6-DOF（六自由度）内部状态/级联控制框架，支持位置环、速度环和直接推力控制三种工作模式。上位机 setpoint 保留 6-DOF 载荷用于统一接口和姿态观测，但 Roll/Pitch 外部设定值始终旁路，现有推力矩阵不变。
 
 \subsection{硬件平台}
 
@@ -361,6 +361,8 @@ void MonitorTask::run() {
 uint8 control_key   # 控制模式 + 标志位
 uint8 type_mask     # 轴掩码
 float32 x y z       # 目标值（m/m/s/N）
+float32 roll        # 横滚（rad/rad/s）
+float32 pitch       # 俯仰（rad/rad/s）
 float32 yaw         # 偏航（rad/rad/s）
 uint32 seq          # 序列号（可选）
 \end{lstlisting}
@@ -389,9 +391,9 @@ Bit 5 (0x20) & 增量模式 \\
 \toprule
 \textbf{话题} & \textbf{内容} & \textbf{频率} \\
 \midrule
-/zit6/state/pos & NED 位置 $[x,y,z,yaw]$ & 30Hz \\
-/zit6/state/vel & FRD 速度 $[vx,vy,vz,vyaw]$ & 50Hz \\
-/zit6/state/thr & 归一化推力 $[Fx,Fy,Fz,Myaw]$ & 30Hz \\
+/zit6/state/pos & NED 位姿 $[x,y,z,roll,pitch,yaw]$ & 30Hz \\
+/zit6/state/vel & FRD 速度 $[u,v,w,p,q,r]$ & 50Hz \\
+/zit6/state/thr & 归一化力/力矩 $[Fx,Fy,Fz,Mroll,Mpitch,Myaw]$ & 30Hz \\
 /zit6/state/status & 系统状态（ARM、层级、INS） & 10Hz \\
 /zit6/state/zithbt & 节点心跳 & 1Hz \\
 /zit6/log & ROS2 日志 & 事件驱动 \\
@@ -403,7 +405,7 @@ Bit 5 (0x20) & 增量模式 \\
 \subsection{订阅指令}
 
 \begin{itemize}
-    \item \texttt{/zit6/cmd/setpoint} — 控制设定点（ZitSetpoint）
+    \item \texttt{/zit6/cmd/setpoint} — 6-DOF 控制设定点（ZitSetpoint）；Roll/Pitch 字段仅作兼容/观测载荷，始终旁路
     \item \texttt{/zit6/cmd/agxhbt} — 上位机心跳（UInt32，用于 ARM）
     \item \texttt{/zit6/cmd/ins} — 惯导指令（UInt8）
     \item \texttt{/zit6/cmd/servo} — 舵机角度（Float32）
@@ -503,6 +505,4 @@ R_{ZYX}(\phi,\theta,\psi) & 0_{3\times3} \\
 仿真模式切换通过 \texttt{config.json} 中的 \texttt{simulation} 字段控制。
 
 \end{document}
-
-
 

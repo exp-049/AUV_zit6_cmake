@@ -45,6 +45,23 @@ TEST(MathUtils, InverseForwardConsistency) {
     EXPECT_NEAR(back[i], world[i], 1e-5f);
 }
 
+TEST(MathUtils, WrenchUsesRotationForForceAndMoment) {
+  float world[6] = {1.0f, 2.0f, 3.0f, -0.4f, 0.5f, 0.6f};
+  float body[6], expected[6];
+  auto full_rotation = math::eulerToRotationMatrix(0.3f, -0.2f, 0.7f);
+  auto R = full_rotation.topLeftCorner<3, 3>();
+  Eigen::Map<const Eigen::Matrix<float, 3, 1>> force_world(world);
+  Eigen::Map<const Eigen::Matrix<float, 3, 1>> moment_world(world + 3);
+  Eigen::Map<Eigen::Matrix<float, 3, 1>> force_expected(expected);
+  Eigen::Map<Eigen::Matrix<float, 3, 1>> moment_expected(expected + 3);
+  force_expected = R.transpose() * force_world;
+  moment_expected = R.transpose() * moment_world;
+
+  math::applyWrenchToBody(world, body, 0.3f, -0.2f, 0.7f);
+  for (int i = 0; i < 6; ++i)
+    EXPECT_NEAR(body[i], expected[i], 1e-5f);
+}
+
 // ============================================================================
 // 旋转矩阵正交性: R * Rᵀ = I
 // ============================================================================

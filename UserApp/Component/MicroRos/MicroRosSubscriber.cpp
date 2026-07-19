@@ -100,6 +100,8 @@ void MicroRosSubscriber::cleanup(rcl_node_t *node) {
 void MicroRosSubscriber::onSetpoint(const void *msgin) {
   const auto *msg = (const zit6_interfaces__msg__ZitSetpoint *)msgin;
   auv::motion::motion_context.last_received_seq_.set(msg->seq);
+  // Roll/Pitch are compatibility/telemetry fields only. They are deliberately
+  // not part of the validity gate because the control router bypasses them.
   if (!std::isfinite(msg->x) || !std::isfinite(msg->y) ||
       !std::isfinite(msg->z) || !std::isfinite(msg->yaw))
     return;
@@ -128,7 +130,7 @@ void MicroRosSubscriber::onSetpoint(const void *msgin) {
   bool is_body = (msg->control_key & 0x10) != 0;
   bool is_inc = (msg->control_key & 0x20) != 0;
   uint32_t mask = msg->type_mask;
-  float val[4] = {msg->x, msg->y, msg->z, msg->yaw};
+  float val[6] = {msg->x, msg->y, msg->z, msg->roll, msg->pitch, msg->yaw};
 
   bool sim_mode = auv::config::sys_config.simulation.hitl_enabled ||
                   auv::config::sys_config.simulation.sitl_enabled;
@@ -142,7 +144,8 @@ void MicroRosSubscriber::onSetpoint(const void *msgin) {
   ctx_->chassis->updateSetpoint(new_level, val, mask, is_body, is_inc);
   taskEXIT_CRITICAL();
 
-  ROS_LOG_INFO("Setpoint rec: seq=%lu x=%.2f y=%.2f z=%.2f yaw=%.2f",
+  ROS_LOG_INFO("Setpoint rec: seq=%lu x=%.2f y=%.2f z=%.2f yaw=%.2f "
+               "(roll/pitch bypassed)",
                (unsigned long)msg->seq, msg->x, msg->y, msg->z, msg->yaw);
 }
 

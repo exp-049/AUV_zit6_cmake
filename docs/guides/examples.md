@@ -140,35 +140,35 @@ ros2 topic pub -r 10 /zit6/cmd/agxhbt std_msgs/msg/UInt32 '{data: 3}'
 
 ```text
 control_key: 模式 + 标志位
-type_mask: skip mask，bit=1 表示跳过该轴
-x y z yaw: 4-DOF 目标
+type_mask: skip mask，bit=1 表示跳过该轴；bit0..2/5 对应 X/Y/Z/Yaw，Roll/Pitch 始终旁路
+x y z roll pitch yaw: 6-DOF payload（Roll/Pitch 为兼容字段，不参与控制）
 seq: 序列号
 ```
 
 ##### 5.1 世界系位置控制：更新 X/Y/Z，保持当前 Yaw
 
 ```bash
-ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{control_key: 0, type_mask: 8, x: 1.0, y: 0.0, z: -1.0, yaw: 0.0, seq: 1}'
+ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{control_key: 0, type_mask: 32, x: 1.0, y: 0.0, z: -1.0, roll: 0.0, pitch: 0.0, yaw: 0.0, seq: 1}'
 ```
 
 说明：
 - `control_key = 0`：POSITION + WORLD + ABS
-- `type_mask = 8`：跳过 Yaw，仅更新 X/Y/Z
+- `type_mask = 32`：跳过 Yaw，只更新 X/Y/Z；Roll/Pitch 始终旁路
 
 ##### 5.2 机体系速度控制：只控制前进速度 X
 
 ```bash
-ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{control_key: 17, type_mask: 14, x: 0.2, y: 0.0, z: 0.0, yaw: 0.0, seq: 2}'
+ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{control_key: 17, type_mask: 62, x: 0.2, y: 0.0, z: 0.0, roll: 0.0, pitch: 0.0, yaw: 0.0, seq: 2}'
 ```
 
 说明：
 - `17 = 0x10 | 0x01`：BODY + VELOCITY
-- `type_mask = 14`：跳过 Y/Z/Yaw，只更新 X
+- `type_mask = 62`：跳过 Y/Z/Yaw，只更新 X；Roll/Pitch 即使不置 mask 也始终旁路
 
 ##### 5.3 机体系位置增量：向前增量移动 0.5 m
 
 ```bash
-ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{control_key: 48, type_mask: 14, x: 0.5, y: 0.0, z: 0.0, yaw: 0.0, seq: 3}'
+ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{control_key: 48, type_mask: 62, x: 0.5, y: 0.0, z: 0.0, roll: 0.0, pitch: 0.0, yaw: 0.0, seq: 3}'
 ```
 
 说明：
@@ -178,7 +178,7 @@ ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{contr
 ##### 5.4 直接推力控制：只控制 Fx
 
 ```bash
-ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{control_key: 18, type_mask: 14, x: 0.1, y: 0.0, z: 0.0, yaw: 0.0, seq: 4}'
+ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{control_key: 18, type_mask: 62, x: 0.1, y: 0.0, z: 0.0, roll: 0.0, pitch: 0.0, yaw: 0.0, seq: 4}'
 ```
 
 说明：
@@ -190,13 +190,13 @@ ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{contr
 #### 6. 状态观测
 
 ```bash
-# 世界系位置 [x, y, z, yaw]
+# 世界系位姿 [x, y, z, roll, pitch, yaw]
 ros2 topic echo /zit6/state/pos
 
-# 机体系速度 [vx, vy, vz, vyaw]
+# 机体系速度 [u, v, w, p, q, r]
 ros2 topic echo /zit6/state/vel
 
-# 4-DOF 输出 [fx, fy, fz, myaw]
+# 6-DOF 输出 [fx, fy, fz, mroll, mpitch, myaw]
 ros2 topic echo /zit6/state/thr
 
 # 汇总状态

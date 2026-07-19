@@ -4,6 +4,7 @@
 
 # ---- 编译输出 ----
 build/
+build_ninja/
 build_tests/
 bin/
 obj/

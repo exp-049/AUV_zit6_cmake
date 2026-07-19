@@ -21,7 +21,7 @@ public:
   auv::motion::ControlLevel getControlLevel() const;
   std::array<float, 6> update();
 
-  void updateSetpoint(auv::motion::ControlLevel new_level, const float val[4],
+  void updateSetpoint(auv::motion::ControlLevel new_level, const float val[6],
                       uint32_t mask, bool is_body, bool is_inc);
   void setControlLevel(auv::motion::ControlLevel new_level);
 
