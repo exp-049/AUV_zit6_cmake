@@ -13,6 +13,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ZitStatus.msg"
   "msg/ZitPid.msg"
   "msg/ZitPidStatus.msg"
+  "msg/ZitUsbl.msg"
   "srv/UpdateParams.srv"
   "srv/GetParams.srv"
 )

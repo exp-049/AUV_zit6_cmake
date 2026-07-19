@@ -10,6 +10,7 @@
 #include <std_msgs/msg/float32_multi_array.h>
 #include <std_msgs/msg/u_int32.h>
 #include <zit6_interfaces/msg/zit_status.h>
+#include <zit6_interfaces/msg/zit_usbl.h>
 
 /**
  * @class MicroRosPublisher
@@ -21,6 +22,7 @@
  * - /zit6/state/thr (30Hz) — 机体系推力 [Fx,Fy,Fz,Myaw]
  * - /zit6/state/zithbt (1Hz) — 节点心跳
  * - /zit6/state/status (10Hz) — 核心状态汇总
+ * - /zit6/state/USBL (事件驱动) — USBL 有效帧
  * - /zit6/log (事件驱动) — ROS2 日志
  */
 class MicroRosPublisher {
@@ -51,12 +53,13 @@ private:
 
   // --- 发布器句柄 ---
   rcl_publisher_t pos_pub_, vel_pub_, thr_pub_, zithbt_pub_, status_pub_,
-      log_pub_;
+      usbl_pub_, log_pub_;
 
   // --- 消息缓冲区（栈分配，生命周期与类绑定） ---
   std_msgs__msg__Float32MultiArray pos_fb_msg_, vel_fb_msg_, thr_fb_msg_;
   std_msgs__msg__UInt32 node_heartbeat_msg_;
   zit6_interfaces__msg__ZitStatus status_msg_;
+  zit6_interfaces__msg__ZitUsbl usbl_msg_;
   rcl_interfaces__msg__Log log_msg_;
 
   // --- 原始数据缓冲区（协议为 4 元素 [X,Y,Z,Yaw]） ---

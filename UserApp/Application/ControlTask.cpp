@@ -73,6 +73,12 @@ void ControlTask::init() {
         xQueueCreate(3, sizeof(auv::motion::NavState));
   }
 
+  /* USBL topic FIFO：保存尚未发送到 micro-ROS 的有效帧。 */
+  if (auv::motion::motion_context.usbl_topic_queue == nullptr) {
+    auv::motion::motion_context.usbl_topic_queue =
+        xQueueCreate(8, sizeof(auv::motion::UsblTopicSample));
+  }
+
   /* 深度传感器初始化（Init 内部注册回调 + 初始化，start 创建任务/启动 DMA） */
   ctx_->depth_sensor->Init();
   ctx_->depth_sensor->start();
@@ -127,7 +133,21 @@ void ControlTask::updateNavigation() {
     ctx_->ins_driver->update(state);
     // 轮询 DMA 环形缓冲并解包最新 USBL 帧。数据暂不参与融合，供后续
     // 数据源选择/融合模块通过 AppContext::usbl_driver 读取。
-    ctx_->usbl_driver->update(usbl_state_);
+    if (ctx_->usbl_driver->update(usbl_state_)) {
+      auv::motion::UsblTopicSample sample{};
+      sample.state = usbl_state_;
+      auv::peripheral::UsblPortDiagnostics diagnostics{};
+      ctx_->usbl_driver->getDiagnostics(diagnostics);
+      sample.frame_number = diagnostics.valid_frames;
+
+      auto queue = auv::motion::motion_context.usbl_topic_queue;
+      if (queue != nullptr && xQueueSend(queue, &sample, 0) != pdPASS) {
+        // 队列满时丢弃最旧帧，保证 topic 最终拿到最新数据。
+        auv::motion::UsblTopicSample discarded{};
+        (void)xQueueReceive(queue, &discarded, 0);
+        (void)xQueueSend(queue, &sample, 0);
+      }
+    }
 
 #ifdef USE_DEPTH_CALC_BOARD
     // 深度计算板是正式硬件链路：pos.z 必须始终来自 MS5837 后端。

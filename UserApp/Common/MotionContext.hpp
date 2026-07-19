@@ -5,6 +5,7 @@
 #include "LockedField.hpp"
 #include "MathUtils.hpp"
 #include "RosLogger.hpp"
+#include "USBL_Driver.hpp"
 #include "task.h"
 #include <array>
 #include <cmath>
@@ -59,6 +60,15 @@ struct TargetSetpoint {
 };
 
 /**
+ * @struct UsblTopicSample
+ * @brief USBL 数据到 micro-ROS topic 之间的 FreeRTOS FIFO 元素
+ */
+struct UsblTopicSample {
+  auv::peripheral::UsblState state{};
+  uint32_t frame_number = 0;
+};
+
+/**
  * @struct OffboardSetpoint
  * @brief 上位机原始指令结构体
  */
@@ -101,6 +111,9 @@ public:
   /** SITL 仿真导航数据队列（生产者：onSimNav，消费者：ControlTask）
    *  长度 3，xQueueSend 非阻塞入队，消费端 drain 到最新 */
   QueueHandle_t sitl_nav_queue = nullptr;
+
+  /** USBL topic FIFO，生产者为 ControlTask，消费者为 MicroRosTask。 */
+  QueueHandle_t usbl_topic_queue = nullptr;
 
   LockedField<HomeOffset> home_offset_{};
 

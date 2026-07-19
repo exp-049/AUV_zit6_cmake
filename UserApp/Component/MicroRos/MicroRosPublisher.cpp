@@ -3,6 +3,7 @@
 #include "MotionContext.hpp"
 #include "RosLogger.hpp"
 #include "SystemContext.hpp"
+#include "USBL_Driver.hpp"
 #include "task.h"
 #include <cstring>
 #include <rcl/error_handling.h>
@@ -27,6 +28,7 @@ bool MicroRosPublisher::init(rcl_node_t *node) {
 
   std_msgs__msg__UInt32__init(&node_heartbeat_msg_);
   zit6_interfaces__msg__ZitStatus__init(&status_msg_);
+  zit6_interfaces__msg__ZitUsbl__init(&usbl_msg_);
 
   rcl_interfaces__msg__Log__init(&log_msg_);
   log_msg_.msg.data = log_msg_buf_;
@@ -72,6 +74,11 @@ bool MicroRosPublisher::init(rcl_node_t *node) {
           "/zit6/state/status")))
     return false;
   if (!ok(rclc_publisher_init_default(
+          &usbl_pub_, node,
+          ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitUsbl),
+          "/zit6/state/USBL")))
+    return false;
+  if (!ok(rclc_publisher_init_default(
           &log_pub_, node,
           ROSIDL_GET_MSG_TYPE_SUPPORT(rcl_interfaces, msg, Log), "/zit6/log")))
     return false;
@@ -92,14 +99,53 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
     rcl_publish(&log_pub_, &log_msg_, NULL);
   }
 
-  // 2. 心跳（1Hz）
+  // 2. USBL 有效帧：按 ControlTask 入队顺序 FIFO 发布。
+  auv::motion::UsblTopicSample usbl_sample{};
+  while (auv::motion::motion_context.usbl_topic_queue != nullptr &&
+         xQueueReceive(auv::motion::motion_context.usbl_topic_queue,
+                       &usbl_sample, 0) == pdPASS) {
+    const auto &state = usbl_sample.state;
+    usbl_msg_.timestamp_ms = state.timestamp;
+    usbl_msg_.frame_number = usbl_sample.frame_number;
+    usbl_msg_.roll_deg = state.roll;
+    usbl_msg_.pitch_deg = state.pitch;
+    usbl_msg_.yaw_deg = state.yaw;
+    usbl_msg_.pressure_m = state.pressure;
+    std::memcpy(usbl_msg_.slant_range_m, state.slant_range,
+                sizeof(state.slant_range));
+    usbl_msg_.latitude_deg = state.latitude;
+    usbl_msg_.longitude_deg = state.longitude;
+    std::memcpy(usbl_msg_.time_diff, state.time_diff, sizeof(state.time_diff));
+    std::memcpy(usbl_msg_.passive_attitude, state.passive_attitude,
+                sizeof(state.passive_attitude));
+    std::memcpy(usbl_msg_.signal_strength, state.signal_strength,
+                sizeof(state.signal_strength));
+    std::memcpy(usbl_msg_.energy, state.energy, sizeof(state.energy));
+    usbl_msg_.signal = state.signal;
+    usbl_msg_.gain = state.gain;
+    usbl_msg_.beacon_north_m = state.beacon_north;
+    usbl_msg_.beacon_east_m = state.beacon_east;
+    usbl_msg_.beacon_depth_m = state.beacon_depth;
+    usbl_msg_.sensor_status = state.sensor_status;
+    usbl_msg_.year = state.year;
+    usbl_msg_.month = state.month;
+    usbl_msg_.day = state.day;
+    usbl_msg_.hour = state.hour;
+    usbl_msg_.minute = state.minute;
+    usbl_msg_.second = state.second;
+    usbl_msg_.navigation_status = state.nav_mode;
+    usbl_msg_.checksum = state.checksum;
+    (void)rcl_publish(&usbl_pub_, &usbl_msg_, NULL);
+  }
+
+  // 3. 心跳（1Hz）
   if (now_ms - last_hbt_pub_tick_ >= 1000) {
     last_hbt_pub_tick_ = now_ms;
     node_heartbeat_msg_.data = now_ms;
     rcl_publish(&zithbt_pub_, &node_heartbeat_msg_, NULL);
   }
 
-  // 3. 速度反馈（~50Hz）
+  // 4. 速度反馈（~50Hz）
   if (now_ms - last_vel_pub_tick_ >= 20) {
     last_vel_pub_tick_ = now_ms;
     auto nav = auv::motion::motion_context.nav_state_.get();
@@ -110,7 +156,7 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
     rcl_publish(&vel_pub_, &vel_fb_msg_, NULL);
   }
 
-  // 4. 推力反馈（~30Hz）
+  // 5. 推力反馈（~30Hz）
   if (now_ms - last_thr_pub_tick_ >= 33) {
     last_thr_pub_tick_ = now_ms;
     auto forces = auv::motion::motion_context.last_output_forces_.get();
@@ -121,7 +167,7 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
     rcl_publish(&thr_pub_, &thr_fb_msg_, NULL);
   }
 
-  // 5. 位置反馈（~30Hz）
+  // 6. 位置反馈（~30Hz）
   if (now_ms - last_pos_pub_tick_ >= 33) {
     last_pos_pub_tick_ = now_ms;
     auto nav = auv::motion::motion_context.nav_state_.get();
@@ -132,7 +178,7 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
     rcl_publish(&pos_pub_, &pos_fb_msg_, NULL);
   }
 
-  // 6. 状态汇总（10Hz）
+  // 7. 状态汇总（10Hz）
   if (now_ms - last_status_pub_tick_ >= 100) {
     last_status_pub_tick_ = now_ms;
     auto forces = auv::motion::motion_context.last_output_forces_.get();
@@ -173,6 +219,7 @@ void MicroRosPublisher::cleanup(rcl_node_t *node) {
   rcl_publisher_fini(&thr_pub_, node);
   rcl_publisher_fini(&zithbt_pub_, node);
   rcl_publisher_fini(&status_pub_, node);
+  rcl_publisher_fini(&usbl_pub_, node);
   rcl_publisher_fini(&log_pub_, node);
 
   // 重置节流定时器
