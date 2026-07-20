@@ -30,18 +30,16 @@ MotionController_Driver::~MotionController_Driver() = default;
 bool MotionController_Driver::publishThrust(float fx, float fy, float fz,
                                             float fyaw, float fp, float fr) {
   taskENTER_CRITICAL();
-  // VIT6 receiver consumes the six fields in this exact order.  The caller
-  // already supplies body-frame values as Fx, Fy, Fz, Roll, Pitch, Yaw.
   // Rebuild the fixed header/tail on every frame.  The external packet buffer
   // is placed in a NOLOAD DMA section, so constructor-time initialization is
   // not sufficient to guarantee that these bytes remain intact.
   initPacket(thrust_pkt_ptr_, 0x01);
-  thrust_pkt_ptr_->Fx = fx;
-  thrust_pkt_ptr_->Fy = fy;
+  thrust_pkt_ptr_->Fx = -fy;
+  thrust_pkt_ptr_->Fy = fx;
   thrust_pkt_ptr_->Fz = fz;
   thrust_pkt_ptr_->Fyaw = fyaw;
-  thrust_pkt_ptr_->Fpitch = fp;
-  thrust_pkt_ptr_->Froll = fr;
+  thrust_pkt_ptr_->Fpitch = fr;
+  thrust_pkt_ptr_->Froll = -fp;
   taskEXIT_CRITICAL();
 
   return sendThrustPacketDMA();
