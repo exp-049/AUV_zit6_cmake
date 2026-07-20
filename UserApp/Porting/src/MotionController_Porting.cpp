@@ -2,9 +2,11 @@
 #include "MotionController_Driver.hpp"
 #include "core_cm7.h"
 #include "stm32h7xx_hal.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 __attribute__((section(".dma_buffer"), used)) uint8_t
-    auv::porting::MotionController_Porting::tx_packet_buf_[26];
+    auv::porting::MotionController_Porting::tx_packet_buf_[39];
 
 namespace auv {
 namespace porting {
@@ -17,17 +19,26 @@ bool MotionController_Porting::transmitDMA(void *ctx, const uint8_t *data,
   auto *self = static_cast<MotionController_Porting *>(ctx);
   if (!self || !self->huart_)
     return false;
+
+  // A thrust frame is sent every 10 ms.  One-shot LED/servo/configuration
+  // frames must wait for that DMA transfer instead of being dropped when the
+  // UART is momentarily busy.
+  constexpr int kWaitRetries = 6;
+  for (int retry = 0; retry < kWaitRetries; ++retry) {
+    bool dma_busy = false;
+    if (self->huart_->hdmatx) {
+      auto *stream = (DMA_Stream_TypeDef *)self->huart_->hdmatx->Instance;
+      dma_busy = (stream->CR & DMA_SxCR_EN) != 0U;
+    }
+    if (self->huart_->gState == HAL_UART_STATE_READY && !dma_busy)
+      break;
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+
   if (self->huart_->gState != HAL_UART_STATE_READY)
     return false;
   if (self->huart_->hdmatx) {
     auto *stream = (DMA_Stream_TypeDef *)self->huart_->hdmatx->Instance;
-    int retries = 3;
-    while (retries-- > 0) {
-      if ((stream->CR & DMA_SxCR_EN) == 0U)
-        break;
-      for (volatile int i = 0; i < 100; ++i)
-        __asm__ volatile("nop");
-    }
     if ((stream->CR & DMA_SxCR_EN) != 0U)
       return false;
   }

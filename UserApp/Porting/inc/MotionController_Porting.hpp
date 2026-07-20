@@ -17,7 +17,7 @@ public:
 private:
   UART_HandleTypeDef *huart_;
   static __attribute__((section(".dma_buffer"),
-                        aligned(32))) uint8_t tx_packet_buf_[26];
+                        aligned(32))) uint8_t tx_packet_buf_[39];
 };
 
 } // namespace porting

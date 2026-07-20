@@ -28,6 +28,19 @@ struct __attribute__((packed)) CurvePacket {
   uint8_t tail[2]; // FB BF
 };
 
+// 0x10: 推力矩阵配置包
+struct __attribute__((packed)) MatrixPacket {
+  uint8_t head[2]; // FA AF
+  uint8_t id;      // 0x10
+  uint8_t mode;    // 0: Read, 1: Write
+  float A_1;
+  float A_2;
+  float B;
+  float C;
+  float _2b;
+  uint8_t tail[2]; // FB BF
+};
+
 // 0x02: 舵机控制包
 struct __attribute__((packed)) ServoPacket {
   uint8_t head[2]; // FA AF
@@ -41,6 +54,14 @@ struct __attribute__((packed)) LightPacket {
   uint8_t head[2]; // FA AF
   uint8_t id;      // 0x03
   uint8_t state;   // R/Y/B state
+  uint8_t tail[2]; // FB BF
+};
+
+// 0x04: handshake request. The VIT6 reply appends one status byte before the
+// common tail: FA AF 04 status FB BF.
+struct __attribute__((packed)) HandshakePacket {
+  uint8_t head[2]; // FA AF
+  uint8_t id;      // 0x04
   uint8_t tail[2]; // FB BF
 };
 
@@ -68,8 +89,16 @@ public:
                      float fr = 0);
   bool setThrustCurve(uint8_t mode, uint8_t index, const float pwm[4],
                       const float thrust[4]);
+  bool setThrustMatrix(uint8_t mode, float A_1, float A_2, float B, float C,
+                       float _2b);
   bool setServoAngle(float angle);
   bool setLightState(uint8_t state);
+  bool sendHandshake();
+
+  // Called by the MOTION_DEBUG UART RX callback. NORMAL does not start this
+  // receiver, so adding the parser does not change the normal task chain.
+  void onRxByte(uint8_t byte);
+  bool takeHandshakeResponse(uint8_t &status);
 
 private:
   template <typename T> void initPacket(T *pkt, uint8_t id) {
@@ -86,6 +115,9 @@ private:
   MotorPortOps ops_;         ///< 硬件操作接口
   ThrustPacket *thrust_pkt_ptr_;
   ThrustPacket internal_pkt_;
+  uint8_t handshake_rx_state_;
+  uint8_t handshake_rx_status_;
+  volatile bool handshake_response_pending_;
 };
 
 } // namespace peripheral

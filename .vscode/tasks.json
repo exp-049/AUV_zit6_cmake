@@ -32,6 +32,13 @@
             "problemMatcher": ["$gcc"]
         },
         {
+            "label": "Build Motion Debug",
+            "type": "shell",
+            "command": "cmake --build --preset MOTION_DEBUG",
+            "group": "build",
+            "problemMatcher": ["$gcc"]
+        },
+        {
             "label": "Flash Firmware (DAPLink)",
             "type": "shell",
             "command": "${env:HOME}/.local/bin/pyocd",
@@ -138,6 +145,76 @@
             "dependsOn": "Build INS Debug",
             "dependsOrder": "sequence",
             "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash Motion Debug (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "load", "--target", "stm32h743xx", "--uid", "6894719E6D7C",
+                "--frequency", "2m", "--connect", "attach", "--erase", "sector",
+                "-O", "load.pre_reset=off", "-O", "load.post_reset=sysresetreq",
+                "${workspaceFolder}/build/MOTION_DEBUG/UserApp/AUV_zit6.elf"
+            ],
+            "dependsOn": "Build Motion Debug",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Start Motion RTTD",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "${workspaceFolder}/scripts/motion_rtt.sh",
+                "rttd"
+            ],
+            "dependsOn": "Flash Motion Debug (DAPLink)",
+            "dependsOrder": "sequence",
+            "presentation": {
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Connect Motion RTT (nc)",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "${workspaceFolder}/scripts/motion_rtt.sh",
+                "nc"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "View Motion RTT (pyOCD)",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "${workspaceFolder}/scripts/motion_rtt.sh",
+                "view"
+            ],
+            "dependsOn": "Flash Motion Debug (DAPLink)",
+            "dependsOrder": "sequence",
+            "presentation": {
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": false
+            },
             "problemMatcher": []
         },
         {

@@ -12,6 +12,10 @@ elseif(AUV_APP_MODE STREQUAL "INS_DEBUG")
     target_sources(${PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/rtt_ins_debug/InsDebugTask.cpp
     )
+elseif(AUV_APP_MODE STREQUAL "MOTION_DEBUG")
+    target_sources(${PROJECT_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/rtt_motion_debug/MotionDebugTask.cpp
+    )
 endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE

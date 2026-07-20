@@ -1,0 +1,77 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "default",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "toolchainFile": "${sourceDir}/UserApp/Peripherals/HAL/gcc-arm-none-eabi.cmake",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "Debug",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "AUV_APP_MODE": "NORMAL"
+            }
+        },
+        {
+            "name": "Release",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "AUV_APP_MODE": "NORMAL"
+            }
+        },
+        {
+            "name": "MS5837_CAL_DEBUG",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "AUV_APP_MODE": "MS5837_CAL_DEBUG"
+            }
+        },
+        {
+            "name": "USBL_DEBUG",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "AUV_APP_MODE": "USBL_DEBUG"
+            }
+        },
+        {
+            "name": "MOTION_DEBUG",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "AUV_APP_MODE": "MOTION_DEBUG"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "Debug",
+            "configurePreset": "Debug"
+        },
+        {
+            "name": "Release",
+            "configurePreset": "Release"
+        },
+        {
+            "name": "MS5837_CAL_DEBUG",
+            "configurePreset": "MS5837_CAL_DEBUG"
+        },
+        {
+            "name": "USBL_DEBUG",
+            "configurePreset": "USBL_DEBUG"
+        },
+        {
+            "name": "MOTION_DEBUG",
+            "configurePreset": "MOTION_DEBUG"
+        }
+    ]
+}
