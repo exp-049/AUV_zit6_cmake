@@ -34,12 +34,12 @@ bool MotionController_Driver::publishThrust(float fx, float fy, float fz,
   // is placed in a NOLOAD DMA section, so constructor-time initialization is
   // not sufficient to guarantee that these bytes remain intact.
   initPacket(thrust_pkt_ptr_, 0x01);
-  thrust_pkt_ptr_->Fx = -fy;
-  thrust_pkt_ptr_->Fy = fx;
+  thrust_pkt_ptr_->Fx = fx;
+  thrust_pkt_ptr_->Fy = -fy;
   thrust_pkt_ptr_->Fz = fz;
   thrust_pkt_ptr_->Fyaw = fyaw;
-  thrust_pkt_ptr_->Fpitch = fr;
-  thrust_pkt_ptr_->Froll = -fp;
+  thrust_pkt_ptr_->Fpitch = fp;
+  thrust_pkt_ptr_->Froll = fr;
   taskEXIT_CRITICAL();
 
   return sendThrustPacketDMA();
@@ -58,8 +58,8 @@ bool MotionController_Driver::setThrustCurve(uint8_t mode, uint8_t index,
 }
 
 bool MotionController_Driver::setThrustMatrix(uint8_t mode, float A_1,
-                                               float A_2, float B, float C,
-                                               float _2b) {
+                                              float A_2, float B, float C,
+                                              float _2b) {
   static MatrixPacket pkt;
   initPacket(&pkt, 0x10);
   pkt.mode = mode;
@@ -143,7 +143,8 @@ bool MotionController_Driver::sendThrustPacketDMA() {
   std::memcpy(&dma_pkt, thrust_pkt_ptr_, sizeof(ThrustPacket));
   taskEXIT_CRITICAL();
 
-  return transmitDMA(reinterpret_cast<uint8_t *>(&dma_pkt), sizeof(ThrustPacket));
+  return transmitDMA(reinterpret_cast<uint8_t *>(&dma_pkt),
+                     sizeof(ThrustPacket));
 }
 
 bool MotionController_Driver::transmitDMA(uint8_t *data, uint16_t size) {

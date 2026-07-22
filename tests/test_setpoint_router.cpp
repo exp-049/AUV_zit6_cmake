@@ -4,7 +4,7 @@
  *
  * 测试策略：
  * - 坐标变换正确性（body↔world, 6DOF payload）
- * - Roll/Pitch 兼容字段旁路
+ * - Roll/Pitch 六轴字段透传到控制设定值
  * - Mask 掩码跳过特定轴
  * - 增量/绝对模式
  * - 模式切换时的无扰动对齐
@@ -62,8 +62,8 @@ TEST_F(SetpointRouterTest, PositionWorldAbsolute) {
   EXPECT_FLOAT_EQ(sp.pos_world[0], 5.0f);    // X
   EXPECT_FLOAT_EQ(sp.pos_world[1], 3.0f);    // Y
   EXPECT_FLOAT_EQ(sp.pos_world[2], -2.0f);   // Z
-  EXPECT_FLOAT_EQ(sp.pos_world[3], 0.0f);    // Roll 旁路
-  EXPECT_FLOAT_EQ(sp.pos_world[4], 0.0f);    // Pitch 旁路
+  EXPECT_FLOAT_EQ(sp.pos_world[3], 0.2f);    // Roll
+  EXPECT_FLOAT_EQ(sp.pos_world[4], -0.3f);   // Pitch
   EXPECT_FLOAT_EQ(sp.pos_world[5], 1.57f);   // Yaw
 }
 
@@ -128,8 +128,8 @@ TEST_F(SetpointRouterTest, MaskSkipsAxes) {
   auto sp = auv::motion::motion_context.current_setpoint_.get();
   EXPECT_FLOAT_EQ(sp.pos_world[0], 5.0f);    // X 被 mask 跳过 → 保持 5.0
   EXPECT_FLOAT_EQ(sp.pos_world[1], 6.0f);    // Y 更新
-  EXPECT_FLOAT_EQ(sp.pos_world[3], 0.0f);    // Roll 始终旁路
-  EXPECT_FLOAT_EQ(sp.pos_world[4], 0.0f);    // Pitch 始终旁路
+  EXPECT_FLOAT_EQ(sp.pos_world[3], 0.8f);    // Roll 更新
+  EXPECT_FLOAT_EQ(sp.pos_world[4], -0.9f);   // Pitch 更新
   EXPECT_FLOAT_EQ(sp.pos_world[5], 0.5f);    // Yaw 更新
 }
 
@@ -147,8 +147,8 @@ TEST_F(SetpointRouterTest, MaskSkipsAllAttitudeAxes) {
   EXPECT_FLOAT_EQ(sp.pos_world[0], 9.0f);
   EXPECT_FLOAT_EQ(sp.pos_world[1], 8.0f);
   EXPECT_FLOAT_EQ(sp.pos_world[2], 7.0f);
-  EXPECT_FLOAT_EQ(sp.pos_world[3], 0.0f);
-  EXPECT_FLOAT_EQ(sp.pos_world[4], 0.0f);
+  EXPECT_FLOAT_EQ(sp.pos_world[3], 0.1f);
+  EXPECT_FLOAT_EQ(sp.pos_world[4], 0.2f);
   EXPECT_FLOAT_EQ(sp.pos_world[5], 0.3f);
 }
 
@@ -165,8 +165,8 @@ TEST_F(SetpointRouterTest, VelocityBodyFrame) {
   auto sp = auv::motion::motion_context.current_setpoint_.get();
   EXPECT_FLOAT_EQ(sp.vel_body[0], 0.5f);     // u
   EXPECT_FLOAT_EQ(sp.vel_body[5], 0.1f);     // r
-  EXPECT_FLOAT_EQ(sp.vel_body[3], 0.0f);     // p 旁路
-  EXPECT_FLOAT_EQ(sp.vel_body[4], 0.0f);     // q 旁路
+  EXPECT_FLOAT_EQ(sp.vel_body[3], 0.2f);     // p
+  EXPECT_FLOAT_EQ(sp.vel_body[4], -0.3f);    // q
 }
 
 // ============================================================================
@@ -219,8 +219,8 @@ TEST_F(SetpointRouterTest, ActuatorDirectThrust) {
 
   auto sp = auv::motion::motion_context.current_setpoint_.get();
   EXPECT_FLOAT_EQ(sp.thrust_body[0], 0.3f);
-  EXPECT_FLOAT_EQ(sp.thrust_body[3], 0.0f);  // Mroll 旁路
-  EXPECT_FLOAT_EQ(sp.thrust_body[4], 0.0f);  // Mpitch 旁路
+  EXPECT_FLOAT_EQ(sp.thrust_body[3], 0.2f);  // Mroll
+  EXPECT_FLOAT_EQ(sp.thrust_body[4], -0.1f); // Mpitch
   EXPECT_FLOAT_EQ(sp.thrust_body[5], 0.4f);
 }
 
@@ -235,10 +235,10 @@ TEST_F(SetpointRouterTest, ActuatorWorldWrenchTransformsForceAndMoment) {
   EXPECT_NEAR(sp.thrust_body[0], 0.0f, 1e-5f);
   EXPECT_NEAR(sp.thrust_body[1], -1.0f, 1e-5f);
   EXPECT_NEAR(sp.thrust_body[3], 0.0f, 1e-5f);
-  EXPECT_NEAR(sp.thrust_body[4], 0.0f, 1e-5f);
+  EXPECT_NEAR(sp.thrust_body[4], -1.0f, 1e-5f);
 }
 
-TEST_F(SetpointRouterTest, RollPitchSetpointsAreAlwaysBypassed) {
+TEST_F(SetpointRouterTest, RollPitchSetpointsAreForwardedToRouter) {
   float pos[6] = {1.0f, 2.0f, 3.0f, 1.1f, -1.2f, 0.3f};
   router_.route(motion::ControlLevel::NONE, motion::ControlLevel::POSITION,
                 pos, 0, false, false);
@@ -252,12 +252,12 @@ TEST_F(SetpointRouterTest, RollPitchSetpointsAreAlwaysBypassed) {
                 motion::ControlLevel::ACTUATOR, wrench, 0, true, false);
 
   auto sp = auv::motion::motion_context.current_setpoint_.get();
-  EXPECT_FLOAT_EQ(sp.pos_world[3], 0.0f);
-  EXPECT_FLOAT_EQ(sp.pos_world[4], 0.0f);
-  EXPECT_FLOAT_EQ(sp.vel_body[3], 0.0f);
-  EXPECT_FLOAT_EQ(sp.vel_body[4], 0.0f);
-  EXPECT_FLOAT_EQ(sp.thrust_body[3], 0.0f);
-  EXPECT_FLOAT_EQ(sp.thrust_body[4], 0.0f);
+  EXPECT_FLOAT_EQ(sp.pos_world[3], 1.1f);
+  EXPECT_FLOAT_EQ(sp.pos_world[4], -1.2f);
+  EXPECT_FLOAT_EQ(sp.vel_body[3], 1.1f);
+  EXPECT_FLOAT_EQ(sp.vel_body[4], -1.2f);
+  EXPECT_FLOAT_EQ(sp.thrust_body[3], 0.8f);
+  EXPECT_FLOAT_EQ(sp.thrust_body[4], -0.9f);
 }
 
 // ============================================================================

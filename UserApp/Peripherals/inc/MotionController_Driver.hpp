@@ -13,7 +13,7 @@ struct __attribute__((packed)) ThrustPacket {
   uint8_t head[2]; // FA AF
   uint8_t id;      // 0x01
   float Fx, Fy, Fz;
-  float Fyaw, Fpitch, Froll;
+  float Fyaw, Froll, Fpitch;
   uint8_t tail[2]; // FB BF
 };
 
@@ -70,7 +70,7 @@ struct __attribute__((packed)) HandshakePacket {
  * @brief 动力控制板硬件操作接口（函数指针表）
  */
 struct MotorPortOps {
-  void *ctx;        ///< Porting 实例上下文
+  void *ctx; ///< Porting 实例上下文
   bool (*transmitDMA)(void *ctx, const uint8_t *data, uint16_t size);
   void *(*getTxPacket)(void *ctx);
 };
@@ -81,7 +81,8 @@ struct MotorPortOps {
  */
 class MotionController_Driver {
 public:
-  explicit MotionController_Driver(MotorPortOps ops, ThrustPacket *ext_pkt = nullptr);
+  explicit MotionController_Driver(MotorPortOps ops,
+                                   ThrustPacket *ext_pkt = nullptr);
   ~MotionController_Driver();
 
   // 公共接口
@@ -112,7 +113,7 @@ private:
   bool sendThrustPacketDMA();
   bool transmitDMA(uint8_t *data, uint16_t size);
 
-  MotorPortOps ops_;         ///< 硬件操作接口
+  MotorPortOps ops_; ///< 硬件操作接口
   ThrustPacket *thrust_pkt_ptr_;
   ThrustPacket internal_pkt_;
   uint8_t handshake_rx_state_;

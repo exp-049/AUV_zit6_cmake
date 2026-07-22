@@ -100,10 +100,11 @@ void MicroRosSubscriber::cleanup(rcl_node_t *node) {
 void MicroRosSubscriber::onSetpoint(const void *msgin) {
   const auto *msg = (const zit6_interfaces__msg__ZitSetpoint *)msgin;
   auv::motion::motion_context.last_received_seq_.set(msg->seq);
-  // Roll/Pitch are compatibility/telemetry fields only. They are deliberately
-  // not part of the validity gate because the control router bypasses them.
+  // All six setpoint fields are forwarded through the control chain. Roll/Pitch
+  // are bypassed only at the MotionController_Driver/VIT6 packet boundary.
   if (!std::isfinite(msg->x) || !std::isfinite(msg->y) ||
-      !std::isfinite(msg->z) || !std::isfinite(msg->yaw))
+      !std::isfinite(msg->z) || !std::isfinite(msg->roll) ||
+      !std::isfinite(msg->pitch) || !std::isfinite(msg->yaw))
     return;
   if (!auv::system::system_context.arm_state_.get().is_armed)
     return;
@@ -144,9 +145,11 @@ void MicroRosSubscriber::onSetpoint(const void *msgin) {
   ctx_->chassis->updateSetpoint(new_level, val, mask, is_body, is_inc);
   taskEXIT_CRITICAL();
 
-  ROS_LOG_INFO("Setpoint rec: seq=%lu x=%.2f y=%.2f z=%.2f yaw=%.2f "
-               "(roll/pitch bypassed)",
-               (unsigned long)msg->seq, msg->x, msg->y, msg->z, msg->yaw);
+  ROS_LOG_INFO("Setpoint rec: seq=%lu x=%.2f y=%.2f z=%.2f "
+               "roll=%.2f pitch=%.2f yaw=%.2f "
+               "(roll/pitch bypassed at driver)",
+               (unsigned long)msg->seq, msg->x, msg->y, msg->z, msg->roll,
+               msg->pitch, msg->yaw);
 }
 
 void MicroRosSubscriber::onArmHeartbeat(const void *msgin) {

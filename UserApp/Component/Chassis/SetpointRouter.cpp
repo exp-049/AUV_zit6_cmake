@@ -6,15 +6,6 @@
 namespace auv {
 namespace component {
 
-namespace {
-constexpr int kRollAxis = 3;
-constexpr int kPitchAxis = 4;
-
-inline bool isBypassedAttitudeAxis(int axis) {
-  return axis == kRollAxis || axis == kPitchAxis;
-}
-} // namespace
-
 auv::motion::ControlLevel
 SetpointRouter::route(auv::motion::ControlLevel current_level,
                       auv::motion::ControlLevel new_level, const float val[6],
@@ -35,21 +26,6 @@ SetpointRouter::route(auv::motion::ControlLevel current_level,
     }
   }
 
-  // Roll/Pitch are carried in the 6DoF message for compatibility and
-  // telemetry, but this vehicle keeps the existing thrust/control allocation.
-  // Always keep these two offboard targets neutral so incoming values cannot
-  // enter the controller, including immediately after a mode transition.
-  if (new_level == auv::motion::ControlLevel::POSITION) {
-    sp.pos_world[kRollAxis] = 0.0f;
-    sp.pos_world[kPitchAxis] = 0.0f;
-  } else if (new_level == auv::motion::ControlLevel::VELOCITY) {
-    sp.vel_body[kRollAxis] = 0.0f;
-    sp.vel_body[kPitchAxis] = 0.0f;
-  } else if (new_level == auv::motion::ControlLevel::ACTUATOR) {
-    sp.thrust_body[kRollAxis] = 0.0f;
-    sp.thrust_body[kPitchAxis] = 0.0f;
-  }
-
   // 2. 执行坐标变换与目标值计算。
   // val[6] 顺序固定为 [X, Y, Z, Roll, Pitch, Yaw]。
   float converted_val[6] = {0};
@@ -59,7 +35,7 @@ SetpointRouter::route(auv::motion::ControlLevel current_level,
       // 机体系位置指令 → 世界系：填充 val6, 变换, 可选加 nav 位姿
       float val6[6];
       Eigen::Map<auv::algorithm::math::Vector6f>(val6) << val[0], val[1],
-          val[2], 0.0f, 0.0f, val[5];
+          val[2], val[3], val[4], val[5];
       float world6[6];
       {
         auto _n = auv::motion::motion_context.nav_state_.get();
@@ -78,13 +54,10 @@ SetpointRouter::route(auv::motion::ControlLevel current_level,
     } else {
       // 世界系位置指令：直接填充 6DoF 目标。
       Eigen::Map<auv::algorithm::math::Vector6f>(converted_val) << val[0],
-          val[1], val[2], 0.0f, 0.0f, val[5];
+          val[1], val[2], val[3], val[4], val[5];
     }
     // 写入 6DOF setpoint，用 mask 控制哪些轴被覆盖
     for (int i = 0; i < 6; i++) {
-      if (isBypassedAttitudeAxis(i)) {
-        continue;
-      }
       if (!(mask & (1 << i))) { // mask 位: [X=0,Y=1,Z=2,Roll=3,Pitch=4,Yaw=5]
         sp.pos_world[i] = converted_val[i];
       }
@@ -97,12 +70,12 @@ SetpointRouter::route(auv::motion::ControlLevel current_level,
     if (is_body) {
       // 机体系速度指令：直接使用 [u,v,w,p,q,r]
       Eigen::Map<auv::algorithm::math::Vector6f>(converted_val) << val[0],
-          val[1], val[2], 0.0f, 0.0f, val[5];
+          val[1], val[2], val[3], val[4], val[5];
     } else {
       // 世界系速度指令：变换到机体系
       float world6[6];
       Eigen::Map<auv::algorithm::math::Vector6f>(world6) << val[0], val[1],
-          val[2], 0.0f, 0.0f, val[5];
+          val[2], val[3], val[4], val[5];
       float body6[6];
       {
         auto _n = auv::motion::motion_context.nav_state_.get();
@@ -112,9 +85,6 @@ SetpointRouter::route(auv::motion::ControlLevel current_level,
       std::memcpy(converted_val, body6, 6 * sizeof(float));
     }
     for (int i = 0; i < 6; i++) {
-      if (isBypassedAttitudeAxis(i)) {
-        continue;
-      }
       if (!(mask & (1 << i))) {
         sp.vel_body[i] = converted_val[i];
       }
@@ -122,11 +92,11 @@ SetpointRouter::route(auv::motion::ControlLevel current_level,
   } else if (new_level == auv::motion::ControlLevel::ACTUATOR) {
     if (is_body) {
       Eigen::Map<auv::algorithm::math::Vector6f>(converted_val) << val[0],
-          val[1], val[2], 0.0f, 0.0f, val[5];
+          val[1], val[2], val[3], val[4], val[5];
     } else {
       float world6[6];
       Eigen::Map<auv::algorithm::math::Vector6f>(world6) << val[0], val[1],
-          val[2], 0.0f, 0.0f, val[5];
+          val[2], val[3], val[4], val[5];
       float body6[6];
       {
         auto _n = auv::motion::motion_context.nav_state_.get();
@@ -136,9 +106,6 @@ SetpointRouter::route(auv::motion::ControlLevel current_level,
       std::memcpy(converted_val, body6, 6 * sizeof(float));
     }
     for (int i = 0; i < 6; i++) {
-      if (isBypassedAttitudeAxis(i)) {
-        continue;
-      }
       if (!(mask & (1 << i))) {
         sp.thrust_body[i] = converted_val[i];
       }
