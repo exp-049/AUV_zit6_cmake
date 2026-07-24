@@ -130,12 +130,30 @@ TEST_F(SafetyMonitorTest, DisarmsOnHeartbeatTimeout) {
 
   EXPECT_TRUE(auv::system::system_context.arm_state_.get().is_armed);
 
-  // 停止心跳 600ms → 超过 500ms 超时阈值
-  sm.check(1800);  // 距上次心跳 1800-750=1050ms > 500ms
+  // 停止心跳超过 1s → 触发超时上锁
+  sm.check(1800);  // 距上次心跳 1800-750=1050ms > 1000ms
 
   auto a = auv::system::system_context.arm_state_.get();
   EXPECT_FALSE(a.is_armed);
   EXPECT_EQ(a.heartbeat_count, 0u);
+}
+
+// ============================================================================
+// 4b. 2Hz 心跳（500ms 周期）不应被误判为超时
+// ============================================================================
+
+TEST_F(SafetyMonitorTest, KeepsArmedAtTwoHz) {
+  auto ctx = makeContext();
+  component::SafetyMonitor sm(&ctx);
+
+  for (int i = 1; i <= 15; i++)
+    injectHeartbeat(auv::system::system_context, i * 500, 3);
+  sm.check(8000);
+  EXPECT_TRUE(auv::system::system_context.arm_state_.get().is_armed);
+
+  injectHeartbeat(auv::system::system_context, 8500, 3);
+  sm.check(9000);  // 恰好 500ms，仍属于 2Hz 心跳
+  EXPECT_TRUE(auv::system::system_context.arm_state_.get().is_armed);
 }
 
 // ============================================================================

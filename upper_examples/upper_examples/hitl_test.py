@@ -266,7 +266,8 @@ class Viz3D:
 
 class HitlTestNode(Node):
     SCENARIO_LEN = 10.0      # 每个场景时长(秒), 给足收敛时间
-    ARM_TIME = 2.0           # 前 2 秒发心跳解锁
+    ARM_TIME = 6.0           # 2Hz 心跳下，给足 10 次心跳的解锁时间
+    HEARTBEAT_TICKS = 50     # _tick 周期 10ms，即 2Hz
 
     def __init__(self, mode="sitl", scenarios=None, duration=30.0):
         super().__init__("hitl_test_node")
@@ -546,7 +547,6 @@ class HitlTestNode(Node):
         """发送心跳解锁 (data=3 = 远程解锁模式, 跳过导航检查)"""
         m = UInt32(); m.data = 3
         self.pub_hb.publish(m)
-        self.pub_hb.publish(m)
 
     def _sp(self, ck, x=0.0, y=0.0, z=0.0, roll=0.0, pitch=0.0,
             yaw=0.0, mask=0):
@@ -603,9 +603,9 @@ class HitlTestNode(Node):
         })
 
     def _run_scenario(self, name, fn):
-        """执行场景 fn: 前 ~3 秒发心跳解锁 + 缓冲, 之后才发 setpoint"""
+        """执行场景 fn: 前 ~7 秒发心跳解锁 + 缓冲, 之后才发 setpoint"""
         self._hb_tick += 1
-        if self._hb_tick % 10 == 0:  # 10Hz 心跳
+        if self._hb_tick % self.HEARTBEAT_TICKS == 0:  # 2Hz 心跳
             self._arm()
         if self.scn_t >= self.ARM_TIME + 1.0:  # arm 后 1s 缓冲即发 setpoint
             fn(self.scn_t - self.ARM_TIME - 1.0)

@@ -11,6 +11,9 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import UInt32
 
+HEARTBEAT_DEFAULT_FREQ_HZ = 2.0
+HEARTBEAT_INTERVAL_S = 1.0 / HEARTBEAT_DEFAULT_FREQ_HZ
+
 # Qt imports
 try:
     from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QFrame, QHBoxLayout, QLabel, QComboBox, QPushButton
@@ -120,7 +123,7 @@ class FloatingHeartbeatPanel(QFrame):
                     padding: 5px 12px;
                 }
             """)
-            self.pub_timer = self.node.create_timer(0.1, self.send_heartbeat)
+            self.pub_timer = self.node.create_timer(HEARTBEAT_INTERVAL_S, self.send_heartbeat)
         else:
             self.btn_toggle.setText("开始下发")
             self.btn_toggle.setStyleSheet("""
@@ -218,7 +221,7 @@ def main(args=None):
     parser = argparse.ArgumentParser(description="ROS 2 心跳下发程序 (常规/推力解锁)")
     parser.add_argument("--cli", action="store_true", help="是否在命令行纯控制模式下运行")
     parser.add_argument("--mode", type=int, choices=[1, 3], default=1, help="心跳解锁模式 (1: 常规arm, 3: 推力arm)")
-    parser.add_argument("--freq", type=float, default=10.0, help="心跳发送频率 (Hz)")
+    parser.add_argument("--freq", type=float, default=HEARTBEAT_DEFAULT_FREQ_HZ, help="心跳发送频率 (Hz)")
     
     parsed_args, unknown = parser.parse_known_args(args=args)
 

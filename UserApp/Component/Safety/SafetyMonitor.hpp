@@ -33,7 +33,8 @@ private:
   auv::system::AppContext *ctx_;
 
   // ---------- 时间常量 ----------
-  static constexpr uint32_t kArmedHeartbeatTimeoutMs = 500;
+  // 上位机心跳按 2Hz（500ms 周期）发送，允许漏掉一拍，避免调度抖动误上锁。
+  static constexpr uint32_t kArmedHeartbeatTimeoutMs = 1000;
   static constexpr uint32_t kDisarmedHeartbeatTimeoutMs = 1000;
   static constexpr uint32_t kArmMinDurationMs = 1000;
   static constexpr uint32_t kArmMinHeartbeatCount = 10;

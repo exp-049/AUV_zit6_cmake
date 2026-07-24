@@ -40,6 +40,11 @@ class ConfigWidget(QWidget):
         self.update_client = self.node.create_client(UpdateParams, '/zit6/update_params')
         
         self.params_map = {}
+        self._pending_batches = None
+        self._batch_ok = 0
+        self._batch_fail = 0
+        self._batch_lock = threading.Lock()
+        self._closing = False
         # 从脚本位置推导项目根
         # __file__ = build/upper_examples/upper_examples/config_setter.py -> 需上3层到项目根
         self._project_root = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
@@ -69,6 +74,9 @@ class ConfigWidget(QWidget):
         
         self.init_ui()
         self.get_signal.connect(self.update_table_values)
+        # 服务 future 的完成回调运行在 rclpy spin 线程，所有弹窗和刷新动作
+        # 必须由 Qt 主线程执行。跨线程 emit 会自动排队到本 QWidget 所在线程。
+        self.update_signal.connect(self._on_update_finished)
         self.fetch_signal.connect(self.show_fetch_result)
         
         # 从本地 config.json 加载默认值到"新值"列
@@ -264,6 +272,8 @@ class ConfigWidget(QWidget):
         future.add_done_callback(lambda f: self._fetch_done(f, show_popup))
 
     def _fetch_done(self, future, show_popup=True):
+        if self._closing:
+            return
         try:
             res = future.result()
             if res.success:
@@ -300,6 +310,10 @@ class ConfigWidget(QWidget):
     MAX_BATCH = 16  # 与固件 MicroRosService 中 paths/values 数组容量一致
 
     def on_apply(self):
+        if self._pending_batches is not None:
+            QMessageBox.warning(self, "请稍候", "上一批参数更新尚未完成。")
+            return
+
         paths, values = [], []
         invalid_enums = []
         for i in range(self.table.rowCount()):
@@ -336,7 +350,8 @@ class ConfigWidget(QWidget):
 
     def _push_batch(self, paths, values):
         if not self.update_client.wait_for_service(timeout_sec=1.0):
-            self._batch_fail += 1
+            with self._batch_lock:
+                self._batch_fail += 1
             self._check_batch_done()
             return
         req = UpdateParams.Request()
@@ -346,33 +361,53 @@ class ConfigWidget(QWidget):
         future.add_done_callback(self._update_done)
 
     def _update_done(self, future):
+        if self._closing:
+            return
         try:
             res = future.result()
-            if res.success:
-                self._batch_ok += 1
-            else:
-                self._batch_fail += 1
+            with self._batch_lock:
+                if res.success:
+                    self._batch_ok += 1
+                else:
+                    self._batch_fail += 1
         except Exception as e:
-            self._batch_fail += 1
+            with self._batch_lock:
+                self._batch_fail += 1
         self._check_batch_done()
 
     def _check_batch_done(self):
-        if self._pending_batches is None:
+        # 这里只处理批次状态，不直接触碰任何 QWidget。该函数可能由
+        # rclpy 的 future 完成回调调用，调用线程不是 Qt GUI 线程。
+        with self._batch_lock:
+            if self._pending_batches is None:
+                return
+            done = self._batch_ok + self._batch_fail
+            if done < self._pending_batches:
+                return  # 还有批次在途中
+            total = self._pending_batches
+            ok = self._batch_ok
+            fail = self._batch_fail
+            self._pending_batches = None
+
+        if fail == 0:
+            self.update_signal.emit(
+                True, f"全部 {total} 批参数更新成功！")
+        else:
+            self.update_signal.emit(
+                False,
+                f"共 {total} 批，{ok} 批成功，{fail} 批失败。\n"
+                "请检查固件缓冲区或 Agent 连接。",
+            )
+
+    def _on_update_finished(self, success, message):
+        """Handle the update result in the Qt GUI thread."""
+        if self._closing:
             return
-        done = self._batch_ok + self._batch_fail
-        if done < self._pending_batches:
-            return  # 还有批次在途中
-        total = self._pending_batches
-        self._pending_batches = None
-        if self._batch_fail == 0:
-            QMessageBox.information(self, "成功",
-                f"全部 {total} 批参数更新成功！")
+        if success:
+            QMessageBox.information(self, "成功", message)
             self.fetch_params([], show_popup=False)
         else:
-            QMessageBox.critical(self, "失败",
-                f"共 {total} 批，{self._batch_ok} 批成功，"
-                f"{self._batch_fail} 批失败。\n"
-                "请检查固件缓冲区或 Agent 连接。")
+            QMessageBox.critical(self, "失败", message)
 
     def show_fetch_result(self, success, message):
         if success:
@@ -407,7 +442,14 @@ class ConfigWidget(QWidget):
             QMessageBox.critical(self, "错误", f"保存 JSON 失败:\n{e}")
 
     def close(self):
-        pass
+        self._closing = True
+        self._pending_batches = None
+        for client in (self.get_client, self.update_client):
+            try:
+                self.node.destroy_client(client)
+            except Exception:
+                pass
+        return super().close()
 
 
 class ConfigApp(QMainWindow):

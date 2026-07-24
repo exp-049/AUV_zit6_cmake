@@ -194,22 +194,23 @@ class MasterConsoleApp(QMainWindow):
 
 
 def main(args=None):
-    rclpy.init(args=args)
-    node = Node('master_console_gui_node')
-    
-    spinner = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
-    spinner.start()
-    
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+
+    rclpy.init(args=args)
+    node = Node('master_console_gui_node')
+
+    spinner = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+    spinner.start()
     
     window = MasterConsoleApp(node, spinner)
     window.show()
     
     exit_code = app.exec_()
     
-    node.destroy_node()
     rclpy.shutdown()
+    spinner.join(timeout=2.0)
+    node.destroy_node()
     
     sys.exit(exit_code)
 

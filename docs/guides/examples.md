@@ -116,19 +116,20 @@ ros2 service call /zit6/update_params zit6_interfaces/srv/UpdateParams '{json: "
 正常解锁（需要导航有效）：
 
 ```bash
-ros2 topic pub -r 10 /zit6/cmd/agxhbt std_msgs/msg/UInt32 '{data: 1}'
+ros2 topic pub -r 2 /zit6/cmd/agxhbt std_msgs/msg/UInt32 '{data: 1}'
 ```
 
 遥控模式解锁（绕过导航有效检查）：
 
 ```bash
-ros2 topic pub -r 10 /zit6/cmd/agxhbt std_msgs/msg/UInt32 '{data: 3}'
+ros2 topic pub -r 2 /zit6/cmd/agxhbt std_msgs/msg/UInt32 '{data: 3}'
 ```
 
 当前代码阈值：
 - 最少连续心跳：10 次
 - 最少持续时间：1000ms
-- 已解锁后掉心跳超时：500ms
+- 建议心跳频率：2Hz
+- 已解锁后掉心跳超时：1000ms
 
 停止发送该话题后，系统会在超时后自动上锁。
 
@@ -244,7 +245,7 @@ ros2 run upper_examples hitl_test
    - 检查 `type_mask` 是否把目标轴跳过了
 
 2. 解锁失败
-   - 检查 `/zit6/cmd/agxhbt` 是否稳定 10Hz
+   - 检查 `/zit6/cmd/agxhbt` 是否稳定 2Hz
    - 检查 `ins_state` 是否到 3 或 4
    - 必要时用 `data: 3` 进入遥控模式验证链路
 
