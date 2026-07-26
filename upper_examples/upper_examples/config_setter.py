@@ -49,18 +49,18 @@ class ConfigWidget(QWidget):
         # __file__ = build/upper_examples/upper_examples/config_setter.py -> 需上3层到项目根
         self._project_root = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
         self.config_path = os.path.join(self._project_root, 'UserApp', 'Config', 'config.json')
-        self._int_paths = {"soft_watchdog.timeout_ms"}
+        self._int_paths = {"system.soft_watchdog.timeout_ms"}
         self._bool_paths = {
-            "soft_watchdog.check_microros",
-            "soft_watchdog.check_ins",
-            "soft_watchdog.check_depth",
+            "system.soft_watchdog.check_microros",
+            "system.soft_watchdog.check_ins",
+            "system.soft_watchdog.check_depth",
             "chassis.planner_enabled",
             "simulation.hitl_enabled",
             "simulation.sitl_enabled",
         }
-        self._enum_paths = {"z_data_sourse"}
+        self._enum_paths = {"system.z_data_sourse"}
         self._enum_allowed = {
-            "z_data_sourse": {
+            "system.z_data_sourse": {
                 "use_ins_integrated_z",
                 "use_ms5837_z",
                 "use_ins_pressure_z",

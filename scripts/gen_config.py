@@ -99,6 +99,56 @@ AXIS_FIELDS = [
 ]
 
 
+def _as_bool(value, path):
+    """Normalize JSON booleans while accepting legacy string values."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        value_lower = value.strip().lower()
+        if value_lower == "true":
+            return True
+        if value_lower == "false":
+            return False
+    raise ValueError(f"{path} must be a boolean")
+
+
+def _as_uint32(value, path):
+    """Normalize an integral JSON number while accepting legacy 3000.0 text."""
+    if isinstance(value, bool):
+        raise ValueError(f"{path} must be an unsigned integer")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{path} must be an unsigned integer") from None
+    if not number.is_integer() or number < 0 or number > 0xFFFFFFFF:
+        raise ValueError(f"{path} must be an unsigned integer")
+    return int(number)
+
+
+def _normalize_known_types(config):
+    """Keep generator input types aligned with SystemConfig field types."""
+    system = config.setdefault("system", {})
+    depth_board = system.setdefault("depth_calc_board", {})
+    depth_board["enabled"] = _as_bool(
+        depth_board.get("enabled", False), "system.depth_calc_board.enabled")
+
+    watchdog = system.setdefault("soft_watchdog", {})
+    watchdog["timeout_ms"] = _as_uint32(
+        watchdog["timeout_ms"], "system.soft_watchdog.timeout_ms")
+    for key in ("check_microros", "check_ins", "check_depth"):
+        watchdog[key] = _as_bool(
+            watchdog[key], f"system.soft_watchdog.{key}")
+
+    chassis = config.setdefault("chassis", {})
+    chassis["planner_enabled"] = _as_bool(
+        chassis.get("planner_enabled", False), "chassis.planner_enabled")
+
+    simulation = config.setdefault("simulation", {})
+    for key in ("hitl_enabled", "sitl_enabled"):
+        simulation[key] = _as_bool(
+            simulation[key], f"simulation.{key}")
+
+
 def _format_literal(v):
     """将 Python 值格式化为 C++ 字面量"""
     if isinstance(v, bool):
@@ -124,6 +174,7 @@ def _gen_axis_init(axis_dict):
 def gen_system_config(json_path, out_dir):
     with open(json_path, 'r') as f:
         config = json.load(f)
+    _normalize_known_types(config)
 
     os.makedirs(out_dir, exist_ok=True)
     header_path = os.path.join(out_dir, 'SystemConfig.hpp')

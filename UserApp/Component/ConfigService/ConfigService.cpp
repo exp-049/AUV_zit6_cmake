@@ -97,7 +97,7 @@ resolveParamType(const auv::config::ParamMeta &p) {
   using auv::config::ParamType;
   if (!p.path)
     return p.type;
-  if (strcmp(p.path, "soft_watchdog.timeout_ms") == 0)
+  if (strcmp(p.path, "system.soft_watchdog.timeout_ms") == 0)
     return ParamType::UINT32;
   if (p.type == ParamType::UINT32) {
     if (startsWith(p.path, "chassis.") || startsWith(p.path, "simulation.") ||

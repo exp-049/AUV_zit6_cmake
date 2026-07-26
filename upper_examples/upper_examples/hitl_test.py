@@ -285,12 +285,20 @@ class HitlTestNode(Node):
         self.scn_idx = 0
         self.scn_t = 0.0
 
-        # 加载配置
-        cfg_path = os.path.join(os.path.dirname(__file__),"..","..","doc","config_recommend.json")
+        # 加载与固件一致的配置；文档推荐配置仅作为源码树中的后备。
+        project_root = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", ".."))
+        config_candidates = [
+            os.path.join(project_root, "UserApp", "Config", "config.json"),
+            os.path.join(project_root, "docs", "configuration",
+                         "config_recommend.json"),
+        ]
         self.config = {}
-        if os.path.exists(cfg_path):
-            with open(cfg_path) as f:
-                self.config = json.load(f)
+        for cfg_path in config_candidates:
+            if os.path.exists(cfg_path):
+                with open(cfg_path) as f:
+                    self.config = json.load(f)
+                break
         self.physics = PhysicsEngine(dt=0.01, config=self.config.get("simulation"))
 
         self.get_logger().info(f"🚀 HITL 测试启动: mode={mode}, scenarios={len(self.scenarios)}项, duration={duration}s")

@@ -29,17 +29,16 @@ void MicroRosTask::run() {
   }
 
   last_wake_time_ = xTaskGetTickCount();
+  last_agent_ping_ok_ms_ = HAL_GetTick();
 
   for (;;) {
-    // 喂软件看门狗
-    ctx_->watchdog->feed(auv::component::SoftWatchdog::Component::MICROROS);
-
     uint32_t now_ms = HAL_GetTick();
 
     switch (state_) {
     case State::WAITING_AGENT:
       // 每 100ms 探测一次 Agent
       if (transport_.pingAgent(200, 1)) {
+        last_agent_ping_ok_ms_ = HAL_GetTick();
         connectAgent();
       } else {
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -50,7 +49,9 @@ void MicroRosTask::run() {
       // 每 2s 检查 Agent 在线状态
       if (now_ms - last_ping_ms_ >= 2000) {
         last_ping_ms_ = now_ms;
-        if (!transport_.pingAgent(100, 1)) {
+        if (transport_.pingAgent(100, 1)) {
+          last_agent_ping_ok_ms_ = HAL_GetTick();
+        } else {
           disconnectAgent();
           break;
         }
@@ -62,6 +63,13 @@ void MicroRosTask::run() {
       // 定时发布状态
       publisher_.publish(now_ms);
       break;
+    }
+
+    // Agent 连续 5 秒未 ping 成功后，停止喂 micro-ROS 软件看门狗。
+    // MonitorTask 随后会停止刷新硬件 IWDG，最终触发 MCU 复位。
+    now_ms = HAL_GetTick();
+    if (now_ms - last_agent_ping_ok_ms_ <= kAgentPingWatchdogTimeoutMs) {
+      ctx_->watchdog->feed(auv::component::SoftWatchdog::Component::MICROROS);
     }
 
     vTaskDelayUntil(&last_wake_time_, pdMS_TO_TICKS(kLoopPeriodMs));
