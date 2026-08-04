@@ -9,8 +9,6 @@ static void ms5837_protocol_parser_reset(ms5837_protocol_parser_t *parser)
     parser->checksum = 0U;
 }
 
-
-
 static void ms5837_protocol_put_u16(uint8_t *data, uint16_t value)
 {
     data[0] = (uint8_t)value;
@@ -119,10 +117,10 @@ uint8_t ms5837_protocol_checksum(uint8_t type, uint8_t length,
 }
 
 uint8_t ms5837_protocol_encode_frame(uint8_t type,
-                                      const uint8_t *payload,
-                                      uint8_t payload_length,
-                                      uint8_t *output,
-                                      uint8_t output_size)
+                                     const uint8_t *payload,
+                                     uint8_t payload_length,
+                                     uint8_t *output,
+                                     uint8_t output_size)
 {
     uint8_t total_length;
 

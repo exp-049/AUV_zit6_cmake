@@ -4,8 +4,8 @@
 #include "SoftWatchdog.hpp"
 #include "SystemContext.hpp"
 #include "main.h" // HAL_GetTick, HAL_Delay
-#include <cmath>
 #include <cstdint>
+#include <cstring>
 
 namespace auv {
 namespace peripheral {
@@ -16,7 +16,7 @@ void INS_Driver::init() {
       break;
     HAL_Delay(10);
   }
-  frame_len_ = 0;
+  protocol_parser_.reset();
   rx_total_bytes_ = 0;
   valid_frames_ = 0;
   invalid_frames_ = 0;
@@ -30,33 +30,16 @@ void INS_Driver::sendCommand(uint8_t cmd_id, uint8_t value) {
 
 void INS_Driver::sendCommand(uint8_t cmd_id, const uint8_t *data,
                              uint8_t data_len) {
-  uint8_t cmd[14] = {0xFC, 0xCF, cmd_id};
-
-  // 拷贝负载数据（最多8字节）
-  uint8_t copy_len = (data_len > 8) ? 8 : data_len;
-  if (data != nullptr && copy_len > 0) {
-    memcpy(&cmd[3], data, copy_len);
+  uint8_t cmd[auv::protocol::ins::Parser::commandFrameSize()] = {};
+  if (ops_.transmit == nullptr ||
+      auv::protocol::ins::Parser::encodeCommand(
+          cmd_id, data, data_len, cmd, sizeof(cmd)) == 0U) {
+    return;
   }
-
-  // 填充剩余字节为 0
-  for (uint8_t i = 3 + copy_len; i < 11; ++i) {
-    cmd[i] = 0x00;
-  }
-
-  // 帧尾
-  cmd[12] = 0xFD;
-  cmd[13] = 0xDF;
-
-  // 计算 XOR 校验和 (从 byte 0 到 byte 10)
-  uint8_t v = 0;
-  for (uint8_t i = 0; i < 11; ++i) {
-    v ^= cmd[i];
-  }
-  cmd[11] = v;
 
   // 发送（尝试 3 次）
   for (int i = 0; i < 3; i++) {
-    ops_.transmit(ops_.ctx, cmd, 14);
+    ops_.transmit(ops_.ctx, cmd, sizeof(cmd));
     if (i < 2)
       HAL_Delay(10);
   }
@@ -75,23 +58,8 @@ void INS_Driver::restart() {
 }
 
 void INS_Driver::setInitialPosition(double lat, double lon) {
-  // 手册：纬度/经度 * 10^7, 强制转 int, 高位在前 (Big Endian)
-  int32_t lat_fixed = (int32_t)(lat * 1e7);
-  int32_t lon_fixed = (int32_t)(lon * 1e7);
-
   uint8_t data[8];
-  // 纬度 (Big Endian)
-  data[0] = (uint8_t)((lat_fixed >> 24) & 0xFF);
-  data[1] = (uint8_t)((lat_fixed >> 16) & 0xFF);
-  data[2] = (uint8_t)((lat_fixed >> 8) & 0xFF);
-  data[3] = (uint8_t)(lat_fixed & 0xFF);
-
-  // 经度 (Big Endian)
-  data[4] = (uint8_t)((lon_fixed >> 24) & 0xFF);
-  data[5] = (uint8_t)((lon_fixed >> 16) & 0xFF);
-  data[6] = (uint8_t)((lon_fixed >> 8) & 0xFF);
-  data[7] = (uint8_t)(lon_fixed & 0xFF);
-
+  auv::protocol::ins::Parser::encodeInitialPosition(lat, lon, data);
   sendCommand(0x20, data, 8);
 }
 
@@ -111,32 +79,29 @@ bool INS_Driver::isDataFresh() const {
 
 bool INS_Driver::update(auv::motion::NavState &state) {
   uint8_t temp_buf[256];
-  uint16_t len = ops_.read(ops_.ctx, temp_buf, 256);
+  uint16_t len = ops_.read(ops_.ctx, temp_buf, sizeof(temp_buf));
   rx_total_bytes_ += len;
   bool has_new_frame = false;
 
-  for (int i = 0; i < len; i++) {
-    if (parseByte(temp_buf[i])) {
-      if (validateFrame()) {
-        decodePacket(state);
+  for (uint16_t i = 0; i < len; i++) {
+    const int parse_result = protocol_parser_.pushByte(temp_buf[i]);
+    if (parse_result == 1) {
+      auv::protocol::ins::NavigationPacket packet;
+      if (protocol_parser_.decode(packet)) {
+        decodePacket(packet, state);
         last_update_ms_ = HAL_GetTick(); // 刷新时间戳
         ++valid_frames_;
         has_new_frame = true;
-      } else {
-        ++invalid_frames_;
       }
+    } else if (parse_result < 0) {
+      ++invalid_frames_;
     }
   }
   return has_new_frame;
 }
 
 uint16_t INS_Driver::copyLastFrame(uint8_t *dst, uint16_t max_len) const {
-  if (dst == nullptr || max_len == 0) {
-    return 0;
-  }
-  const uint16_t count = (max_len < kFrameSize) ? max_len : kFrameSize;
-  std::memcpy(dst, packet_buf_, count);
-  return count;
+  return protocol_parser_.copyLastFrame(dst, max_len);
 }
 
 void INS_Driver::getDiagnostics(InsPortDiagnostics &out) const {
@@ -157,180 +122,47 @@ void INS_Driver::getDiagnostics(InsPortDiagnostics &out) const {
   }
 }
 
-namespace ProtoOff {
-constexpr int kRoll = 2;
-constexpr int kPitch = 6;
-constexpr int kYaw = 10;
-constexpr int kRollRate = 14;
-constexpr int kPitchRate = 18;
-constexpr int kYawRate = 22;
-constexpr int kVx = 26;
-constexpr int kVy = 30;
-constexpr int kVz = 34;
-constexpr int kLat = 38;
-constexpr int kLon = 42;
-constexpr int kDepth = 46;
-constexpr int kNorthOffset = 99;
-constexpr int kEastOffset = 103;
-constexpr int kManometerDepth = 107;
-constexpr int kSensorFlags = 115;
-constexpr int kNavMode = 129;
-constexpr int kChecksum = 130;
-constexpr int kTail1 = 131;
-constexpr int kTail2 = 132;
-constexpr int kFrameSize = 133;
-} // namespace ProtoOff
-
-bool INS_Driver::parseByte(uint8_t b) {
-  // 状态 0：等待帧头 0xFA
-  if (frame_len_ == 0) {
-    if (b == 0xFA) {
-      packet_buf_[frame_len_++] = b;
-    }
-    // 非 0xFA 直接丢弃（不上涨 frame_len_）
-    return false;
-  }
-
-  // 状态 1：等待第二字节 0xAF
-  if (frame_len_ == 1) {
-    if (b == 0xAF) {
-      packet_buf_[frame_len_++] = b;
-      return false;
-    }
-    // 不是 0xAF：滑动窗口退回
-    // 如果当前 b 恰好是 0xFA，则以它为新的帧头起始
-    frame_len_ = 0;
-    if (b == 0xFA) {
-      packet_buf_[frame_len_++] = b;
-    }
-    return false;
-  }
-
-  // 状态 2+：收集数据负载
-  if (frame_len_ < kMaxFrameSize) {
-    packet_buf_[frame_len_++] = b;
-  } else {
-    // 缓冲区溢出，复位
-    frame_len_ = 0;
-    return false;
-  }
-
-  // UNAV-IP 标准帧长
-  return frame_len_ == ProtoOff::kFrameSize;
-}
-
-bool INS_Driver::validateFrame() {
-  using namespace ProtoOff;
-  if (frame_len_ != kFrameSize) {
-    frame_len_ = 0;
-    return false;
-  }
-
-  // 异或校验位在 kChecksum，校验范围 0 ～ kChecksum-1
-  uint8_t v = 0;
-  for (int i = 0; i < kChecksum; i++) {
-    v ^= packet_buf_[i];
-  }
-
-  if (v == packet_buf_[kChecksum] && packet_buf_[kTail1] == 0xFB &&
-      packet_buf_[kTail2] == 0xBF) {
-    return true;
-  }
-
-  // 校验失败：滑动窗口重同步
-  // 从第 2 字节开始搜索 0xFA，避免丢弃下一帧的同步头
-  uint16_t search_pos = 2; // 跳过已确认的 0xFA 0xAF
-  while (search_pos < frame_len_) {
-    if (packet_buf_[search_pos] == 0xFA) {
-      // 发现潜在的新帧头，将后续字节移到缓冲区起始
-      uint16_t remaining = frame_len_ - search_pos;
-      memmove(packet_buf_, packet_buf_ + search_pos, remaining);
-      frame_len_ = remaining;
-      return false;
-    }
-    search_pos++;
-  }
-
-  // 未找到新的 0xFA，完全复位
-  frame_len_ = 0;
-  return false;
-}
-
-// ============================================================================
-// 字节序安全读取工具（noexcept 消除异常处理桩，利于 STM32 编译器内联）
-// ============================================================================
-
-/// 从小端字节序读取 int32_t
-static inline int32_t readLE32(const uint8_t *buf) noexcept {
-  return (int32_t)buf[0] | ((int32_t)buf[1] << 8) | ((int32_t)buf[2] << 16) |
-         ((int32_t)buf[3] << 24);
-}
-
-/// 从小端字节序读取 float
-static inline float readLEFloat(const uint8_t *buf) noexcept {
-  int32_t bits = readLE32(buf);
-  float val;
-  memcpy(&val, &bits, sizeof(val));
-  return val;
-}
-
-/// 从大端字节序读取 int32_t（备用于命令响应帧解析）
-static inline int32_t readBE32(const uint8_t *buf) noexcept {
-  return ((int32_t)buf[0] << 24) | ((int32_t)buf[1] << 16) |
-         ((int32_t)buf[2] << 8) | (int32_t)buf[3];
-}
-
-/// 从大端字节序读取 float（备用于命令响应帧解析）
-static inline float readBEFloat(const uint8_t *buf) noexcept {
-  int32_t bits = readBE32(buf);
-  float val;
-  memcpy(&val, &bits, sizeof(val));
-  return val;
-}
-
-void INS_Driver::decodePacket(auv::motion::NavState &s) {
-  using namespace ProtoOff;
-
+void INS_Driver::decodePacket(
+    const auv::protocol::ins::NavigationPacket &packet,
+    auv::motion::NavState &s) {
   // 1. 姿态 → pos_world[ROLL=3, PITCH=4, YAW=5]
-  s.pos_world[3] = readLEFloat(packet_buf_ + kRoll);  // Roll (φ)
-  s.pos_world[4] = readLEFloat(packet_buf_ + kPitch); // Pitch (θ)
-  s.pos_world[5] = readLEFloat(packet_buf_ + kYaw);   // Yaw (ψ)
+  s.pos_world[3] = packet.roll_deg;
+  s.pos_world[4] = packet.pitch_deg;
+  s.pos_world[5] = packet.yaw_deg;
 
   // 2. 角速度 → vel_body[ROLL=3, PITCH=4, YAW=5]
-  s.vel_body[3] = readLEFloat(packet_buf_ + kRollRate);  // p
-  s.vel_body[4] = readLEFloat(packet_buf_ + kPitchRate); // q
-  s.vel_body[5] = readLEFloat(packet_buf_ + kYawRate);   // r
+  s.vel_body[3] = packet.roll_rate;
+  s.vel_body[4] = packet.pitch_rate;
+  s.vel_body[5] = packet.yaw_rate;
 
   // 3. 机体系线速度
-  s.vel_body[0] = readLEFloat(packet_buf_ + kVx);
-  s.vel_body[1] = readLEFloat(packet_buf_ + kVy);
-  s.vel_body[2] = readLEFloat(packet_buf_ + kVz);
+  s.vel_body[0] = packet.velocity_x;
+  s.vel_body[1] = packet.velocity_y;
+  s.vel_body[2] = packet.velocity_z;
 
   // 4. 经纬度 (int32, 1e7 缩放)
-  int32_t lat_i = readLE32(packet_buf_ + kLat);
-  int32_t lon_i = readLE32(packet_buf_ + kLon);
   {
     auto ns = auv::system::system_context.nav_status_.get();
-    ns.lat = lat_i * 1e-7;
-    ns.lon = lon_i * 1e-7;
+    ns.lat = packet.latitude_e7 * 1e-7;
+    ns.lon = packet.longitude_e7 * 1e-7;
     auv::system::system_context.nav_status_.set(ns);
   }
 
   // 5. 深度
-  s.pos_world[2] = readLEFloat(packet_buf_ + kDepth);
+  s.pos_world[2] = packet.combined_depth;
 
   // 6. 位置增量
-  s.pos_world[0] = readLEFloat(packet_buf_ + kNorthOffset); // X (North)
-  s.pos_world[1] = readLEFloat(packet_buf_ + kEastOffset);  // Y (East)
+  s.pos_world[0] = packet.north_offset; // X (North)
+  s.pos_world[1] = packet.east_offset; // Y (East)
 
   // 7. 压力计深度
-  manometer_z_ = readLEFloat(packet_buf_ + kManometerDepth);
+  manometer_z_ = packet.pressure_depth;
 
   // 8. 传感器状态 & 导航模式
   {
     auto ns = auv::system::system_context.nav_status_.get();
-    ns.imu_state = packet_buf_[kNavMode];
-    ns.dvl_state = (packet_buf_[kSensorFlags] & 0x02) ? 1 : 0;
+    ns.imu_state = packet.navigation_mode;
+    ns.dvl_state = (packet.sensor_flags & 0x02) ? 1 : 0;
     ns.timestamp = HAL_GetTick();
     auv::system::system_context.nav_status_.set(ns);
   }
@@ -349,8 +181,6 @@ void INS_Driver::decodePacket(auv::motion::NavState &s) {
 
   // 更新内部缓存（保存为弧度制状态）
   state_ = s;
-
-  frame_len_ = 0; // 确保状态机复位，准备下一帧
 }
 
 } // namespace peripheral

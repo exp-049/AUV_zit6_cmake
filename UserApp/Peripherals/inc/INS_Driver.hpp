@@ -6,6 +6,7 @@
 #ifndef __INS_DRIVER_HPP
 #define __INS_DRIVER_HPP
 
+#include "INS_Protocol.hpp"
 #include "MotionContext.hpp"
 #include <cstdint>
 #include <cstring>
@@ -44,7 +45,7 @@ struct InsPortDiagnostics {
  */
 class INS_Driver {
 public:
-  static constexpr uint16_t kFrameSize = 133;
+  static constexpr uint16_t kFrameSize = auv::protocol::ins::kFrameSize;
 
   INS_Driver(InsPortOps ops) : ops_(ops) {}
 
@@ -72,11 +73,7 @@ private:
   uint32_t rx_total_bytes_ = 0; ///< 累计接收字节数（调试统计）
   uint32_t last_update_ms_ = 0; ///< 上次收到有效包的时间
 
-  static constexpr uint16_t kMaxFrameSize = 256;
-  static constexpr uint16_t kMinFrameSize = 133;
-  /// 帧解析临时缓冲区（4 字节对齐，确保 memmove/memcpy 使用 32 位总线）
-  __attribute__((aligned(4))) uint8_t packet_buf_[kMaxFrameSize] = {0};
-  uint16_t frame_len_ = 0; ///< 当前解析长度
+  auv::protocol::ins::Parser protocol_parser_;
 
   auv::motion::NavState state_{};      ///< 缓存的最新有效位姿状态
   auv::motion::NavState prev_state_{}; ///< 上一帧状态，用于速度差分估计
@@ -88,10 +85,8 @@ private:
   float manometer_z_ = 0.0f;
 
   // 内部私有方法
-  uint8_t checkData(const uint8_t *data, uint8_t size);
-  bool parseByte(uint8_t b);
-  bool validateFrame();
-  void decodePacket(auv::motion::NavState &state);
+  void decodePacket(const auv::protocol::ins::NavigationPacket &packet,
+                    auv::motion::NavState &state);
 };
 
 } // namespace peripheral

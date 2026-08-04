@@ -15,6 +15,7 @@ from .config_setter import ConfigWidget
 from .motion_control import MotionControlWidget
 from .heartbeat import FloatingHeartbeatPanel
 from .log_viewer import LogViewerWidget
+from .trajectory_viewer import TrajectoryViewerWidget
 
 # Qt imports
 try:
@@ -72,6 +73,7 @@ class MasterConsoleApp(QMainWindow):
             ("🎮 手柄遥控", 1),
             ("⚙️ 参数配置", 2),
             ("⚓ 运动控制台", 3),
+            ("🧭 三维轨迹 / 位姿", 4),
         ]
         
         for text, index in nav_items:
@@ -100,11 +102,13 @@ class MasterConsoleApp(QMainWindow):
         self.xbox_widget = XboxControlWidget(self.node)
         self.config_widget = ConfigWidget(self.node)
         self.motion_widget = MotionControlWidget(self.node)
+        self.trajectory_widget = TrajectoryViewerWidget(self.node)
         
         self.stacked_widget.addWidget(self.image_widget)
         self.stacked_widget.addWidget(self.xbox_widget)
         self.stacked_widget.addWidget(self.config_widget)
         self.stacked_widget.addWidget(self.motion_widget)
+        self.stacked_widget.addWidget(self.trajectory_widget)
 
         # 将内容区加入主布局
         self.main_layout.addWidget(content_area, 1)
@@ -188,6 +192,7 @@ class MasterConsoleApp(QMainWindow):
         self.xbox_widget.close()
         self.config_widget.close()
         self.motion_widget.close()
+        self.trajectory_widget.close()
         self.log_widget.close()
         self.floating_hbt.close()
         super().closeEvent(event)

@@ -23,6 +23,8 @@ bool UART_MS5837Backend::init() {
   last_link_ms_ = 0U;
   next_host_nonce_ = 0U;
   expected_host_nonce_ = 0U;
+  pushrod_ack_ = {};
+  pushrod_ack_ready_ = false;
 
   const bool ready = ops_.transmit != nullptr && ops_.poll != nullptr &&
                      ops_.startRx != nullptr && ops_.getTickMs != nullptr;
@@ -69,10 +71,43 @@ bool UART_MS5837Backend::read() {
   return true;
 }
 
+bool UART_MS5837Backend::sendPushrodTask(
+    const pushrod_protocol_task_t &task) {
+  if (ops_.transmit == nullptr) {
+    return false;
+  }
+
+  uint8_t packet[MS5837_PROTOCOL_MAX_FRAME_SIZE] = {};
+  const uint8_t length = pushrod_protocol_encode_task(
+      &task, packet, sizeof(packet));
+  if (length == 0U) {
+    return false;
+  }
+  return ops_.transmit(ops_.ctx, packet, length);
+}
+
+bool UART_MS5837Backend::readPushrodAck(pushrod_protocol_ack_t *ack) {
+  if (ack == nullptr || !pushrod_ack_ready_) {
+    return false;
+  }
+  *ack = pushrod_ack_;
+  pushrod_ack_ready_ = false;
+  return true;
+}
+
 void UART_MS5837Backend::onRxByte(uint8_t byte) {
   ms5837_protocol_frame_t frame{};
   const int result = ms5837_protocol_parser_push(&parser_, byte, &frame);
   if (result != 1) {
+    return;
+  }
+
+  if (frame.type == PUSHROD_PROTOCOL_TYPE_ACK) {
+    pushrod_protocol_ack_t ack{};
+    if (pushrod_protocol_decode_ack(&frame, &ack) == 0) {
+      pushrod_ack_ = ack;
+      pushrod_ack_ready_ = true;
+    }
     return;
   }
 

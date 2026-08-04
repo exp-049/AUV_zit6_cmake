@@ -2,6 +2,7 @@
 
 #include "MS5837_Driver.hpp"
 #include "ms5837_protocol.h"
+#include "pushrod_protocol.h"
 
 #include <stdint.h>
 
@@ -24,12 +25,12 @@ struct UART_MS5837PortOps {
 };
 
 /**
- * @brief MS5837 protocol-v1 UART backend.
+ * @brief Depth-board protocol-v1 UART backend.
  *
  * The backend consumes the byte stream produced by the UART porting layer,
- * uses the protocol parser from Drivers/Protocol, and exposes depth in m.
- * A completed DATA frame is consumed by MS5837_Driver::Read(), which then
- * updates the value used for pos_world[2].
+ * uses the protocol parsers from UserApp/Protocol, and exposes depth in m.
+ * A completed DATA frame is consumed by MS5837_Driver::Read(), while pushrod
+ * acknowledgements are exposed through MS5837_Driver::readPushrodAck().
  */
 class UART_MS5837Backend final : public DepthBackend {
 public:
@@ -44,6 +45,8 @@ public:
   bool isConnected() const override { return connected_; }
   float getDepth() const override { return depth_m_; }
   float getTemperature() const override { return temperature_c_; }
+  bool sendPushrodTask(const pushrod_protocol_task_t &task) override;
+  bool readPushrodAck(pushrod_protocol_ack_t *ack) override;
   bool isHandshakeAcknowledged() const override { return handshake_ack_; }
   uint32_t getRxRecoveryCount() const override {
     return ops_.getRxRecoveryCount != nullptr
@@ -77,6 +80,7 @@ public:
   void onRxReset() {
     ms5837_protocol_parser_init(&parser_);
     frame_ready_ = false;
+    pushrod_ack_ready_ = false;
   }
 
 private:
@@ -99,6 +103,8 @@ private:
   uint32_t last_link_ms_ = 0U;
   uint32_t next_host_nonce_ = 0U;
   uint32_t expected_host_nonce_ = 0U;
+  pushrod_protocol_ack_t pushrod_ack_{};
+  bool pushrod_ack_ready_ = false;
 };
 
 } // namespace peripheral

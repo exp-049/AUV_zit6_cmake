@@ -1,6 +1,8 @@
 #ifndef __MS5837_DRIVER_HPP
 #define __MS5837_DRIVER_HPP
 
+#include "pushrod_protocol.h"
+
 #include <math.h>
 #include <stdint.h>
 
@@ -71,6 +73,18 @@ struct DepthBackend {
 
   /** @brief 获取最新温度值（摄氏度） */
   virtual float getTemperature() const = 0;
+
+  /** @brief 向同一深度解算板 UART 链路发送推杆任务。 */
+  virtual bool sendPushrodTask(const pushrod_protocol_task_t &task) {
+    (void)task;
+    return false;
+  }
+
+  /** @brief 读取一条已收到的推杆任务确认。 */
+  virtual bool readPushrodAck(pushrod_protocol_ack_t *ack) {
+    (void)ack;
+    return false;
+  }
 };
 
 /**
@@ -100,6 +114,14 @@ public:
   float getMS5837Z();
   void setMS5837Z(float z);
   inline void altitude(float *p);
+  /**@}*/
+
+  /** @name 深度解算板推杆协议 */
+  /**@{*/
+  bool sendPushrodTask(const pushrod_protocol_task_t &task);
+  bool sendPushrodTask(uint32_t task_id, int16_t power_x1000,
+                       uint32_t duration_ms);
+  bool readPushrodAck(pushrod_protocol_ack_t *ack);
   /**@}*/
 
   /** @brief 传感器连接状态（由 Backend 更新） */

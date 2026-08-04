@@ -8,7 +8,12 @@
 namespace auv {
 namespace porting {
 
-/** UART4 transport for the protocol-v1 MS5837 backend. */
+/**
+ * UART4 transport for the depth-board V1 link.
+ *
+ * The same byte stream carries MS5837 data/handshake frames and pushrod task
+ * acknowledgements; the protocol dispatch remains in the backend layer.
+ */
 class MS5837_UART_Porting {
 public:
   explicit MS5837_UART_Porting(

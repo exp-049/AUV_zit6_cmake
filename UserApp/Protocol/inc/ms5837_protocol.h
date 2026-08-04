@@ -17,10 +17,10 @@ extern "C" {
 #define MS5837_PROTOCOL_USE_DMA_IDLE     1U
 #endif
 
-#define MS5837_PROTOCOL_TYPE_DATA        0x01U
-#define MS5837_PROTOCOL_TYPE_SET_RATE    0x10U
-#define MS5837_PROTOCOL_TYPE_HANDSHAKE   0x20U
-#define MS5837_PROTOCOL_TYPE_RATE_ACK    0x90U
+#define MS5837_PROTOCOL_TYPE_DATA          0x01U
+#define MS5837_PROTOCOL_TYPE_SET_RATE      0x10U
+#define MS5837_PROTOCOL_TYPE_HANDSHAKE     0x20U
+#define MS5837_PROTOCOL_TYPE_RATE_ACK      0x90U
 #define MS5837_PROTOCOL_TYPE_HANDSHAKE_ACK 0xA0U
 
 #define MS5837_PROTOCOL_STATUS_SENSOR_OK  (1U << 0)
@@ -74,10 +74,10 @@ uint8_t ms5837_protocol_checksum(uint8_t type, uint8_t length,
                                  const uint8_t *payload);
 
 uint8_t ms5837_protocol_encode_frame(uint8_t type,
-                                      const uint8_t *payload,
-                                      uint8_t payload_length,
-                                      uint8_t *output,
-                                      uint8_t output_size);
+                                     const uint8_t *payload,
+                                     uint8_t payload_length,
+                                     uint8_t *output,
+                                     uint8_t output_size);
 
 uint8_t ms5837_protocol_encode_data(uint16_t depth_cm,
                                     uint32_t pressure_01mbar,

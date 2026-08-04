@@ -89,6 +89,23 @@ float MS5837_Driver::getMS5837Z() {
   return z;
 }
 
+bool MS5837_Driver::sendPushrodTask(const pushrod_protocol_task_t &task) {
+  return backend_ != nullptr && backend_->sendPushrodTask(task);
+}
+
+bool MS5837_Driver::sendPushrodTask(uint32_t task_id, int16_t power_x1000,
+                                    uint32_t duration_ms) {
+  pushrod_protocol_task_t task{};
+  task.task_id = task_id;
+  task.power_x1000 = power_x1000;
+  task.duration_ms = duration_ms;
+  return sendPushrodTask(task);
+}
+
+bool MS5837_Driver::readPushrodAck(pushrod_protocol_ack_t *ack) {
+  return backend_ != nullptr && backend_->readPushrodAck(ack);
+}
+
 bool MS5837_Driver::isHandshakeAcknowledged() const {
   return backend_ != nullptr && backend_->isHandshakeAcknowledged();
 }
