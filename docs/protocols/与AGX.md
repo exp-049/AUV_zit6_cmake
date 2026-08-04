@@ -149,6 +149,22 @@ uint32 seq
 - 类型：`std_msgs/msg/UInt8`
 - 含义：灯光状态字节，具体颜色含义由下位机解释
 
+### 2.6 `/zit6/cmd/pushrod`
+
+- 类型：`zit6_interfaces/msg/ZitPushrod`
+- 用途：向深度计解算板下发一个推杆任务
+
+消息定义：
+
+```text
+float32 speed       # -1.0～1.0
+uint32 duration_ms  # 必须大于 0
+```
+
+推杆命令只在系统已解锁时接受。固件将 `speed` 转换为协议层的
+`power_x1000`（`speed * 1000`），并由固件自动维护 `task_id`、ACK 和超时重发；
+上位机不需要自行生成任务 ID。建议使用一次性发布，不要周期性高频发布同一任务。
+
 ---
 
 ## 3. 状态发布

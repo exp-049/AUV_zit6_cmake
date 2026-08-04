@@ -1,6 +1,8 @@
 #include "UART_MS5837Backend.hpp"
 
+#include "FreeRTOS.h"
 #include "MS5837_LogConfig.hpp"
+#include "task.h"
 
 namespace auv {
 namespace peripheral {
@@ -87,11 +89,18 @@ bool UART_MS5837Backend::sendPushrodTask(
 }
 
 bool UART_MS5837Backend::readPushrodAck(pushrod_protocol_ack_t *ack) {
-  if (ack == nullptr || !pushrod_ack_ready_) {
+  if (ack == nullptr) {
+    return false;
+  }
+
+  taskENTER_CRITICAL();
+  if (!pushrod_ack_ready_) {
+    taskEXIT_CRITICAL();
     return false;
   }
   *ack = pushrod_ack_;
   pushrod_ack_ready_ = false;
+  taskEXIT_CRITICAL();
   return true;
 }
 
@@ -105,8 +114,10 @@ void UART_MS5837Backend::onRxByte(uint8_t byte) {
   if (frame.type == PUSHROD_PROTOCOL_TYPE_ACK) {
     pushrod_protocol_ack_t ack{};
     if (pushrod_protocol_decode_ack(&frame, &ack) == 0) {
+      taskENTER_CRITICAL();
       pushrod_ack_ = ack;
       pushrod_ack_ready_ = true;
+      taskEXIT_CRITICAL();
     }
     return;
   }

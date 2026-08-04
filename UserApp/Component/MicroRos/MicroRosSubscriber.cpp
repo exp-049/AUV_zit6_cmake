@@ -26,6 +26,7 @@ bool MicroRosSubscriber::init(rcl_node_t *node, rclc_executor_t *executor) {
   std_msgs__msg__UInt8__init(&led_msg_);
   std_msgs__msg__Float32__init(&servo_msg_);
   zit6_interfaces__msg__ZitSetpoint__init(&setpoint_msg_);
+  zit6_interfaces__msg__ZitPushrod__init(&pushrod_msg_);
 
   std_msgs__msg__Float32MultiArray__init(&sim_nav_msg_);
   sim_nav_msg_.data.data = sim_nav_buf_;
@@ -62,20 +63,31 @@ bool MicroRosSubscriber::init(rcl_node_t *node, rclc_executor_t *executor) {
           &ins_cmd_sub_, node,
           ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8), "/zit6/cmd/ins")))
     return false;
+  if (!ok(rclc_subscription_init_default(
+          &pushrod_sub_, node,
+          ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitPushrod),
+          "/zit6/cmd/pushrod")))
+    return false;
 
   // 注册到 executor
-  rclc_executor_add_subscription(executor, &setpoint_sub_, &setpoint_msg_,
-                                 &MicroRosSubscriber::setpointCb, ON_NEW_DATA);
-  rclc_executor_add_subscription(executor, &arm_sub_, &arm_msg_,
-                                 &MicroRosSubscriber::armCb, ON_NEW_DATA);
-  rclc_executor_add_subscription(executor, &ins_cmd_sub_, &ins_cmd_msg_,
-                                 &MicroRosSubscriber::insCmdCb, ON_NEW_DATA);
-  rclc_executor_add_subscription(executor, &servo_sub_, &servo_msg_,
-                                 &MicroRosSubscriber::servoCb, ON_NEW_DATA);
-  rclc_executor_add_subscription(executor, &led_sub_, &led_msg_,
-                                 &MicroRosSubscriber::ledCb, ON_NEW_DATA);
-  rclc_executor_add_subscription(executor, &sim_nav_sub_, &sim_nav_msg_,
-                                 &MicroRosSubscriber::simNavCb, ON_NEW_DATA);
+  auto add_subscription = [&](rcl_subscription_t *subscription, void *message,
+                              rclc_subscription_callback_t callback) {
+    return ok(rclc_executor_add_subscription(
+        executor, subscription, message, callback, ON_NEW_DATA));
+  };
+  if (!add_subscription(&setpoint_sub_, &setpoint_msg_,
+                        &MicroRosSubscriber::setpointCb) ||
+      !add_subscription(&arm_sub_, &arm_msg_, &MicroRosSubscriber::armCb) ||
+      !add_subscription(&ins_cmd_sub_, &ins_cmd_msg_,
+                        &MicroRosSubscriber::insCmdCb) ||
+      !add_subscription(&servo_sub_, &servo_msg_,
+                        &MicroRosSubscriber::servoCb) ||
+      !add_subscription(&led_sub_, &led_msg_, &MicroRosSubscriber::ledCb) ||
+      !add_subscription(&sim_nav_sub_, &sim_nav_msg_,
+                        &MicroRosSubscriber::simNavCb) ||
+      !add_subscription(&pushrod_sub_, &pushrod_msg_,
+                        &MicroRosSubscriber::pushrodCb))
+    return false;
 
   return true;
 }
@@ -91,7 +103,10 @@ void MicroRosSubscriber::cleanup(rcl_node_t *node) {
   rcl_subscription_fini(&servo_sub_, node);
   rcl_subscription_fini(&led_sub_, node);
   rcl_subscription_fini(&sim_nav_sub_, node);
+  rcl_subscription_fini(&pushrod_sub_, node);
 }
+
+void MicroRosSubscriber::update(uint32_t now_ms) { updatePushrod(now_ms); }
 
 // ============================================================================
 // 回调实现
@@ -222,4 +237,135 @@ void MicroRosSubscriber::onSimNav(const void *msgin) {
   }
   /* 推入队列，非阻塞；队列满则丢弃旧帧（FIFO，消费者 drain 到最新） */
   xQueueSend(auv::motion::motion_context.sitl_nav_queue, &state, 0);
+}
+
+void MicroRosSubscriber::onPushrodCmd(const void *msgin) {
+  const auto *msg = static_cast<const zit6_interfaces__msg__ZitPushrod *>(msgin);
+  if (msg == nullptr)
+    return;
+
+  if (!std::isfinite(msg->speed) || msg->speed < -1.0f ||
+      msg->speed > 1.0f) {
+    ROS_LOG_WARN("Pushrod Cmd: speed must be finite and in [-1, 1]");
+    return;
+  }
+  if (msg->duration_ms == 0U) {
+    ROS_LOG_WARN("Pushrod Cmd: duration_ms must be greater than zero");
+    return;
+  }
+  if (!auv::system::system_context.arm_state_.get().is_armed) {
+    ROS_LOG_WARN("Pushrod Cmd: rejected while disarmed");
+    return;
+  }
+  if (pushrod_queue_count_ >= kPushrodQueueCapacity) {
+    ROS_LOG_WARN("Pushrod Cmd: local queue full");
+    return;
+  }
+
+  const long scaled_power = std::lround(msg->speed * 1000.0f);
+  PushrodCommand &command = pushrod_queue_[pushrod_queue_tail_];
+  command.power_x1000 = static_cast<int16_t>(scaled_power);
+  command.duration_ms = msg->duration_ms;
+  pushrod_queue_tail_ =
+      static_cast<uint8_t>((pushrod_queue_tail_ + 1U) % kPushrodQueueCapacity);
+  ++pushrod_queue_count_;
+
+  ROS_LOG_INFO("Pushrod Cmd: speed=%.3f power=%ld duration=%lu ms",
+               msg->speed, scaled_power, (unsigned long)msg->duration_ms);
+  updatePushrod(HAL_GetTick());
+}
+
+void MicroRosSubscriber::popPushrodCommand() {
+  if (pushrod_queue_count_ == 0U)
+    return;
+  pushrod_queue_head_ = static_cast<uint8_t>(
+      (pushrod_queue_head_ + 1U) % kPushrodQueueCapacity);
+  --pushrod_queue_count_;
+}
+
+void MicroRosSubscriber::sendOrRetryPushrod(uint32_t now_ms) {
+  if (ctx_ == nullptr || ctx_->depth_sensor == nullptr ||
+      !pushrod_pending_)
+    return;
+
+  if (ctx_->depth_sensor->sendPushrodTask(pushrod_pending_task_)) {
+    pushrod_last_send_ms_ = now_ms;
+    ROS_LOG_INFO("Pushrod task sent: id=%lu power=%d duration=%lu ms",
+                 (unsigned long)pushrod_pending_task_.task_id,
+                 pushrod_pending_task_.power_x1000,
+                 (unsigned long)pushrod_pending_task_.duration_ms);
+  } else {
+    // Keep the same task_id. The next update will retry without advancing it.
+    pushrod_last_send_ms_ = now_ms;
+    ROS_LOG_WARN("Pushrod task transmit failed: id=%lu",
+                 (unsigned long)pushrod_pending_task_.task_id);
+  }
+}
+
+void MicroRosSubscriber::updatePushrod(uint32_t now_ms) {
+  if (ctx_ == nullptr || ctx_->depth_sensor == nullptr)
+    return;
+
+  const bool armed = auv::system::system_context.arm_state_.get().is_armed;
+
+  pushrod_protocol_ack_t ack{};
+  while (ctx_->depth_sensor->readPushrodAck(&ack)) {
+    if (!pushrod_pending_ || ack.task_id != pushrod_pending_task_.task_id) {
+      ROS_LOG_WARN("Pushrod ACK ignored: id=%lu result=%u",
+                   (unsigned long)ack.task_id, (unsigned)ack.result);
+      continue;
+    }
+
+    if (ack.result == PUSHROD_PROTOCOL_RESULT_OK) {
+      const uint32_t completed_id = pushrod_pending_task_.task_id;
+      pushrod_pending_ = false;
+      popPushrodCommand();
+      pushrod_next_task_id_ = completed_id + 1U;
+      ROS_LOG_INFO("Pushrod task accepted: id=%lu queue=%u ready=%u",
+                   (unsigned long)completed_id, (unsigned)ack.queue_count,
+                   (unsigned)ack.ready);
+    } else if (ack.result == PUSHROD_PROTOCOL_RESULT_QUEUE_FULL ||
+               ack.result == PUSHROD_PROTOCOL_RESULT_NOT_INITIALIZED) {
+      // The task was not accepted. Retain the same task ID and retry later.
+      pushrod_last_send_ms_ = now_ms;
+      ROS_LOG_WARN("Pushrod task deferred: id=%lu result=%u queue=%u",
+                   (unsigned long)ack.task_id, (unsigned)ack.result,
+                   (unsigned)ack.queue_count);
+    } else {
+      // The task was not accepted. Drop only this command, but do not advance
+      // the ID; the next valid task may reuse it according to the protocol.
+      ROS_LOG_WARN("Pushrod task rejected: id=%lu result=%u",
+                   (unsigned long)ack.task_id, (unsigned)ack.result);
+      pushrod_pending_ = false;
+      popPushrodCommand();
+    }
+  }
+
+  // There is no cancel frame in the V1 pushrod protocol. Do not transmit any
+  // queued command after disarm; an already transmitted task is left intact
+  // so a lost ACK can still be retried with the same task_id after re-arm.
+  if (!armed) {
+    if (!pushrod_pending_) {
+      pushrod_queue_head_ = 0U;
+      pushrod_queue_tail_ = 0U;
+      pushrod_queue_count_ = 0U;
+    }
+    return;
+  }
+
+  if (!pushrod_pending_ && pushrod_queue_count_ > 0U) {
+    const PushrodCommand &command = pushrod_queue_[pushrod_queue_head_];
+    pushrod_pending_task_.task_id = pushrod_next_task_id_;
+    pushrod_pending_task_.power_x1000 = command.power_x1000;
+    pushrod_pending_task_.duration_ms = command.duration_ms;
+    pushrod_pending_ = true;
+    sendOrRetryPushrod(now_ms);
+    return;
+  }
+
+  if (pushrod_pending_ &&
+      (uint32_t)(now_ms - pushrod_last_send_ms_) >=
+          kPushrodAckTimeoutMs) {
+    sendOrRetryPushrod(now_ms);
+  }
 }

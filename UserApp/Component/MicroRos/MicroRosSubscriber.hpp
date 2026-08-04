@@ -2,6 +2,7 @@
 #define __MICROROS_SUBSCRIBER_HPP
 
 #include "AppContext.hpp"
+#include "pushrod_protocol.h"
 #include <rcl/rcl.h>
 #include <rclc/executor.h>
 #include <rclc/rclc.h>
@@ -11,6 +12,7 @@
 #include <std_msgs/msg/float32_multi_array.h>
 #include <std_msgs/msg/u_int32.h>
 #include <std_msgs/msg/u_int8.h>
+#include <zit6_interfaces/msg/zit_pushrod.h>
 #include <zit6_interfaces/msg/zit_setpoint.h>
 
 /**
@@ -23,6 +25,7 @@
  * - /zit6/cmd/ins      — 惯导指令
  * - /zit6/cmd/servo    — 舵机角度
  * - /zit6/cmd/light    — LED 灯控
+ * - /zit6/cmd/pushrod  — 推杆任务（speed: -1.0～1.0，duration_ms: > 0）
  * - /zit6/sim/nav      — SITL 仿真导航状态（12 floats: 6 pos + 6 vel）
  */
 class MicroRosSubscriber {
@@ -43,10 +46,17 @@ public:
    */
   void cleanup(rcl_node_t *node);
 
+  /**
+   * @brief 驱动推杆任务发送、ACK 处理和超时重发
+   *
+   * 在 micro-ROS 任务上下文中周期调用，不阻塞等待深度解算板响应。
+   */
+  void update(uint32_t now_ms);
+
 private:
   // ---------- 订阅句柄 ----------
   rcl_subscription_t setpoint_sub_, arm_sub_, ins_cmd_sub_, servo_sub_,
-      led_sub_, sim_nav_sub_;
+      led_sub_, sim_nav_sub_, pushrod_sub_;
 
   // ---------- 消息缓冲区 ----------
   zit6_interfaces__msg__ZitSetpoint setpoint_msg_;
@@ -55,6 +65,7 @@ private:
   std_msgs__msg__Float32 servo_msg_;
   std_msgs__msg__UInt8 led_msg_;
   std_msgs__msg__Float32MultiArray sim_nav_msg_;
+  zit6_interfaces__msg__ZitPushrod pushrod_msg_;
 
   // SITL 12 元素缓冲区（6 pos + 6 vel）
   float sim_nav_buf_[12] = {0};
@@ -71,6 +82,28 @@ private:
   void onServoCmd(const void *msgin);
   void onLedCmd(const void *msgin);
   void onSimNav(const void *msgin);
+  void onPushrodCmd(const void *msgin);
+
+  struct PushrodCommand {
+    int16_t power_x1000;
+    uint32_t duration_ms;
+  };
+
+  static constexpr uint8_t kPushrodQueueCapacity = 4U;
+  static constexpr uint32_t kPushrodAckTimeoutMs = 100U;
+
+  PushrodCommand pushrod_queue_[kPushrodQueueCapacity] = {};
+  uint8_t pushrod_queue_head_ = 0U;
+  uint8_t pushrod_queue_tail_ = 0U;
+  uint8_t pushrod_queue_count_ = 0U;
+  uint32_t pushrod_next_task_id_ = 0U;
+  pushrod_protocol_task_t pushrod_pending_task_{};
+  bool pushrod_pending_ = false;
+  uint32_t pushrod_last_send_ms_ = 0U;
+
+  void updatePushrod(uint32_t now_ms);
+  void sendOrRetryPushrod(uint32_t now_ms);
+  void popPushrodCommand();
 
   // ---------- 静态回调封装 ----------
   static void setpointCb(const void *msgin) {
@@ -96,6 +129,10 @@ private:
   static void simNavCb(const void *msgin) {
     if (instance_)
       instance_->onSimNav(msgin);
+  }
+  static void pushrodCb(const void *msgin) {
+    if (instance_)
+      instance_->onPushrodCmd(msgin);
   }
 };
 

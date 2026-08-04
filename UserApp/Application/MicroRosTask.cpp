@@ -60,6 +60,10 @@ void MicroRosTask::run() {
       // spin executor：处理所有订阅回调和服务请求
       rclc_executor_spin_some(&transport_.getExecutor(), RCL_MS_TO_NS(1));
 
+      // 推杆协议 ACK/重发由 micro-ROS 任务周期驱动，避免在 ROS 回调中
+      // 阻塞等待 UART 响应。
+      subscriber_.update(now_ms);
+
       // 定时发布状态
       publisher_.publish(now_ms);
       break;

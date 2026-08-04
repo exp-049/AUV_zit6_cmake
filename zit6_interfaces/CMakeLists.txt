@@ -10,6 +10,7 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ZitSetpoint.msg"
+  "msg/ZitPushrod.msg"
   "msg/ZitStatus.msg"
   "msg/ZitPid.msg"
   "msg/ZitPidStatus.msg"
