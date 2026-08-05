@@ -2,7 +2,9 @@
 #include "ChassisManager.hpp"
 #include "INS_Driver.hpp"
 #include "INS_Porting.hpp" // ins_rx_buffer + INS_Porting
-#include "MS5837_Driver.hpp"
+#include "Depth_Sensor_Driver.hpp"
+#include "Depth_Sensor_Porting.hpp"
+#include "Pushrod_Driver.hpp"
 #include "MotionController_Driver.hpp"
 #include "MotionController_Porting.hpp"
 #include "USBL_Driver.hpp"
@@ -10,64 +12,9 @@
 #include "RosLogger.hpp"
 #include "SerialHandles.hpp"
 #include "SoftWatchdog.hpp"
-#include "SystemConfig.hpp" // USE_DEPTH_CALC_BOARD (由 gen_config.py 生成)
 #include "cmsis_os2.h"      // osThreadNew, osThreadAttr_t
-#include "i2c.h"
 #include "main.h"
 #include "usart.h"
-
-// --- 深度传感器方案选择 ---
-#ifdef USE_DEPTH_CALC_BOARD
-// ======== UART4 + MS5837 protocol-v1 方案 ========
-#include "MS5837_UART_Porting.hpp"
-#include "UART_MS5837Backend.hpp"
-
-// 构造顺序：Porting → Backend → 链接
-static auv::porting::MS5837_UART_Porting g_depth_port(&huart4);
-static auv::peripheral::UART_MS5837Backend
-    g_depth_backend(auv::peripheral::UART_MS5837PortOps{
-        .ctx = &g_depth_port,
-        .transmit = &auv::porting::MS5837_UART_Porting::transmitPort,
-        .poll = &auv::porting::MS5837_UART_Porting::pollPort,
-        .startRx = &auv::porting::MS5837_UART_Porting::startRxPort,
-        .getTickMs = &auv::porting::MS5837_UART_Porting::getTickPort,
-        .getRxRecoveryCount =
-            &auv::porting::MS5837_UART_Porting::getRxRecoveryCountPort,
-        .getRxErrorCount =
-            &auv::porting::MS5837_UART_Porting::getRxErrorCountPort,
-        .getLastRxError =
-            &auv::porting::MS5837_UART_Porting::getLastRxErrorPort,
-        .getLastRxRecoveryReason =
-            &auv::porting::MS5837_UART_Porting::getLastRxRecoveryReasonPort,
-        .getRxEventCount =
-            &auv::porting::MS5837_UART_Porting::getRxEventCountPort,
-        .getDmaWritePos =
-            &auv::porting::MS5837_UART_Porting::getDmaWritePosPort,
-    });
-// 链接 Porting → Backend（两个对象都已构造，地址安全）
-__attribute__((unused)) static bool g_depth_link =
-    (g_depth_port.setBackend(&g_depth_backend), true);
-
-#else
-// ======== I2C MS5837 直连方案 ========
-#include "I2C_DepthBackend.hpp"
-#include "MS5837_Porting.hpp"
-
-static auv::porting::MS5837_Porting g_depth_port(&hi2c1, 0x76 << 1);
-static auv::peripheral::I2C_DepthBackend g_depth_backend(
-    auv::peripheral::DepthPortOps{
-        .ctx = &g_depth_port,
-        .writeByte = &auv::porting::MS5837_Porting::writePort,
-        .readByte = &auv::porting::MS5837_Porting::readPortByte,
-        .read = &auv::porting::MS5837_Porting::readPort,
-        .delay = &auv::porting::MS5837_Porting::delayPort,
-        .start = &auv::porting::MS5837_Porting::startPort,
-    },
-    0x76 << 1);
-// 链接 Porting → Backend
-__attribute__((unused)) static bool g_depth_i2c_link =
-    (g_depth_port.setBackend(&g_depth_backend), true);
-#endif
 
 // --- 全局 Porting 实例（硬件适配） ---
 static auv::porting::INS_Porting g_ins_port(&AUV_UART_INS, &AUV_UART_INS, ins_rx_buffer,
@@ -93,7 +40,10 @@ auv::peripheral::MotionController_Driver
         .transmitDMA = &auv::porting::MotionController_Porting::transmitDMA,
         .getTxPacket = &auv::porting::MotionController_Porting::getTxPacket,
     });
-auv::peripheral::MS5837_Driver depth_sensor(&g_depth_backend);
+auv::peripheral::Depth_Sensor_Driver *depth_sensor =
+    auv::porting::getDepthSensorDriver();
+auv::peripheral::Pushrod_Driver *pushrod_driver =
+    auv::porting::getPushrodDriver();
 auv::peripheral::USBL_Driver usbl_driver(auv::peripheral::UsblPortOps{
     .ctx = &g_usbl_port,
     .init = &auv::porting::USBL_Porting::initPort,
@@ -119,7 +69,8 @@ namespace system {
 AppContext g_app_ctx = {
     .ins_driver = &auv::peripheral::ins_driver,
     .motor_driver = &auv::peripheral::motor_driver,
-    .depth_sensor = &auv::peripheral::depth_sensor,
+    .depth_sensor = auv::peripheral::depth_sensor,
+    .pushrod_driver = auv::peripheral::pushrod_driver,
     .usbl_driver = &auv::peripheral::usbl_driver,
     .logger = &auv::component::g_ros_logger,
     .watchdog = &auv::component::g_soft_watchdog,

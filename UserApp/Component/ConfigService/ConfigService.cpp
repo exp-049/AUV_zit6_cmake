@@ -113,14 +113,6 @@ static bool dispatchUpdate(const char *path, const char *value, bool &updated) {
   for (size_t i = 0; i < SYSTEM_PARAMS_COUNT; ++i) {
     const auto &p = SYSTEM_PARAMS[i];
     if (p.path && strcmp(p.path, path) == 0) {
-#ifdef USE_DEPTH_CALC_BOARD
-      // The production depth-calculation board owns navigation z. Do not
-      // accept a runtime request that would select an INS-based z source.
-      if (p.type == ParamType::ENUM_Z) {
-        *(ZDataSource *)p.ptr = ZDataSource::USE_MS5837_Z;
-        return false;
-      }
-#endif
       const auto effective_type = resolveParamType(p);
       switch (effective_type) {
       case ParamType::FLOAT:

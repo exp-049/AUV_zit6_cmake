@@ -257,3 +257,23 @@ target_link_libraries(test_config_full
 gtest_discover_tests(test_config_full
     DISCOVERY_MODE PRE_TEST
 )
+
+# Phase 6 — depth facade and independent pushrod facade
+add_executable(test_depth_pushrod
+    test_depth_pushrod_driver.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/src/Depth_Sensor_Driver.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/src/Pushrod_Driver.cpp
+)
+
+target_include_directories(test_depth_pushrod PRIVATE
+    ${STUB_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/inc
+)
+
+target_link_libraries(test_depth_pushrod
+    GTest::gtest_main
+)
+
+gtest_discover_tests(test_depth_pushrod
+    DISCOVERY_MODE PRE_TEST
+)

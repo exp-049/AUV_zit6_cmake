@@ -213,9 +213,9 @@ struct ThrustPacket {
     \item 输出：信标北向/东向/深度、基阵姿态、信号能量
 \end{itemize}
 
-\subsection{MS5837\_Driver（深度传感器）}
+\subsection{Depth\_Sensor\_Driver（深度传感器）}
 
-支持 I2C 和 UART 两种通信后端（通过 DepthCalcBoard 解算板），提供深度和温度测量。
+支持商品 UART、自研 UART 和 I2C 三种后端，提供深度和温度测量；推杆由独立的 Pushrod\_Driver 管理。
 
 \subsection{External Drivers}
 \begin{itemize}
@@ -252,8 +252,8 @@ struct MotorPortOps {
 \begin{itemize}
     \item \textbf{INS\_Porting}：UART7 DMA 实现 INS\_Driver 的 InsPortOps
     \item \textbf{MotionController\_Porting}：UART6 DMA 实现 MotionController\_Driver 的 MotorPortOps
-    \item \textbf{MS5837\_Porting}：I2C/UART 实现深度传感器后端
-    \item \textbf{DepthCalcBoard\_Porting}：深度解算板通信适配
+    \item \textbf{Depth\_Sensor\_Porting}：统一选择并组装深度后端
+    \item \textbf{Pushrod\_Porting}：自研解算板 UART4 DMA 和推杆/深度共享链路
 \end{itemize}
 
 % ============================================================================
@@ -267,7 +267,7 @@ struct MotorPortOps {
 struct AppContext {
     INS_Driver *ins_driver;
     MotionController_Driver *motor_driver;
-    MS5837_Driver *depth_sensor;
+    Depth_Sensor_Driver *depth_sensor;
     RosLogger *logger;
     SoftWatchdog *watchdog;
     ChassisManager *chassis;
@@ -506,4 +506,3 @@ R_{ZYX}(\phi,\theta,\psi) & 0_{3\times3} \\
 仿真模式切换通过 \texttt{config.json} 中的 \texttt{simulation} 字段控制。
 
 \end{document}
-

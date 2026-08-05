@@ -2,6 +2,7 @@
 #include "FreeRTOS.h"
 #include "MotionContext.hpp"
 #include "RosLogger.hpp"
+#include "Pushrod_Driver.hpp"
 #include "SystemConfig.hpp"
 #include "SystemContext.hpp"
 #include "main.h" // HAL_GetTick
@@ -284,11 +285,11 @@ void MicroRosSubscriber::popPushrodCommand() {
 }
 
 void MicroRosSubscriber::sendOrRetryPushrod(uint32_t now_ms) {
-  if (ctx_ == nullptr || ctx_->depth_sensor == nullptr ||
+  if (ctx_ == nullptr || ctx_->pushrod_driver == nullptr ||
       !pushrod_pending_)
     return;
 
-  if (ctx_->depth_sensor->sendPushrodTask(pushrod_pending_task_)) {
+  if (ctx_->pushrod_driver->sendTask(pushrod_pending_task_)) {
     pushrod_last_send_ms_ = now_ms;
     ROS_LOG_INFO("Pushrod task sent: id=%lu power=%d duration=%lu ms",
                  (unsigned long)pushrod_pending_task_.task_id,
@@ -303,20 +304,20 @@ void MicroRosSubscriber::sendOrRetryPushrod(uint32_t now_ms) {
 }
 
 void MicroRosSubscriber::updatePushrod(uint32_t now_ms) {
-  if (ctx_ == nullptr || ctx_->depth_sensor == nullptr)
+  if (ctx_ == nullptr || ctx_->pushrod_driver == nullptr)
     return;
 
   const bool armed = auv::system::system_context.arm_state_.get().is_armed;
 
-  pushrod_protocol_ack_t ack{};
-  while (ctx_->depth_sensor->readPushrodAck(&ack)) {
+  auv::peripheral::PushrodAck ack{};
+  while (ctx_->pushrod_driver->readAck(&ack)) {
     if (!pushrod_pending_ || ack.task_id != pushrod_pending_task_.task_id) {
       ROS_LOG_WARN("Pushrod ACK ignored: id=%lu result=%u",
                    (unsigned long)ack.task_id, (unsigned)ack.result);
       continue;
     }
 
-    if (ack.result == PUSHROD_PROTOCOL_RESULT_OK) {
+    if (ack.result == auv::peripheral::pushrod::kOk) {
       const uint32_t completed_id = pushrod_pending_task_.task_id;
       pushrod_pending_ = false;
       popPushrodCommand();
@@ -324,8 +325,8 @@ void MicroRosSubscriber::updatePushrod(uint32_t now_ms) {
       ROS_LOG_INFO("Pushrod task accepted: id=%lu queue=%u ready=%u",
                    (unsigned long)completed_id, (unsigned)ack.queue_count,
                    (unsigned)ack.ready);
-    } else if (ack.result == PUSHROD_PROTOCOL_RESULT_QUEUE_FULL ||
-               ack.result == PUSHROD_PROTOCOL_RESULT_NOT_INITIALIZED) {
+    } else if (ack.result == auv::peripheral::pushrod::kQueueFull ||
+               ack.result == auv::peripheral::pushrod::kNotInitialized) {
       // The task was not accepted. Retain the same task ID and retry later.
       pushrod_last_send_ms_ = now_ms;
       ROS_LOG_WARN("Pushrod task deferred: id=%lu result=%u queue=%u",

@@ -10,7 +10,7 @@
 #include "../Peripherals/HAL/Middlewares/Third_Party/FreeRTOS/Source/include/task.h"
 #include "../Porting/inc/INS_Porting.hpp"
 #include "../Peripherals/inc/INS_Driver.hpp"
-#include "../Peripherals/inc/MS5837_Driver.hpp"
+#include "../Peripherals/inc/Depth_Sensor_Driver.hpp"
 #include "../Peripherals/inc/MS5837_LogConfig.hpp"
 #include <cstring>
 
@@ -149,48 +149,43 @@ void ControlTask::updateNavigation() {
       }
     }
 
-#ifdef USE_DEPTH_CALC_BOARD
-    // 深度计算板是正式硬件链路：pos.z 必须始终来自 MS5837 后端。
-    // Read() 先轮询 UART4 DMA 环形缓冲，再由 getMS5837Z() 取最近一帧
-    // DATA.depth_cm / 100.0f，避免运行时配置把 z 切换到 INS 压力源。
     const int depth_frame_ready = ctx_->depth_sensor->Read();
-    state.pos_world[2] = ctx_->depth_sensor->getMS5837Z();
+    if (auv::config::sys_config.system.sensors.z_data_source ==
+        auv::config::ZDataSource::USE_MS5837_Z) {
+      state.pos_world[2] = ctx_->depth_sensor->getMS5837Z();
+    } else if (auv::config::sys_config.system.sensors.z_data_source ==
+               auv::config::ZDataSource::USE_INS_PRESSURE_Z) {
+      state.pos_world[2] = ctx_->ins_driver->getManometerZ();
+    }
 
-    // 正式模式保留 1Hz、非阻塞诊断，便于区分“协议没有收到有效 DATA”
-    // 与“有效 DATA 的深度确实为 0”。高频日志仍由 MS5837_LOG_ENABLE 控制。
+    // Keep one backend-independent diagnostic snapshot for all three depth
+    // implementations. UART-only fields are zero for I2C and commercial
+    // backends that do not expose them.
     static uint32_t last_depth_diag_ms = 0U;
     const uint32_t depth_diag_now = HAL_GetTick();
     if ((uint32_t)(depth_diag_now - last_depth_diag_ms) >= 1000U) {
       last_depth_diag_ms = depth_diag_now;
+      auv::peripheral::DepthDiagnostics diagnostics{};
+      ctx_->depth_sensor->getDiagnostics(diagnostics);
       const long z_milli =
           (long)(state.pos_world[2] * 1000.0f +
                  (state.pos_world[2] >= 0.0f ? 0.5f : -0.5f));
       const long z_abs_milli = z_milli < 0L ? -z_milli : z_milli;
       const char *z_sign = z_milli < 0L ? "-" : "";
       MS5837_LOG_DIAG(
-          "MS5837 main: frame=%d z=%s%ld.%03ld connected=%d ack=%d rx_events=%lu "
-          "dma_pos=%lu recoveries=%lu errors=%lu last_error=%lu "
-          "recovery_reason=%lu",
+          "Depth main: frame=%d z=%s%ld.%03ld connected=%d ack=%d "
+          "rx_events=%lu dma_pos=%lu recoveries=%lu errors=%lu "
+          "last_error=%lu recovery_reason=%lu",
           depth_frame_ready, z_sign, z_abs_milli / 1000L, z_abs_milli % 1000L,
-          ctx_->depth_sensor->is_connected ? 1 : 0,
-          ctx_->depth_sensor->isHandshakeAcknowledged() ? 1 : 0,
-          (unsigned long)ctx_->depth_sensor->getRxEventCount(),
-          (unsigned long)ctx_->depth_sensor->getDmaWritePos(),
-          (unsigned long)ctx_->depth_sensor->getRxRecoveryCount(),
-          (unsigned long)ctx_->depth_sensor->getRxErrorCount(),
-          (unsigned long)ctx_->depth_sensor->getLastRxError(),
-          (unsigned long)ctx_->depth_sensor->getLastRxRecoveryReason());
+          diagnostics.connected ? 1 : 0,
+          diagnostics.handshake_acknowledged ? 1 : 0,
+          (unsigned long)diagnostics.rx_event_count,
+          (unsigned long)diagnostics.dma_write_pos,
+          (unsigned long)diagnostics.rx_recovery_count,
+          (unsigned long)diagnostics.rx_error_count,
+          (unsigned long)diagnostics.last_rx_error,
+          (unsigned long)diagnostics.last_rx_recovery_reason);
     }
-#else
-    if (auv::config::sys_config.system.sensors.z_data_source ==
-        auv::config::ZDataSource::USE_MS5837_Z) {
-      ctx_->depth_sensor->Read();
-      state.pos_world[2] = ctx_->depth_sensor->getMS5837Z();
-    } else if (auv::config::sys_config.system.sensors.z_data_source ==
-               auv::config::ZDataSource::USE_INS_PRESSURE_Z) {
-      state.pos_world[2] = ctx_->ins_driver->getManometerZ();
-    }
-#endif
   }
 
   // 2. 应用解锁原点平移与旋转变换

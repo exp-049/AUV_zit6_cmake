@@ -44,7 +44,7 @@ public:
 
   /**
    * @brief 轮询：读取 DMA 计数器检查新数据，增量喂给 backend->onRxByte()
-   * 由 MS5837_Driver::Read() → backend->poll() 调用（50Hz）
+   * 由 Depth_Sensor_Driver::Read() → backend->poll() 调用（50Hz）
    *
    * 不依赖 DMA 完成中断或 UART 空闲中断，纯轮询方式，
    * 避免中断风暴导致系统无法喂狗。

@@ -17,7 +17,7 @@ cmake --build --preset MS5837_CAL_DEBUG
 tick=... polls=... samples=... age_ms=... z_protocol=... temp=... connected=... handshake_ack=...
 ```
 
-- `polls`：本秒调用 `MS5837_Driver::Read()` 的次数。
+- `polls`：本秒调用 `Depth_Sensor_Driver::Read()` 的次数。
 - `samples`：收到并通过协议校验、状态有效的数据帧数量。
 - `age_ms`：最近一次有效数据距现在的时间；没有数据时为 `4294967295`。
 - `z_protocol`：协议 `depth_cm / 100.0` 后写入的 z 值。

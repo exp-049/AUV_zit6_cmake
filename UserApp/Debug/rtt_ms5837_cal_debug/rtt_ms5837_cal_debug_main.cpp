@@ -14,7 +14,7 @@
 #include "AppContext.hpp" // g_app_ctx 声明
 #include "AppMain.hpp"
 #include "SEGGER_RTT.h"
-#include "SystemContext.hpp" // MS5837_Driver 完整类型
+#include "SystemContext.hpp" // 深度驱动完整类型
 #include "cmsis_os2.h"
 #include "main.h"
 

@@ -6,7 +6,8 @@
 namespace auv::peripheral {
 class INS_Driver;
 class MotionController_Driver;
-class MS5837_Driver;
+class Depth_Sensor_Driver;
+class Pushrod_Driver;
 }
 
 namespace auv::component {
@@ -21,7 +22,8 @@ namespace system {
 struct AppContext {
   auv::peripheral::INS_Driver *ins_driver = nullptr;
   auv::peripheral::MotionController_Driver *motor_driver = nullptr;
-  auv::peripheral::MS5837_Driver *depth_sensor = nullptr;
+  auv::peripheral::Depth_Sensor_Driver *depth_sensor = nullptr;
+  auv::peripheral::Pushrod_Driver *pushrod_driver = nullptr;
   auv::component::RosLogger *logger = nullptr;
   auv::component::SoftWatchdog *watchdog = nullptr;
   auv::component::ChassisManager *chassis = nullptr;

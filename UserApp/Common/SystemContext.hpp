@@ -7,15 +7,20 @@
 // extern 对象声明需要完整类型
 #include "ChassisManager.hpp"
 #include "INS_Driver.hpp"
-#include "MS5837_Driver.hpp"
 #include "MotionController_Driver.hpp"
 #include "USBL_Driver.hpp"
+
+namespace auv::peripheral {
+class Depth_Sensor_Driver;
+class Pushrod_Driver;
+} // namespace auv::peripheral
 
 // --- 底层驱动实例（通过 AppContext 访问，此处为定义提供 extern）---
 namespace auv::peripheral {
 extern INS_Driver ins_driver;
 extern MotionController_Driver motor_driver;
-extern MS5837_Driver depth_sensor;
+extern Depth_Sensor_Driver *depth_sensor;
+extern Pushrod_Driver *pushrod_driver;
 extern USBL_Driver usbl_driver;
 } // namespace auv::peripheral
 namespace auv::component {

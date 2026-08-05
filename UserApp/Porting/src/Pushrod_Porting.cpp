@@ -1,27 +1,27 @@
-#include "MS5837_UART_Porting.hpp"
+#include "Pushrod_Porting.hpp"
 
 #include "MS5837_LogConfig.hpp"
 #include "stm32h7xx_hal_uart_ex.h"
 
 namespace {
 __attribute__((section(".dma_buffer"))) uint8_t
-    g_ms5837_uart4_dma_buffer[auv::porting::MS5837_UART_Porting::kDmaBufferSize];
+    g_ms5837_uart4_dma_buffer[auv::porting::Pushrod_Porting::kDmaBufferSize];
 }
 
 namespace auv {
 namespace porting {
 
-MS5837_UART_Porting *MS5837_UART_Porting::active_instance_ = nullptr;
+Pushrod_Porting *Pushrod_Porting::active_instance_ = nullptr;
 
-MS5837_UART_Porting::MS5837_UART_Porting(
+Pushrod_Porting::Pushrod_Porting(
     UART_HandleTypeDef *huart, auv::peripheral::UART_MS5837Backend *backend)
     : huart_(huart), backend_(backend), dma_buffer_(g_ms5837_uart4_dma_buffer) {
   MS5837_LOG_DEBUG("[MS5837 UART port] constructed, huart=%p", huart_);
 }
 
-bool MS5837_UART_Porting::transmitPort(void *ctx, const uint8_t *data,
+bool Pushrod_Porting::transmitPort(void *ctx, const uint8_t *data,
                                        uint16_t length) {
-  auto *self = static_cast<MS5837_UART_Porting *>(ctx);
+  auto *self = static_cast<Pushrod_Porting *>(ctx);
   if (self == nullptr || self->huart_ == nullptr || data == nullptr ||
       length == 0U) {
     return false;
@@ -31,57 +31,57 @@ bool MS5837_UART_Porting::transmitPort(void *ctx, const uint8_t *data,
                            100U) == HAL_OK;
 }
 
-void MS5837_UART_Porting::pollPort(void *ctx) {
+void Pushrod_Porting::pollPort(void *ctx) {
   if (ctx != nullptr) {
-    static_cast<MS5837_UART_Porting *>(ctx)->poll();
+    static_cast<Pushrod_Porting *>(ctx)->poll();
   }
 }
 
-bool MS5837_UART_Porting::startRxPort(void *ctx) {
-  return ctx != nullptr && static_cast<MS5837_UART_Porting *>(ctx)->startRx();
+bool Pushrod_Porting::startRxPort(void *ctx) {
+  return ctx != nullptr && static_cast<Pushrod_Porting *>(ctx)->startRx();
 }
 
-uint32_t MS5837_UART_Porting::getTickPort(void *ctx) {
+uint32_t Pushrod_Porting::getTickPort(void *ctx) {
   (void)ctx;
   return HAL_GetTick();
 }
 
-uint32_t MS5837_UART_Porting::getRxRecoveryCountPort(void *ctx) {
+uint32_t Pushrod_Porting::getRxRecoveryCountPort(void *ctx) {
   if (ctx == nullptr) {
     return 0U;
   }
-  return static_cast<MS5837_UART_Porting *>(ctx)->recovery_count_;
+  return static_cast<Pushrod_Porting *>(ctx)->recovery_count_;
 }
 
-uint32_t MS5837_UART_Porting::getRxErrorCountPort(void *ctx) {
+uint32_t Pushrod_Porting::getRxErrorCountPort(void *ctx) {
   return ctx != nullptr
-             ? static_cast<MS5837_UART_Porting *>(ctx)->uart_error_count_
+             ? static_cast<Pushrod_Porting *>(ctx)->uart_error_count_
              : 0U;
 }
 
-uint32_t MS5837_UART_Porting::getLastRxErrorPort(void *ctx) {
+uint32_t Pushrod_Porting::getLastRxErrorPort(void *ctx) {
   return ctx != nullptr
-             ? static_cast<MS5837_UART_Porting *>(ctx)->last_uart_error_
+             ? static_cast<Pushrod_Porting *>(ctx)->last_uart_error_
              : 0U;
 }
 
-uint32_t MS5837_UART_Porting::getLastRxRecoveryReasonPort(void *ctx) {
+uint32_t Pushrod_Porting::getLastRxRecoveryReasonPort(void *ctx) {
   return ctx != nullptr
-             ? static_cast<MS5837_UART_Porting *>(ctx)->last_recovery_reason_
+             ? static_cast<Pushrod_Porting *>(ctx)->last_recovery_reason_
              : 0U;
 }
 
-uint32_t MS5837_UART_Porting::getRxEventCountPort(void *ctx) {
+uint32_t Pushrod_Porting::getRxEventCountPort(void *ctx) {
   return ctx != nullptr
-             ? static_cast<MS5837_UART_Porting *>(ctx)->rx_event_count_
+             ? static_cast<Pushrod_Porting *>(ctx)->rx_event_count_
              : 0U;
 }
 
-uint32_t MS5837_UART_Porting::getDmaWritePosPort(void *ctx) {
+uint32_t Pushrod_Porting::getDmaWritePosPort(void *ctx) {
   if (ctx == nullptr) {
     return 0U;
   }
-  auto *self = static_cast<MS5837_UART_Porting *>(ctx);
+  auto *self = static_cast<Pushrod_Porting *>(ctx);
   if (self->huart_ == nullptr || self->huart_->hdmarx == nullptr) {
     return 0U;
   }
@@ -89,21 +89,21 @@ uint32_t MS5837_UART_Porting::getDmaWritePosPort(void *ctx) {
   return remaining <= kDmaBufferSize ? kDmaBufferSize - remaining : 0U;
 }
 
-void MS5837_UART_Porting::handleHalRxEvent(UART_HandleTypeDef *huart,
+void Pushrod_Porting::handleHalRxEvent(UART_HandleTypeDef *huart,
                                            uint16_t size) {
   if (active_instance_ != nullptr && huart == active_instance_->huart_) {
     active_instance_->onRxEvent(size);
   }
 }
 
-void MS5837_UART_Porting::handleHalError(UART_HandleTypeDef *huart) {
+void Pushrod_Porting::handleHalError(UART_HandleTypeDef *huart) {
   if (active_instance_ != nullptr && huart == active_instance_->huart_) {
     ++active_instance_->uart_error_count_;
     active_instance_->last_uart_error_ = huart->ErrorCode;
   }
 }
 
-bool MS5837_UART_Porting::startIdleDma() {
+bool Pushrod_Porting::startIdleDma() {
   if (huart_ == nullptr || huart_->hdmarx == nullptr) {
     return false;
   }
@@ -126,7 +126,7 @@ bool MS5837_UART_Porting::startIdleDma() {
   return true;
 }
 
-bool MS5837_UART_Porting::startRx() {
+bool Pushrod_Porting::startRx() {
   active_instance_ = this;
   dma_pos_ = 0U;
   last_progress_ms_ = HAL_GetTick();
@@ -142,7 +142,7 @@ bool MS5837_UART_Porting::startRx() {
   return startIdleDma();
 }
 
-void MS5837_UART_Porting::onRxEvent(uint16_t size) {
+void Pushrod_Porting::onRxEvent(uint16_t size) {
   // This runs from UART/DMA interrupt context. Do not parse protocol frames
   // or call logging here; only publish a small event for the polling task.
   last_event_size_ = size;
@@ -150,7 +150,7 @@ void MS5837_UART_Porting::onRxEvent(uint16_t size) {
   rx_event_pending_ = true;
 }
 
-bool MS5837_UART_Porting::dmaIsActive() const {
+bool Pushrod_Porting::dmaIsActive() const {
   if (huart_ == nullptr || huart_->hdmarx == nullptr ||
       huart_->hdmarx->Instance == nullptr) {
     return false;
@@ -167,7 +167,7 @@ bool MS5837_UART_Porting::dmaIsActive() const {
   return uart_rx_active && dma_stream_active;
 }
 
-void MS5837_UART_Porting::recoverRx(uint32_t now_ms, uint32_t reason) {
+void Pushrod_Porting::recoverRx(uint32_t now_ms, uint32_t reason) {
   if ((uint32_t)(now_ms - last_recovery_ms_) < kRecoveryIntervalMs) {
     return;
   }
@@ -197,7 +197,7 @@ void MS5837_UART_Porting::recoverRx(uint32_t now_ms, uint32_t reason) {
                    (unsigned long)recovery_count_, restarted ? 1 : 0);
 }
 
-void MS5837_UART_Porting::processAvailable() {
+void Pushrod_Porting::processAvailable() {
   if (huart_ == nullptr || huart_->hdmarx == nullptr || backend_ == nullptr) {
     return;
   }
@@ -232,7 +232,7 @@ void MS5837_UART_Porting::processAvailable() {
   last_progress_ms_ = HAL_GetTick();
 }
 
-void MS5837_UART_Porting::poll() {
+void Pushrod_Porting::poll() {
   if (huart_ == nullptr || huart_->hdmarx == nullptr || backend_ == nullptr) {
     return;
   }

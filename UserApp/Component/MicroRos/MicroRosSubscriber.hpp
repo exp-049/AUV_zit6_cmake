@@ -2,7 +2,7 @@
 #define __MICROROS_SUBSCRIBER_HPP
 
 #include "AppContext.hpp"
-#include "pushrod_protocol.h"
+#include "Pushrod_Backend.hpp"
 #include <rcl/rcl.h>
 #include <rclc/executor.h>
 #include <rclc/rclc.h>
@@ -97,7 +97,7 @@ private:
   uint8_t pushrod_queue_tail_ = 0U;
   uint8_t pushrod_queue_count_ = 0U;
   uint32_t pushrod_next_task_id_ = 0U;
-  pushrod_protocol_task_t pushrod_pending_task_{};
+  auv::peripheral::PushrodTask pushrod_pending_task_{};
   bool pushrod_pending_ = false;
   uint32_t pushrod_last_send_ms_ = 0U;
 

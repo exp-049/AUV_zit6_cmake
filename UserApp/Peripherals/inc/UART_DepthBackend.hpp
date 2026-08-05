@@ -1,7 +1,7 @@
 //深度计解算版方案,商家刷新率1Hz,已弃用
 #pragma once
 
-#include "MS5837_Driver.hpp" // DepthBackend
+#include "Depth_Sensor_Driver.hpp" // DepthBackend
 #include <stdint.h>
 
 namespace auv {
@@ -72,5 +72,11 @@ private:
   bool connected_ = false;
 };
 
+} // namespace peripheral
+} // namespace auv
+
+namespace auv {
+namespace peripheral {
+using Commercial_UART_Backend = UART_DepthBackend;
 } // namespace peripheral
 } // namespace auv

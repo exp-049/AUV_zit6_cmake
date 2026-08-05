@@ -17,6 +17,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Optional build-time override for the depth backend. The default remains in
+# Porting/inc/Depth_Sensor_Porting.hpp so the source tree is self-contained.
+set(AUV_DEPTH_SENSOR_BACKEND "" CACHE STRING
+    "Depth backend: 1=commercial UART, 2=self UART, 3=I2C")
+
 
 # Define the build type
 if(NOT CMAKE_BUILD_TYPE)
@@ -124,7 +129,6 @@ add_subdirectory(Common)
 add_subdirectory(Config)
 add_subdirectory(Component)
 add_subdirectory(Debug)
-add_subdirectory(Protocol)
 add_subdirectory(Peripherals)
 add_subdirectory(Porting)
 add_subdirectory(Thirdparty)
@@ -176,6 +180,11 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # HITL 仿真模式：Debug 下启用，Release 下注释即可剔除仿真代码
     $<$<CONFIG:Debug>:AUV_SIMULATION_ENABLE>
 )
+
+if(NOT AUV_DEPTH_SENSOR_BACKEND STREQUAL "")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        DEPTH_SENSOR_BACKEND=${AUV_DEPTH_SENSOR_BACKEND})
+endif()
 
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)

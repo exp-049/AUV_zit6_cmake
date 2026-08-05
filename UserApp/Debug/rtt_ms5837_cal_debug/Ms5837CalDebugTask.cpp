@@ -6,7 +6,7 @@
 #include "iwdg.h"
 #include "main.h"
 
-#include "MS5837_Driver.hpp"
+#include "Depth_Sensor_Driver.hpp"
 
 extern "C" void UserApp_Ms5837CalDebugTask(void *argument) {
   (void)argument;

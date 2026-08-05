@@ -1,7 +1,7 @@
 //IIC直连方案,载板上不稳定,已弃用
 #pragma once
 
-#include "MS5837_Driver.hpp" // DepthBackend, DepthPortOps
+#include "Depth_Sensor_Driver.hpp" // DepthBackend, DepthPortOps
 #include <stdint.h>
 
 #define MS5837_RESET 0x1E
@@ -105,5 +105,11 @@ private:
   bool connected_ = false;
 };
 
+} // namespace peripheral
+} // namespace auv
+
+namespace auv {
+namespace peripheral {
+using I2C_MS5837_Backend = I2C_DepthBackend;
 } // namespace peripheral
 } // namespace auv

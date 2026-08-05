@@ -13,7 +13,7 @@ I2C_DepthBackend::I2C_DepthBackend(DepthPortOps ops, uint8_t slave_addr)
       fluidDensity_(1029) {}
 
 // 轮询任务入口（FreeRTOS 任务函数）
-// 注意：不在此处调用 init()，init() 已在 MS5837_Driver::Init() 中完成
+// 注意：不在此处调用 init()，init() 已在 Depth_Sensor_Driver::Init() 中完成
 void I2C_DepthBackend::pollingTask(void *arg) {
   auto *self = static_cast<I2C_DepthBackend *>(arg);
 
