@@ -1,15 +1,7 @@
 # Peripherals: hardware driver abstraction
-target_sources(${PROJECT_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/INS_Driver.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/MotionController_Driver.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Depth_Sensor_Driver.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Pushrod_Driver.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/USBL_Driver.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/I2C_DepthBackend.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/UART_DepthBackend.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/UART_MS5837Backend.cpp
-)
-
-target_include_directories(${PROJECT_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/inc
-)
+add_subdirectory(DepthSensor)
+add_subdirectory(Pushrod)
+add_subdirectory(Presets)
+add_subdirectory(INS)
+add_subdirectory(MotionController)
+add_subdirectory(USBL)

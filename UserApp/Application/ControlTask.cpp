@@ -1,4 +1,5 @@
 #include "ControlTask.hpp"
+#include "Pushrod_Porting_Config.h"
 #include "AppMain.hpp"
 #include "../Component/Chassis/ChassisManager.hpp"
 #include "../Component/HitlSimulator/HitlSimulator.hpp"
@@ -8,10 +9,11 @@
 #include "../Peripherals/HAL/Core/Inc/main.h"
 #include "../Peripherals/HAL/Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h"
 #include "../Peripherals/HAL/Middlewares/Third_Party/FreeRTOS/Source/include/task.h"
-#include "../Porting/inc/INS_Porting.hpp"
-#include "../Peripherals/inc/INS_Driver.hpp"
-#include "../Peripherals/inc/Depth_Sensor_Driver.hpp"
-#include "../Peripherals/inc/MS5837_LogConfig.hpp"
+#include "INS_Porting.hpp"
+#include "INS_Driver.hpp"
+#include "Depth_Sensor_Driver.hpp"
+#include "Pushrod_Driver.hpp"
+#include "MS5837_LogConfig.hpp"
 #include <cstring>
 
 #if AUV_SIMULATION_ENABLE
@@ -83,6 +85,14 @@ void ControlTask::init() {
   ctx_->depth_sensor->Init();
   ctx_->depth_sensor->start();
 
+#if AUV_PRESET_USES_GPIO_PUSHROD
+  // The GPIO backend owns its PB7/PB8 lifecycle. The self-UART backend is
+  // intentionally not initialized here a second time because the depth
+  // driver owns the shared UART4 DMA lifecycle.
+  ctx_->pushrod_driver->Init();
+  ctx_->pushrod_driver->start();
+#endif
+
   ROS_LOG_INFO("System ControlTask initialized");
 
   last_wake_time_ = xTaskGetTickCount();
@@ -149,14 +159,14 @@ void ControlTask::updateNavigation() {
       }
     }
 
+    // The selected Depth_Sensor_Driver is the single physical Z source in
+    // NORMAL mode. Read() first polls the selected backend and then exposes
+    // its latest valid sample through getMS5837Z(). Do not gate this copy on
+    // the legacy runtime z_data_source enum: when that enum is
+    // USE_INS_INTEGRATED_Z, the old code silently left pos_world[2] at the
+    // INS value (normally zero), even though the depth backend was running.
     const int depth_frame_ready = ctx_->depth_sensor->Read();
-    if (auv::config::sys_config.system.sensors.z_data_source ==
-        auv::config::ZDataSource::USE_MS5837_Z) {
-      state.pos_world[2] = ctx_->depth_sensor->getMS5837Z();
-    } else if (auv::config::sys_config.system.sensors.z_data_source ==
-               auv::config::ZDataSource::USE_INS_PRESSURE_Z) {
-      state.pos_world[2] = ctx_->ins_driver->getManometerZ();
-    }
+    state.pos_world[2] = ctx_->depth_sensor->getMS5837Z();
 
     // Keep one backend-independent diagnostic snapshot for all three depth
     // implementations. UART-only fields are zero for I2C and commercial
@@ -172,19 +182,33 @@ void ControlTask::updateNavigation() {
                  (state.pos_world[2] >= 0.0f ? 0.5f : -0.5f));
       const long z_abs_milli = z_milli < 0L ? -z_milli : z_milli;
       const char *z_sign = z_milli < 0L ? "-" : "";
+      char rx_preview_hex[33] = {};
+      static constexpr char kHex[] = "0123456789ABCDEF";
+      for (uint8_t i = 0U; i < diagnostics.rx_preview_count; ++i) {
+        rx_preview_hex[i * 2U] =
+            kHex[(diagnostics.rx_preview[i] >> 4U) & 0x0FU];
+        rx_preview_hex[i * 2U + 1U] = kHex[diagnostics.rx_preview[i] & 0x0FU];
+      }
       MS5837_LOG_DIAG(
           "Depth main: frame=%d z=%s%ld.%03ld connected=%d ack=%d "
-          "rx_events=%lu dma_pos=%lu recoveries=%lu errors=%lu "
-          "last_error=%lu recovery_reason=%lu",
+          "bytes=%lu valid=%lu data=%lu rx=%lu pos=%lu err=%lu",
           depth_frame_ready, z_sign, z_abs_milli / 1000L, z_abs_milli % 1000L,
           diagnostics.connected ? 1 : 0,
           diagnostics.handshake_acknowledged ? 1 : 0,
+          (unsigned long)diagnostics.rx_byte_count,
+          (unsigned long)diagnostics.valid_frame_count,
+          (unsigned long)diagnostics.data_frame_count,
           (unsigned long)diagnostics.rx_event_count,
           (unsigned long)diagnostics.dma_write_pos,
-          (unsigned long)diagnostics.rx_recovery_count,
-          (unsigned long)diagnostics.rx_error_count,
-          (unsigned long)diagnostics.last_rx_error,
-          (unsigned long)diagnostics.last_rx_recovery_reason);
+          (unsigned long)diagnostics.rx_error_count);
+      MS5837_LOG_DIAG(
+          "Depth proto: parse=%lu hs=%lu push=%lu nr=%lu last=%02x/%u raw=%s",
+          (unsigned long)diagnostics.parser_error_count,
+          (unsigned long)diagnostics.handshake_ack_count,
+          (unsigned long)diagnostics.pushrod_ack_count,
+          (unsigned long)diagnostics.sensor_not_ready_count,
+          (unsigned int)diagnostics.last_frame_type,
+          (unsigned int)diagnostics.last_frame_length, rx_preview_hex);
     }
   }
 

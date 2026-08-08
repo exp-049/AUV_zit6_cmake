@@ -16,7 +16,8 @@
             "inherits": "default",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "AUV_APP_MODE": "NORMAL"
+                "AUV_APP_MODE": "NORMAL",
+                "AUV_HARDWARE_PRESET": "1"
             }
         },
         {
@@ -24,7 +25,8 @@
             "inherits": "default",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "AUV_APP_MODE": "NORMAL"
+                "AUV_APP_MODE": "NORMAL",
+                "AUV_HARDWARE_PRESET": "1"
             }
         },
         {
@@ -32,7 +34,8 @@
             "inherits": "default",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "AUV_APP_MODE": "MS5837_CAL_DEBUG"
+                "AUV_APP_MODE": "MS5837_CAL_DEBUG",
+                "AUV_HARDWARE_PRESET": "1"
             }
         },
         {
@@ -40,7 +43,26 @@
             "inherits": "default",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "AUV_APP_MODE": "USBL_DEBUG"
+                "AUV_APP_MODE": "USBL_DEBUG",
+                "AUV_HARDWARE_PRESET": "1"
+            }
+        },
+        {
+            "name": "INS_DEBUG",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "AUV_APP_MODE": "INS_DEBUG",
+                "AUV_HARDWARE_PRESET": "1"
+            }
+        },
+        {
+            "name": "PUSHROD_DEBUG",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "AUV_APP_MODE": "PUSHROD_DEBUG",
+                "AUV_HARDWARE_PRESET": "2"
             }
         },
         {
@@ -48,7 +70,57 @@
             "inherits": "default",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "AUV_APP_MODE": "MOTION_DEBUG"
+                "AUV_APP_MODE": "MOTION_DEBUG",
+                "AUV_HARDWARE_PRESET": "1"
+            }
+        },
+        {
+            "name": "Debug-SelfCalcBoard",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "1"
+            }
+        },
+        {
+            "name": "Debug-SelfDepth-GpioPushrod",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "2"
+            }
+        },
+        {
+            "name": "Debug-CommercialDepth",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "3"
+            }
+        },
+        {
+            "name": "Debug-M14Depth",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "4"
+            }
+        },
+        {
+            "name": "Debug-I2CDepth",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "5"
+            }
+        },
+        {
+            "name": "Debug-CommercialDepth-GpioPushrod",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "6"
+            }
+        },
+        {
+            "name": "Debug-M14Depth-GpioPushrod",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "7"
             }
         }
     ],
@@ -70,8 +142,44 @@
             "configurePreset": "USBL_DEBUG"
         },
         {
+            "name": "INS_DEBUG",
+            "configurePreset": "INS_DEBUG"
+        },
+        {
+            "name": "PUSHROD_DEBUG",
+            "configurePreset": "PUSHROD_DEBUG"
+        },
+        {
             "name": "MOTION_DEBUG",
             "configurePreset": "MOTION_DEBUG"
+        },
+        {
+            "name": "Debug-SelfCalcBoard",
+            "configurePreset": "Debug-SelfCalcBoard"
+        },
+        {
+            "name": "Debug-SelfDepth-GpioPushrod",
+            "configurePreset": "Debug-SelfDepth-GpioPushrod"
+        },
+        {
+            "name": "Debug-CommercialDepth",
+            "configurePreset": "Debug-CommercialDepth"
+        },
+        {
+            "name": "Debug-M14Depth",
+            "configurePreset": "Debug-M14Depth"
+        },
+        {
+            "name": "Debug-I2CDepth",
+            "configurePreset": "Debug-I2CDepth"
+        },
+        {
+            "name": "Debug-CommercialDepth-GpioPushrod",
+            "configurePreset": "Debug-CommercialDepth-GpioPushrod"
+        },
+        {
+            "name": "Debug-M14Depth-GpioPushrod",
+            "configurePreset": "Debug-M14Depth-GpioPushrod"
         }
     ]
 }

@@ -1,9 +1,9 @@
 # 与 VIT6 下位机的通信协议（按当前代码实现）
 
 本文档对应当前仓库中的：
-- `UserApp/Peripherals/inc/MotionController_Driver.hpp`
-- `UserApp/Peripherals/src/MotionController_Driver.cpp`
-- `UserApp/Porting/src/MotionController_Porting.cpp`
+- `UserApp/Peripherals/MotionController/inc/MotionController_Driver.hpp`
+- `UserApp/Peripherals/MotionController/src/MotionController_Driver.cpp`
+- `UserApp/Porting/MotionController/src/MotionController_Porting.cpp`
 - `UserApp/Common/AppContext.cpp`
 
 ---

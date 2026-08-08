@@ -6,8 +6,10 @@
 
 调试线程不再直接操作 HAL UART/DMA，也不重复实现帧解析。公共链路由以下两层提供：
 
-- `UserApp/Peripherals/inc/USBL_Driver.hpp` / `src/USBL_Driver.cpp`：USBL 协议组件，负责帧同步、校验和字段解析。
-- `UserApp/Porting/inc/USBL_Porting.hpp` / `src/USBL_Porting.cpp`：USART3 Circular DMA + IDLE 硬件移植层，负责环形缓冲读指针和 DMA 诊断。
+- `UserApp/Peripherals/USBL/inc/USBL_Driver.hpp` /
+  `UserApp/Peripherals/USBL/src/USBL_Driver.cpp`：USBL 协议组件，负责帧同步、校验和字段解析。
+- `UserApp/Porting/USBL/inc/USBL_Porting.hpp` /
+  `UserApp/Porting/USBL/src/USBL_Porting.cpp`：USART3 Circular DMA + IDLE 硬件移植层，负责环形缓冲读指针和 DMA 诊断。
 
 `UsblDebugTask.cpp` 只通过 `AppContext::usbl_driver` 调用 `init()`、`update()`、`copyLastFrame()` 和 `getDiagnostics()`，因此 Debug 输出与 NORMAL 使用的是同一套驱动链路。
 

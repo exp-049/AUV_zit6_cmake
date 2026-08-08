@@ -1,7 +1,7 @@
 # INS_DEBUG
 
 `INS_DEBUG` 复用 NORMAL 使用的 `INS_Driver` 和 `INS_Porting`，只替换应用启动任务，
-通过 RTT 输出 USART1 接收的有效 NAV-300/UNAV-IP 帧。
+通过 RTT 输出 USART1 接收的有效 NAV-300 帧。
 
 ## 硬件与协议
 
@@ -9,7 +9,11 @@
 - 引脚：CubeMX 当前映射为 PB14/PB15
 - 接收：512 字节 Circular DMA，任务轮询 DMA 写指针
 - 配置：256000、8 数据位、1 停止位、无校验
-- 帧：`FA AF` + 133 字节定长帧 + XOR（偏移 0..129，结果在 130）+ `FB BF`
+- 当前调试链路使用 PDF 中“室外 GPS/SINS/DVL”格式：`FA AF` + 133 字节定长帧，
+  XOR 校验范围为偏移 0..129，校验字节在 130，帧尾为 `FB BF`（131..132）。
+- PDF 同时定义了 93 字节“室内 SINS/DVL”格式；当前公共 `INS_Driver` 只接收上面的
+  133 字节格式，因此设备若输出 93 字节帧，RTT 的 `valid` 不会增加。
+- PDF 中经纬度的 int32 缩放为 `1e6`；RTT 字段表按该缩放显示。
 
 ## 构建与烧录
 

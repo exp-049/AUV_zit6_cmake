@@ -1,6 +1,7 @@
 #include "MicroRosTask.hpp"
 #include "AppMain.hpp"
 #include "FreeRTOS.h"
+#include "RosLogger.hpp"
 #include "SoftWatchdog.hpp"
 #include "cJSON.h"
 #include "main.h"
@@ -29,16 +30,18 @@ void MicroRosTask::run() {
   }
 
   last_wake_time_ = xTaskGetTickCount();
-  last_agent_ping_ok_ms_ = HAL_GetTick();
-
   for (;;) {
+    // Keep NORMAL-mode watchdog behavior identical to the known-good 7/22
+    // firmware. Agent availability is a communication state, not a reason to
+    // reset the local control firmware while its tasks are alive.
+    ctx_->watchdog->feed(auv::component::SoftWatchdog::Component::MICROROS);
+
     uint32_t now_ms = HAL_GetTick();
 
     switch (state_) {
     case State::WAITING_AGENT:
       // 每 100ms 探测一次 Agent
       if (transport_.pingAgent(200, 1)) {
-        last_agent_ping_ok_ms_ = HAL_GetTick();
         connectAgent();
       } else {
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -49,9 +52,7 @@ void MicroRosTask::run() {
       // 每 2s 检查 Agent 在线状态
       if (now_ms - last_ping_ms_ >= 2000) {
         last_ping_ms_ = now_ms;
-        if (transport_.pingAgent(100, 1)) {
-          last_agent_ping_ok_ms_ = HAL_GetTick();
-        } else {
+        if (!transport_.pingAgent(100, 1)) {
           disconnectAgent();
           break;
         }
@@ -62,18 +63,15 @@ void MicroRosTask::run() {
 
       // 推杆协议 ACK/重发由 micro-ROS 任务周期驱动，避免在 ROS 回调中
       // 阻塞等待 UART 响应。
-      subscriber_.update(now_ms);
+      // The executor may run a subscription callback immediately before this
+      // call. Use a fresh tick: a GPIO pushrod task records its start time in
+      // the callback, so reusing the tick captured before spin_some() can make
+      // (now - start) underflow and complete a multi-second task instantly.
+      subscriber_.update(HAL_GetTick());
 
       // 定时发布状态
       publisher_.publish(now_ms);
       break;
-    }
-
-    // Agent 连续 5 秒未 ping 成功后，停止喂 micro-ROS 软件看门狗。
-    // MonitorTask 随后会停止刷新硬件 IWDG，最终触发 MCU 复位。
-    now_ms = HAL_GetTick();
-    if (now_ms - last_agent_ping_ok_ms_ <= kAgentPingWatchdogTimeoutMs) {
-      ctx_->watchdog->feed(auv::component::SoftWatchdog::Component::MICROROS);
     }
 
     vTaskDelayUntil(&last_wake_time_, pdMS_TO_TICKS(kLoopPeriodMs));
@@ -87,25 +85,30 @@ void MicroRosTask::run() {
 void MicroRosTask::connectAgent() {
   // 初始化 Transport（创建 support / node / executor）
   if (!transport_.init("zit6_node", "", 18)) {
+    ROS_LOG_ERROR("micro-ROS transport init failed");
     return; // 初始化失败，保持 WAITING_AGENT
   }
 
   // 按依赖顺序初始化各模块
   if (!subscriber_.init(&transport_.getNode(), &transport_.getExecutor())) {
+    ROS_LOG_ERROR("micro-ROS subscriber core init failed");
     disconnectAgent();
     return;
   }
   if (!service_.init(&transport_.getNode(), &transport_.getExecutor())) {
+    ROS_LOG_ERROR("micro-ROS service init failed");
     disconnectAgent();
     return;
   }
   if (!publisher_.init(&transport_.getNode())) {
+    ROS_LOG_ERROR("micro-ROS publisher init failed");
     disconnectAgent();
     return;
   }
 
   state_ = State::AGENT_CONNECTED;
   last_ping_ms_ = HAL_GetTick();
+  ROS_LOG_INFO("micro-ROS Agent connected; state publishers ready");
 }
 
 void MicroRosTask::disconnectAgent() {

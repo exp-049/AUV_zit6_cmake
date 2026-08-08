@@ -4,11 +4,23 @@
         {
             "label": "Build Firmware",
             "type": "shell",
-            "command": "cmake --build --preset Debug",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${command:cmake.buildDirectory}",
+                "--"
+            ],
             "group": "build",
             "problemMatcher": [
                 "$gcc"
             ]
+        },
+        {
+            "label": "Build SelfCalcBoard Firmware",
+            "type": "shell",
+            "command": "cmake --build --preset Debug-SelfCalcBoard",
+            "group": "build",
+            "problemMatcher": ["$gcc"]
         },
         {
             "label": "Build MS5837 CAL Debug",
@@ -28,6 +40,13 @@
             "label": "Build INS Debug",
             "type": "shell",
             "command": "cmake --build --preset INS_DEBUG",
+            "group": "build",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Build Pushrod Debug",
+            "type": "shell",
+            "command": "cmake --build --preset PUSHROD_DEBUG",
             "group": "build",
             "problemMatcher": ["$gcc"]
         },
@@ -58,9 +77,36 @@
                 "load.pre_reset=off",
                 "-O",
                 "load.post_reset=sysresetreq",
-                "${workspaceFolder}/build/Debug/UserApp/AUV_zit6.elf"
+                "${command:cmake.getLaunchTargetPath}"
             ],
             "dependsOn": "Build Firmware",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash SelfCalcBoard Firmware (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "load",
+                "--target",
+                "stm32h743xx",
+                "--uid",
+                "6894719E6D7C",
+                "--frequency",
+                "2m",
+                "--connect",
+                "attach",
+                "--erase",
+                "sector",
+                "-O",
+                "load.pre_reset=off",
+                "-O",
+                "load.post_reset=sysresetreq",
+                "${workspaceFolder}/build/Debug-SelfCalcBoard/UserApp/AUV_zit6.elf"
+            ],
+            "dependsOn": "Build SelfCalcBoard Firmware",
             "dependsOrder": "sequence",
             "group": "build",
             "problemMatcher": []
@@ -148,6 +194,21 @@
             "problemMatcher": []
         },
         {
+            "label": "Flash Pushrod Debug (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "load", "--target", "stm32h743xx", "--uid", "6894719E6D7C",
+                "--frequency", "2m", "--connect", "attach", "--erase", "sector",
+                "-O", "load.pre_reset=off", "-O", "load.post_reset=sysresetreq",
+                "${workspaceFolder}/build/PUSHROD_DEBUG/UserApp/AUV_zit6.elf"
+            ],
+            "dependsOn": "Build Pushrod Debug",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
             "label": "Flash Motion Debug (DAPLink)",
             "type": "shell",
             "command": "${env:HOME}/.local/bin/pyocd",
@@ -220,14 +281,18 @@
         {
             "label": "Flash Firmware (ST-Link)",
             "type": "shell",
-            "command": "openocd -f interface/stlink.cfg -c 'transport select hla_swd' -c 'adapter speed 100' -f target/stm32h7x.cfg -c 'program build/Debug/UserApp/AUV_zit6.elf verify reset exit'",
+            "command": "openocd -f interface/stlink.cfg -c 'transport select hla_swd' -c 'adapter speed 100' -f target/stm32h7x.cfg -c 'program ${command:cmake.getLaunchTargetPath} verify reset exit'",
+            "dependsOn": "Build Firmware",
+            "dependsOrder": "sequence",
             "group": "build",
             "problemMatcher": []
         },
         {
             "label": "Flash Firmware (J-Link)",
             "type": "shell",
-            "command": "openocd -f interface/jlink.cfg -c 'transport select swd' -c 'adapter speed 100' -c 'reset_config srst_only srst_nogate connect_assert_srst' -f target/stm32h7x.cfg -c 'program build/Debug/UserApp/AUV_zit6.elf verify reset exit'",
+            "command": "openocd -f interface/jlink.cfg -c 'transport select swd' -c 'adapter speed 100' -c 'reset_config srst_only srst_nogate connect_assert_srst' -f target/stm32h7x.cfg -c 'program ${command:cmake.getLaunchTargetPath} verify reset exit'",
+            "dependsOn": "Build Firmware",
+            "dependsOrder": "sequence",
             "group": "build",
             "problemMatcher": []
         }

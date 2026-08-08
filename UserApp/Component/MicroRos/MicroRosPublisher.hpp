@@ -52,8 +52,21 @@ private:
   auv::system::AppContext *ctx_;
 
   // --- 发布器句柄 ---
-  rcl_publisher_t pos_pub_, vel_pub_, thr_pub_, zithbt_pub_, status_pub_,
-      usbl_pub_, log_pub_;
+  rcl_publisher_t pos_pub_{};
+  rcl_publisher_t vel_pub_{};
+  rcl_publisher_t thr_pub_{};
+  rcl_publisher_t zithbt_pub_{};
+  rcl_publisher_t status_pub_{};
+  rcl_publisher_t usbl_pub_{};
+  rcl_publisher_t log_pub_{};
+
+  bool pos_pub_initialized_ = false;
+  bool vel_pub_initialized_ = false;
+  bool thr_pub_initialized_ = false;
+  bool zithbt_pub_initialized_ = false;
+  bool status_pub_initialized_ = false;
+  bool usbl_pub_initialized_ = false;
+  bool log_pub_initialized_ = false;
 
   // --- 消息缓冲区（栈分配，生命周期与类绑定） ---
   std_msgs__msg__Float32MultiArray pos_fb_msg_, vel_fb_msg_, thr_fb_msg_;

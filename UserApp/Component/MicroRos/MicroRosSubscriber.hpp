@@ -55,8 +55,24 @@ public:
 
 private:
   // ---------- 订阅句柄 ----------
-  rcl_subscription_t setpoint_sub_, arm_sub_, ins_cmd_sub_, servo_sub_,
-      led_sub_, sim_nav_sub_, pushrod_sub_;
+  rcl_subscription_t setpoint_sub_{};
+  rcl_subscription_t arm_sub_{};
+  rcl_subscription_t ins_cmd_sub_{};
+  rcl_subscription_t servo_sub_{};
+  rcl_subscription_t led_sub_{};
+  rcl_subscription_t sim_nav_sub_{};
+  rcl_subscription_t pushrod_sub_{};
+
+  // rclc may fail after only part of the subscription set was created. Keep
+  // explicit ownership bits so reconnect cleanup never finalizes garbage.
+  bool setpoint_sub_initialized_ = false;
+  bool arm_sub_initialized_ = false;
+  bool ins_cmd_sub_initialized_ = false;
+  bool servo_sub_initialized_ = false;
+  bool led_sub_initialized_ = false;
+  bool sim_nav_sub_initialized_ = false;
+  bool pushrod_sub_initialized_ = false;
+  bool pushrod_sub_registered_ = false;
 
   // ---------- 消息缓冲区 ----------
   zit6_interfaces__msg__ZitSetpoint setpoint_msg_;

@@ -53,6 +53,12 @@ constexpr osThreadAttr_t kInsDebugTaskAttributes = {
     .priority = osPriorityNormal,
 };
 
+constexpr osThreadAttr_t kPushrodDebugTaskAttributes = {
+    .name = "pushrod_debug",
+    .stack_size = 2048U * 4U,
+    .priority = osPriorityNormal,
+};
+
 constexpr osThreadAttr_t kMotionDebugTaskAttributes = {
     .name = "motion_debug",
     .stack_size = 2048U * 4U,
@@ -96,6 +102,12 @@ extern "C" void UserApp_Start(void) {
 #elif AUV_APP_MODE == 3
   if (osThreadNew(UserApp_InsDebugTask, nullptr,
                   &kInsDebugTaskAttributes) == nullptr) {
+    Error_Handler();
+  }
+  osThreadExit();
+#elif AUV_APP_MODE == 5
+  if (osThreadNew(UserApp_PushrodDebugTask, nullptr,
+                  &kPushrodDebugTaskAttributes) == nullptr) {
     Error_Handler();
   }
   osThreadExit();

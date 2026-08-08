@@ -21,6 +21,17 @@ MicroRosSubscriber *MicroRosSubscriber::instance_ = nullptr;
 bool MicroRosSubscriber::init(rcl_node_t *node, rclc_executor_t *executor) {
   instance_ = this;
 
+  // init() may run again after an Agent reconnect. cleanup() owns the old
+  // handles; these flags describe only the new connection.
+  setpoint_sub_initialized_ = false;
+  arm_sub_initialized_ = false;
+  ins_cmd_sub_initialized_ = false;
+  servo_sub_initialized_ = false;
+  led_sub_initialized_ = false;
+  sim_nav_sub_initialized_ = false;
+  pushrod_sub_initialized_ = false;
+  pushrod_sub_registered_ = false;
+
   // 初始化消息
   std_msgs__msg__UInt32__init(&arm_msg_);
   std_msgs__msg__UInt8__init(&ins_cmd_msg_);
@@ -34,61 +45,114 @@ bool MicroRosSubscriber::init(rcl_node_t *node, rclc_executor_t *executor) {
   sim_nav_msg_.data.size = 12;
   sim_nav_msg_.data.capacity = 12;
 
-  // 创建订阅
-  auto ok = [](rcl_ret_t ret) { return ret == RCL_RET_OK; };
-
-  if (!ok(rclc_subscription_init_default(
-          &led_sub_, node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
-          "/zit6/cmd/light")))
-    return false;
-  if (!ok(rclc_subscription_init_default(
-          &servo_sub_, node,
-          ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
-          "/zit6/cmd/servo")))
-    return false;
-  if (!ok(rclc_subscription_init_default(
-          &setpoint_sub_, node,
-          ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitSetpoint),
-          "/zit6/cmd/setpoint")))
-    return false;
-  if (!ok(rclc_subscription_init_default(
-          &sim_nav_sub_, node,
-          ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-          "/zit6/sim/nav")))
-    return false;
-  if (!ok(rclc_subscription_init_default(
-          &arm_sub_, node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt32),
-          "/zit6/cmd/agxhbt")))
-    return false;
-  if (!ok(rclc_subscription_init_default(
-          &ins_cmd_sub_, node,
-          ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8), "/zit6/cmd/ins")))
-    return false;
-  if (!ok(rclc_subscription_init_default(
-          &pushrod_sub_, node,
-          ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitPushrod),
-          "/zit6/cmd/pushrod")))
-    return false;
-
-  // 注册到 executor
-  auto add_subscription = [&](rcl_subscription_t *subscription, void *message,
-                              rclc_subscription_callback_t callback) {
-    return ok(rclc_executor_add_subscription(
-        executor, subscription, message, callback, ON_NEW_DATA));
+  // 创建订阅。记录具体失败点；此前这里的错误被吞掉，导致上层只看到
+  // publisher 不存在，无法判断是 Agent、接口还是 executor 出错。
+  auto logFailure = [](const char *stage, rcl_ret_t ret) {
+    ROS_LOG_ERROR("micro-ROS subscriber %s failed, rc=%d", stage,
+                  static_cast<int>(ret));
+    rcl_reset_error();
   };
-  if (!add_subscription(&setpoint_sub_, &setpoint_msg_,
-                        &MicroRosSubscriber::setpointCb) ||
-      !add_subscription(&arm_sub_, &arm_msg_, &MicroRosSubscriber::armCb) ||
-      !add_subscription(&ins_cmd_sub_, &ins_cmd_msg_,
-                        &MicroRosSubscriber::insCmdCb) ||
-      !add_subscription(&servo_sub_, &servo_msg_,
-                        &MicroRosSubscriber::servoCb) ||
-      !add_subscription(&led_sub_, &led_msg_, &MicroRosSubscriber::ledCb) ||
-      !add_subscription(&sim_nav_sub_, &sim_nav_msg_,
-                        &MicroRosSubscriber::simNavCb) ||
-      !add_subscription(&pushrod_sub_, &pushrod_msg_,
-                        &MicroRosSubscriber::pushrodCb))
+  auto ok = [&](const char *stage, rcl_ret_t ret) {
+    if (ret == RCL_RET_OK)
+      return true;
+    logFailure(stage, ret);
     return false;
+  };
+
+  rcl_ret_t rc = rclc_subscription_init_default(
+      &led_sub_, node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
+      "/zit6/cmd/light");
+  if (!ok("/zit6/cmd/light init", rc))
+    return false;
+  led_sub_initialized_ = true;
+
+  rc = rclc_subscription_init_default(
+      &servo_sub_, node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
+      "/zit6/cmd/servo");
+  if (!ok("/zit6/cmd/servo init", rc))
+    return false;
+  servo_sub_initialized_ = true;
+
+  rc = rclc_subscription_init_default(
+      &setpoint_sub_, node,
+      ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitSetpoint),
+      "/zit6/cmd/setpoint");
+  if (!ok("/zit6/cmd/setpoint init", rc))
+    return false;
+  setpoint_sub_initialized_ = true;
+
+  rc = rclc_subscription_init_default(
+      &sim_nav_sub_, node,
+      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+      "/zit6/sim/nav");
+  if (!ok("/zit6/sim/nav init", rc))
+    return false;
+  sim_nav_sub_initialized_ = true;
+
+  rc = rclc_subscription_init_default(
+      &arm_sub_, node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt32),
+      "/zit6/cmd/agxhbt");
+  if (!ok("/zit6/cmd/agxhbt init", rc))
+    return false;
+  arm_sub_initialized_ = true;
+
+  rc = rclc_subscription_init_default(
+      &ins_cmd_sub_, node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
+      "/zit6/cmd/ins");
+  if (!ok("/zit6/cmd/ins init", rc))
+    return false;
+  ins_cmd_sub_initialized_ = true;
+
+  // 推杆消息是 7/22 固件之后加入的。它不能阻断核心状态发布，否则
+  // Agent/接口包版本不一致时会同时丢失 /zit6/cmd/pushrod 和 /state/pos。
+  // 若初始化成功，仍按正常路径注册；失败则保留错误码并让 NORMAL 继续。
+  rc = rclc_subscription_init_default(
+      &pushrod_sub_, node,
+      ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitPushrod),
+      "/zit6/cmd/pushrod");
+  if (rc == RCL_RET_OK) {
+    pushrod_sub_initialized_ = true;
+  } else {
+    logFailure("/zit6/cmd/pushrod init (optional)", rc);
+  }
+
+  auto add_subscription = [&](const char *stage,
+                              rcl_subscription_t *subscription,
+                              bool initialized, void *message,
+                              rclc_subscription_callback_t callback) {
+    if (!initialized)
+      return false;
+    return ok(stage, rclc_executor_add_subscription(
+                         executor, subscription, message, callback,
+                         ON_NEW_DATA));
+  };
+  if (!add_subscription("setpoint executor", &setpoint_sub_,
+                        setpoint_sub_initialized_, &setpoint_msg_,
+                        &MicroRosSubscriber::setpointCb) ||
+      !add_subscription("arm executor", &arm_sub_, arm_sub_initialized_,
+                        &arm_msg_, &MicroRosSubscriber::armCb) ||
+      !add_subscription("ins executor", &ins_cmd_sub_,
+                        ins_cmd_sub_initialized_, &ins_cmd_msg_,
+                        &MicroRosSubscriber::insCmdCb) ||
+      !add_subscription("servo executor", &servo_sub_, servo_sub_initialized_,
+                        &servo_msg_, &MicroRosSubscriber::servoCb) ||
+      !add_subscription("light executor", &led_sub_, led_sub_initialized_,
+                        &led_msg_, &MicroRosSubscriber::ledCb) ||
+      !add_subscription("sim_nav executor", &sim_nav_sub_,
+                        sim_nav_sub_initialized_, &sim_nav_msg_,
+                        &MicroRosSubscriber::simNavCb))
+    return false;
+
+  if (pushrod_sub_initialized_) {
+    rc = rclc_executor_add_subscription(
+        executor, &pushrod_sub_, &pushrod_msg_,
+        &MicroRosSubscriber::pushrodCb, ON_NEW_DATA);
+    if (rc == RCL_RET_OK) {
+      pushrod_sub_registered_ = true;
+    } else {
+      logFailure("pushrod executor (optional)", rc);
+    }
+  }
 
   return true;
 }
@@ -98,13 +162,31 @@ bool MicroRosSubscriber::init(rcl_node_t *node, rclc_executor_t *executor) {
 // ============================================================================
 
 void MicroRosSubscriber::cleanup(rcl_node_t *node) {
-  rcl_subscription_fini(&setpoint_sub_, node);
-  rcl_subscription_fini(&arm_sub_, node);
-  rcl_subscription_fini(&ins_cmd_sub_, node);
-  rcl_subscription_fini(&servo_sub_, node);
-  rcl_subscription_fini(&led_sub_, node);
-  rcl_subscription_fini(&sim_nav_sub_, node);
-  rcl_subscription_fini(&pushrod_sub_, node);
+  if (setpoint_sub_initialized_)
+    rcl_subscription_fini(&setpoint_sub_, node);
+  if (arm_sub_initialized_)
+    rcl_subscription_fini(&arm_sub_, node);
+  if (ins_cmd_sub_initialized_)
+    rcl_subscription_fini(&ins_cmd_sub_, node);
+  if (servo_sub_initialized_)
+    rcl_subscription_fini(&servo_sub_, node);
+  if (led_sub_initialized_)
+    rcl_subscription_fini(&led_sub_, node);
+  if (sim_nav_sub_initialized_)
+    rcl_subscription_fini(&sim_nav_sub_, node);
+  if (pushrod_sub_initialized_)
+    rcl_subscription_fini(&pushrod_sub_, node);
+
+  setpoint_sub_initialized_ = false;
+  arm_sub_initialized_ = false;
+  ins_cmd_sub_initialized_ = false;
+  servo_sub_initialized_ = false;
+  led_sub_initialized_ = false;
+  sim_nav_sub_initialized_ = false;
+  pushrod_sub_initialized_ = false;
+  pushrod_sub_registered_ = false;
+  if (instance_ == this)
+    instance_ = nullptr;
 }
 
 void MicroRosSubscriber::update(uint32_t now_ms) { updatePushrod(now_ms); }
@@ -188,27 +270,34 @@ void MicroRosSubscriber::onInsCommand(const void *msgin) {
   if (message == nullptr)
     return;
   switch (message->data) {
-  case 1:
-    ctx_->ins_driver->setDvlPower(true);
-    ROS_LOG_INFO("INS Cmd: DVL Power ON");
+  case 1: {
+    const bool sent = ctx_->ins_driver->setDvlPower(true);
+    ROS_LOG_INFO("INS Cmd: DVL Power ON, tx=%s", sent ? "ok" : "failed");
     break;
-  case 2:
-    ctx_->ins_driver->setDvlPower(false);
-    ROS_LOG_INFO("INS Cmd: DVL Power OFF");
+  }
+  case 2: {
+    const bool sent = ctx_->ins_driver->setDvlPower(false);
+    ROS_LOG_INFO("INS Cmd: DVL Power OFF, tx=%s", sent ? "ok" : "failed");
     break;
-  case 3:
-    ctx_->ins_driver->restart();
-    ROS_LOG_INFO("INS Cmd: INS Restart");
+  }
+  case 3: {
+    const bool sent = ctx_->ins_driver->restart();
+    ROS_LOG_INFO("INS Cmd: INS Restart, tx=%s", sent ? "ok" : "failed");
     break;
-  case 4:
-    ctx_->ins_driver->resetPosition();
-    ROS_LOG_INFO("INS Cmd: Reset Position");
+  }
+  case 4: {
+    const bool sent = ctx_->ins_driver->resetPosition();
+    ROS_LOG_INFO("INS Cmd: Reset Position, tx=%s", sent ? "ok" : "failed");
     break;
-  case 5:
-    ctx_->ins_driver->setInitialPosition(auv::config::sys_config.ins.init_lat,
-                                         auv::config::sys_config.ins.init_lon);
-    ROS_LOG_INFO("INS Cmd: Set Initial Position");
+  }
+  case 5: {
+    const bool sent = ctx_->ins_driver->setInitialPosition(
+        auv::config::sys_config.ins.init_lat,
+        auv::config::sys_config.ins.init_lon);
+    ROS_LOG_INFO("INS Cmd: Set Initial Position, tx=%s",
+                 sent ? "ok" : "failed");
     break;
+  }
   default:
     ROS_LOG_WARN("INS Cmd: Unknown cmd %d", message->data);
     break;
@@ -309,6 +398,16 @@ void MicroRosSubscriber::updatePushrod(uint32_t now_ms) {
 
   const bool armed = auv::system::system_context.arm_state_.get().is_armed;
 
+  // Local GPIO backends use this hook for duration expiry. UART backends
+  // intentionally implement it as a no-op because Depth_Sensor_Driver owns
+  // the shared UART4 polling path.
+  ctx_->pushrod_driver->poll(now_ms);
+  if (!armed) {
+    // For the GPIO backend this immediately de-energizes PB7/PB8. The shared
+    // UART backend has no cancel frame and keeps its existing no-op behavior.
+    ctx_->pushrod_driver->stop();
+  }
+
   auv::peripheral::PushrodAck ack{};
   while (ctx_->pushrod_driver->readAck(&ack)) {
     if (!pushrod_pending_ || ack.task_id != pushrod_pending_task_.task_id) {
@@ -342,9 +441,9 @@ void MicroRosSubscriber::updatePushrod(uint32_t now_ms) {
     }
   }
 
-  // There is no cancel frame in the V1 pushrod protocol. Do not transmit any
-  // queued command after disarm; an already transmitted task is left intact
-  // so a lost ACK can still be retried with the same task_id after re-arm.
+  // Do not transmit queued commands after disarm. For the V1 UART protocol an
+  // already transmitted task is left intact because there is no cancel frame;
+  // the GPIO backend has already been forced to its safe 00 output above.
   if (!armed) {
     if (!pushrod_pending_) {
       pushrod_queue_head_ = 0U;

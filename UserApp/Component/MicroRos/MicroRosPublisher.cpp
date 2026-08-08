@@ -10,6 +10,14 @@
 #include <rcl/rcl.h>
 
 bool MicroRosPublisher::init(rcl_node_t *node) {
+  pos_pub_initialized_ = false;
+  vel_pub_initialized_ = false;
+  thr_pub_initialized_ = false;
+  zithbt_pub_initialized_ = false;
+  status_pub_initialized_ = false;
+  usbl_pub_initialized_ = false;
+  log_pub_initialized_ = false;
+
   // 初始化零初始化消息
   std_msgs__msg__Float32MultiArray__init(&pos_fb_msg_);
   pos_fb_msg_.data.data = pos_buf_;
@@ -46,42 +54,56 @@ bool MicroRosPublisher::init(rcl_node_t *node) {
   log_msg_.line = 0;
 
   // 创建发布器
-  auto ok = [&](rcl_ret_t ret) { return ret == RCL_RET_OK; };
+  auto ok = [&](const char *stage, rcl_ret_t ret) {
+    if (ret == RCL_RET_OK)
+      return true;
+    ROS_LOG_ERROR("micro-ROS publisher %s failed, rc=%d", stage,
+                  static_cast<int>(ret));
+    rcl_reset_error();
+    return false;
+  };
 
-  if (!ok(rclc_publisher_init_default(
+  if (!ok("/zit6/state/pos init", rclc_publisher_init_default(
           &pos_pub_, node,
           ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
           "/zit6/state/pos")))
     return false;
-  if (!ok(rclc_publisher_init_default(
+  pos_pub_initialized_ = true;
+  if (!ok("/zit6/state/vel init", rclc_publisher_init_default(
           &vel_pub_, node,
           ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
           "/zit6/state/vel")))
     return false;
-  if (!ok(rclc_publisher_init_default(
+  vel_pub_initialized_ = true;
+  if (!ok("/zit6/state/thr init", rclc_publisher_init_default(
           &thr_pub_, node,
           ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
           "/zit6/state/thr")))
     return false;
-  if (!ok(rclc_publisher_init_default(
+  thr_pub_initialized_ = true;
+  if (!ok("/zit6/state/zithbt init", rclc_publisher_init_default(
           &zithbt_pub_, node,
           ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt32),
           "/zit6/state/zithbt")))
     return false;
-  if (!ok(rclc_publisher_init_default(
+  zithbt_pub_initialized_ = true;
+  if (!ok("/zit6/state/status init", rclc_publisher_init_default(
           &status_pub_, node,
           ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitStatus),
           "/zit6/state/status")))
     return false;
-  if (!ok(rclc_publisher_init_default(
+  status_pub_initialized_ = true;
+  if (!ok("/zit6/state/USBL init", rclc_publisher_init_default(
           &usbl_pub_, node,
           ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitUsbl),
           "/zit6/state/USBL")))
     return false;
-  if (!ok(rclc_publisher_init_default(
+  usbl_pub_initialized_ = true;
+  if (!ok("/zit6/log init", rclc_publisher_init_default(
           &log_pub_, node,
           ROSIDL_GET_MSG_TYPE_SUPPORT(rcl_interfaces, msg, Log), "/zit6/log")))
     return false;
+  log_pub_initialized_ = true;
 
   return true;
 }
@@ -218,13 +240,28 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
 }
 
 void MicroRosPublisher::cleanup(rcl_node_t *node) {
-  rcl_publisher_fini(&pos_pub_, node);
-  rcl_publisher_fini(&vel_pub_, node);
-  rcl_publisher_fini(&thr_pub_, node);
-  rcl_publisher_fini(&zithbt_pub_, node);
-  rcl_publisher_fini(&status_pub_, node);
-  rcl_publisher_fini(&usbl_pub_, node);
-  rcl_publisher_fini(&log_pub_, node);
+  if (pos_pub_initialized_)
+    rcl_publisher_fini(&pos_pub_, node);
+  if (vel_pub_initialized_)
+    rcl_publisher_fini(&vel_pub_, node);
+  if (thr_pub_initialized_)
+    rcl_publisher_fini(&thr_pub_, node);
+  if (zithbt_pub_initialized_)
+    rcl_publisher_fini(&zithbt_pub_, node);
+  if (status_pub_initialized_)
+    rcl_publisher_fini(&status_pub_, node);
+  if (usbl_pub_initialized_)
+    rcl_publisher_fini(&usbl_pub_, node);
+  if (log_pub_initialized_)
+    rcl_publisher_fini(&log_pub_, node);
+
+  pos_pub_initialized_ = false;
+  vel_pub_initialized_ = false;
+  thr_pub_initialized_ = false;
+  zithbt_pub_initialized_ = false;
+  status_pub_initialized_ = false;
+  usbl_pub_initialized_ = false;
+  log_pub_initialized_ = false;
 
   // 重置节流定时器
   last_hbt_pub_tick_ = 0;

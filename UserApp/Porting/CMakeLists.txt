@@ -1,15 +1,8 @@
 # Porting: hardware-specific porting layer
-target_sources(${PROJECT_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/INS_Porting.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/MotionController_Porting.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/MS5837_Porting.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Depth_Sensor_Porting.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/DepthCalcBoard_Porting.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Pushrod_Porting.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/HAL_UART_RxEventDispatcher.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/USBL_Porting.cpp
-)
+add_subdirectory(DepthSensor)
+add_subdirectory(Pushrod)
+add_subdirectory(Presets)
 
-target_include_directories(${PROJECT_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/inc
-)
+add_subdirectory(INS)
+add_subdirectory(MotionController)
+add_subdirectory(USBL)

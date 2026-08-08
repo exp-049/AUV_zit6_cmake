@@ -3,7 +3,7 @@
 
 #include "../Common/AppContext.hpp"
 #include "../Common/MotionContext.hpp"
-#include "../Peripherals/inc/USBL_Driver.hpp"
+#include "USBL_Driver.hpp"
 #include <cstdint>
 
 class ControlTask {

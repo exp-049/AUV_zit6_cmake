@@ -67,6 +67,17 @@ gtest_discover_tests(test_algo
 # 桩头文件目录（优先于 UserApp 路径，替换 FreeRTOS/main 等）
 set(STUB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 
+# Peripherals are organized by device module. Keep all public driver include
+# roots available to host tests that compile shared context sources.
+set(PERIPHERAL_INCLUDE_DIRS
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/DepthSensor/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/Pushrod/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/Presets/SelfCalcBoard/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/INS/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/MotionController/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/USBL/inc
+)
+
 # SafetyMonitor + 依赖的上下文对象
 set(SM_SOURCES
     ${COMPONENT_DIR}/Safety/SafetyMonitor.cpp
@@ -92,7 +103,7 @@ target_include_directories(test_safety_monitor PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Safety
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Chassis
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals
-    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/inc # INS_Driver etc. (有桩时被覆盖)
+    ${PERIPHERAL_INCLUDE_DIRS}
 )
 
 target_link_libraries(test_safety_monitor
@@ -132,7 +143,7 @@ target_include_directories(test_component PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Safety
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Chassis
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals
-    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/inc
+    ${PERIPHERAL_INCLUDE_DIRS}
 )
 
 target_link_libraries(test_component
@@ -173,7 +184,7 @@ target_include_directories(test_cascade PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Chassis
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Safety
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals
-    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/inc
+    ${PERIPHERAL_INCLUDE_DIRS}
 )
 
 target_link_libraries(test_cascade
@@ -205,7 +216,7 @@ target_include_directories(test_config_service PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Config
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Safety
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Chassis
-    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/inc
+    ${PERIPHERAL_INCLUDE_DIRS}
 )
 
 target_link_libraries(test_config_service
@@ -246,7 +257,7 @@ target_include_directories(test_config_full PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Safety
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Component/Chassis
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals
-    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/inc
+    ${PERIPHERAL_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Thirdparty/cJSON
 )
 
@@ -261,13 +272,13 @@ gtest_discover_tests(test_config_full
 # Phase 6 — depth facade and independent pushrod facade
 add_executable(test_depth_pushrod
     test_depth_pushrod_driver.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/src/Depth_Sensor_Driver.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/src/Pushrod_Driver.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/DepthSensor/src/Depth_Sensor_Driver.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/Pushrod/src/Pushrod_Driver.cpp
 )
 
 target_include_directories(test_depth_pushrod PRIVATE
     ${STUB_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/inc
+    ${PERIPHERAL_INCLUDE_DIRS}
 )
 
 target_link_libraries(test_depth_pushrod
@@ -275,5 +286,43 @@ target_link_libraries(test_depth_pushrod
 )
 
 gtest_discover_tests(test_depth_pushrod
+    DISCOVERY_MODE PRE_TEST
+)
+
+# PB8/PB7 non-PWM pushrod backend
+add_executable(test_pushrod_gpio_backend
+    test_pushrod_gpio_backend.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/Pushrod/src/Pushrod_GPIO_Backend.cpp
+)
+
+target_include_directories(test_pushrod_gpio_backend PRIVATE
+    ${PERIPHERAL_INCLUDE_DIRS}
+)
+
+target_link_libraries(test_pushrod_gpio_backend
+    GTest::gtest_main
+)
+
+gtest_discover_tests(test_pushrod_gpio_backend
+    DISCOVERY_MODE PRE_TEST
+)
+
+# M14 UART backend and its device-specific ASCII protocol
+add_executable(test_m14_backend
+    test_m14_backend.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/DepthSensor/src/M14_UART_Backend.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/DepthSensor/src/Depth_Sensor_Driver.cpp
+)
+
+target_include_directories(test_m14_backend PRIVATE
+    ${STUB_DIR}
+    ${PERIPHERAL_INCLUDE_DIRS}
+)
+
+target_link_libraries(test_m14_backend
+    GTest::gtest_main
+)
+
+gtest_discover_tests(test_m14_backend
     DISCOVERY_MODE PRE_TEST
 )

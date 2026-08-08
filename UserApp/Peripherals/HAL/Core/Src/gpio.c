@@ -20,6 +20,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "gpio.h"
+#include "Pushrod_Porting_Config.h"
 
 /* USER CODE BEGIN 0 */
 
@@ -49,6 +50,17 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+
+#if AUV_PRESET_USES_GPIO_PUSHROD
+  GPIO_InitTypeDef gpio = {0};
+  /* PB8=IN1 and PB7=IN2 for the non-PWM pushrod motor bridge. */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7 | GPIO_PIN_8, GPIO_PIN_RESET);
+  gpio.Pin = GPIO_PIN_7 | GPIO_PIN_8;
+  gpio.Mode = GPIO_MODE_OUTPUT_PP;
+  gpio.Pull = GPIO_NOPULL;
+  gpio.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &gpio);
+#endif
 
 }
 

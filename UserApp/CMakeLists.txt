@@ -17,10 +17,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Optional build-time override for the depth backend. The default remains in
-# Porting/inc/Depth_Sensor_Porting.hpp so the source tree is self-contained.
-set(AUV_DEPTH_SENSOR_BACKEND "" CACHE STRING
-    "Depth backend: 1=commercial UART, 2=self UART, 3=I2C")
+# Select one complete depth-sensor/pushrod hardware preset. The preset owns
+# the backend pairing and the required physical resources.
+set(AUV_HARDWARE_PRESET 1 CACHE STRING
+    "Hardware preset: 1=self calc board, 2=self depth + GPIO pushrod, 3=commercial, 4=M14, 5=I2C, 6=commercial + GPIO pushrod, 7=M14 + GPIO pushrod")
+set_property(CACHE AUV_HARDWARE_PRESET PROPERTY STRINGS 1 2 3 4 5 6 7)
+set(_auv_hardware_presets 1 2 3 4 5 6 7)
+if(NOT AUV_HARDWARE_PRESET IN_LIST _auv_hardware_presets)
+    message(FATAL_ERROR "Unsupported AUV_HARDWARE_PRESET='${AUV_HARDWARE_PRESET}'")
+endif()
 
 
 # Define the build type
@@ -31,8 +36,8 @@ endif()
 # Firmware application mode is deliberately a configure-time choice. Debug
 # modes do not coexist with the NORMAL control, micro-ROS, or monitor tasks.
 set(AUV_APP_MODE "NORMAL" CACHE STRING "Firmware application mode")
-set_property(CACHE AUV_APP_MODE PROPERTY STRINGS NORMAL MS5837_CAL_DEBUG USBL_DEBUG INS_DEBUG MOTION_DEBUG)
-set(_auv_app_modes NORMAL MS5837_CAL_DEBUG USBL_DEBUG INS_DEBUG MOTION_DEBUG)
+set_property(CACHE AUV_APP_MODE PROPERTY STRINGS NORMAL MS5837_CAL_DEBUG USBL_DEBUG INS_DEBUG PUSHROD_DEBUG MOTION_DEBUG)
+set(_auv_app_modes NORMAL MS5837_CAL_DEBUG USBL_DEBUG INS_DEBUG PUSHROD_DEBUG MOTION_DEBUG)
 if(NOT AUV_APP_MODE IN_LIST _auv_app_modes)
     message(FATAL_ERROR "Unsupported AUV_APP_MODE='${AUV_APP_MODE}'")
 endif()
@@ -115,6 +120,8 @@ elseif(AUV_APP_MODE STREQUAL "USBL_DEBUG")
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE AUV_APP_MODE=2)
 elseif(AUV_APP_MODE STREQUAL "INS_DEBUG")
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE AUV_APP_MODE=3)
+elseif(AUV_APP_MODE STREQUAL "PUSHROD_DEBUG")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE AUV_APP_MODE=5)
 elseif(AUV_APP_MODE STREQUAL "MOTION_DEBUG")
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE AUV_APP_MODE=4)
 endif()
@@ -177,14 +184,11 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     EIGEN_NO_DEBUG
     NDEBUG
 
+    AUV_HARDWARE_PRESET=${AUV_HARDWARE_PRESET}
+
     # HITL 仿真模式：Debug 下启用，Release 下注释即可剔除仿真代码
     $<$<CONFIG:Debug>:AUV_SIMULATION_ENABLE>
 )
-
-if(NOT AUV_DEPTH_SENSOR_BACKEND STREQUAL "")
-    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-        DEPTH_SENSOR_BACKEND=${AUV_DEPTH_SENSOR_BACKEND})
-endif()
 
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)

@@ -58,6 +58,10 @@ public:
 
   void start() override { started = true; }
 
+  void poll(uint32_t now_ms) override { last_poll_ms = now_ms; }
+
+  void stop() override { stopped = true; }
+
   bool sendTask(const PushrodTask &task) override {
     last_task = task;
     ++send_count;
@@ -81,6 +85,8 @@ public:
   bool supported = true;
   bool ack_ready = false;
   int send_count = 0;
+  uint32_t last_poll_ms = 0U;
+  bool stopped = false;
   PushrodTask last_task{};
   PushrodAck last_ack{};
 };

@@ -16,7 +16,7 @@
         {
             "name": "Cortex Debug (DAPLink/pyOCD)",
             "cwd": "${workspaceFolder}",
-            "executable": "${workspaceFolder}/build/Debug/UserApp/AUV_zit6.elf",
+            "executable": "${command:cmake.getLaunchTargetPath}",
             "request": "launch",
             "type": "cortex-debug",
             "runToEntryPoint": "main",

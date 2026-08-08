@@ -87,14 +87,22 @@ void printFloatField(const uint8_t *frame, uint16_t offset, const char *meaning,
 }
 
 void printScaledI32Field(const uint8_t *frame, uint16_t offset,
-                         const char *meaning) {
+                         const char *meaning, uint32_t scale = 1000000U) {
   printFieldPrefix(frame, offset, 4, meaning);
   const int64_t raw = readLE32(frame + offset);
   const bool negative = raw < 0;
   const uint64_t magnitude = static_cast<uint64_t>(negative ? -raw : raw);
-  SEGGER_RTT_printf(0, "%s%lu.%07lu\r\n", negative ? "-" : "",
-                    static_cast<unsigned long>(magnitude / 10000000ULL),
-                    static_cast<unsigned long>(magnitude % 10000000ULL));
+  const uint64_t whole = magnitude / scale;
+  const uint64_t fraction = magnitude % scale;
+  if (scale == 1000000U) {
+    SEGGER_RTT_printf(0, "%s%lu.%06lu\r\n", negative ? "-" : "",
+                      static_cast<unsigned long>(whole),
+                      static_cast<unsigned long>(fraction));
+  } else {
+    SEGGER_RTT_printf(0, "%s%lu.%07lu\r\n", negative ? "-" : "",
+                      static_cast<unsigned long>(whole),
+                      static_cast<unsigned long>(fraction));
+  }
 }
 
 void printU8Field(const uint8_t *frame, uint16_t offset, const char *meaning,
@@ -119,28 +127,28 @@ void printFrame(const auv::peripheral::INS_Driver &driver,
   printFloatField(frame, 2, "roll_deg");
   printFloatField(frame, 6, "pitch_deg");
   printFloatField(frame, 10, "yaw_deg");
-  printFloatField(frame, 14, "roll_rate");
-  printFloatField(frame, 18, "pitch_rate");
-  printFloatField(frame, 22, "yaw_rate");
-  printFloatField(frame, 26, "velocity_x");
-  printFloatField(frame, 30, "velocity_y");
-  printFloatField(frame, 34, "velocity_z");
+  printFloatField(frame, 14, "north_velocity");
+  printFloatField(frame, 18, "east_velocity");
+  printFloatField(frame, 22, "ground_velocity");
+  printFloatField(frame, 26, "body_velocity_x");
+  printFloatField(frame, 30, "body_velocity_y");
+  printFloatField(frame, 34, "body_velocity_z");
   printScaledI32Field(frame, 38, "latitude");
   printScaledI32Field(frame, 42, "longitude");
   printFloatField(frame, 46, "combined_depth");
   printRawField(frame, 50, 21, "reserved_50_70");
-  printFloatField(frame, 71, "dvl_velocity_x");
-  printFloatField(frame, 75, "dvl_velocity_y");
-  printFloatField(frame, 79, "dvl_velocity_z");
-  printScaledI32Field(frame, 83, "gps_latitude");
-  printScaledI32Field(frame, 87, "gps_longitude");
+  printFloatField(frame, 71, "angular_velocity_x");
+  printFloatField(frame, 75, "angular_velocity_y");
+  printFloatField(frame, 79, "angular_velocity_z");
+  printScaledI32Field(frame, 83, "gps_longitude");
+  printScaledI32Field(frame, 87, "gps_latitude");
   printFloatField(frame, 91, "gps_altitude");
   printFloatField(frame, 95, "gps_course");
-  printFloatField(frame, 99, "north_offset");
-  printFloatField(frame, 103, "east_offset");
-  printFloatField(frame, 107, "pressure_depth");
-  printFloatField(frame, 111, "dvl_altitude");
-  printU8Field(frame, 115, "sensor_flags", frame[115]);
+  printFloatField(frame, 99, "gps_north_velocity");
+  printFloatField(frame, 103, "gps_east_velocity");
+  printFloatField(frame, 107, "depth_sensor");
+  printFloatField(frame, 111, "altimeter_height");
+  printU8Field(frame, 115, "sensor_status", frame[115]);
   printU8Field(frame, 116, "year", frame[116]);
   printU8Field(frame, 117, "month", frame[117]);
   printU8Field(frame, 118, "day", frame[118]);
@@ -168,7 +176,8 @@ extern "C" void UserApp_InsDebugTask(void *argument) {
 
   SEGGER_RTT_ConfigUpBuffer(0, nullptr, nullptr, 0,
                             SEGGER_RTT_MODE_BLOCK_IF_FIFO_FULL);
-  SEGGER_RTT_WriteString(0, "=== INS_DEBUG USART1 DMA-CIRCULAR ===\r\n");
+  SEGGER_RTT_WriteString(
+      0, "=== INS_DEBUG NAV-300 USART1 133B DMA-CIRCULAR ===\r\n");
   driver->init();
 
   auv::motion::NavState state{};
@@ -198,6 +207,16 @@ extern "C" void UserApp_InsDebugTask(void *argument) {
           static_cast<unsigned long>(diagnostics.uart_isr),
           diagnostics.rx_preview[0], diagnostics.rx_preview[1],
           diagnostics.rx_preview[2], diagnostics.rx_preview[3]);
+      SEGGER_RTT_printf(
+          0,
+          "INS tx: calls=%lu attempts=%lu ok=%lu fail=%lu size=%u "
+          "status=%u ready=%u\r\n",
+          static_cast<unsigned long>(diagnostics.tx_calls),
+          static_cast<unsigned long>(diagnostics.tx_attempts),
+          static_cast<unsigned long>(diagnostics.tx_successes),
+          static_cast<unsigned long>(diagnostics.tx_failures),
+          diagnostics.tx_last_size, diagnostics.tx_last_status,
+          diagnostics.tx_uart_ready ? 1U : 0U);
       last_diag = now;
     }
     osDelay(1);

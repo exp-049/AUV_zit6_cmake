@@ -103,10 +103,16 @@ cmake --build --preset XXX_DEBUG
 
 ## 5. 加入 VS Code Task
 
-在 `.vscode/tasks.json` 增加至少两个任务：
+当前通用 VS Code 任务会跟随 CMake Tools 当前激活的预设：
 
-- `Build Xxx Debug`：执行 `cmake --build --preset XXX_DEBUG`。
-- `Flash Xxx Debug (DAPLink)`：烧录 `build/XXX_DEBUG/UserApp/AUV_zit6.elf`，并依赖前面的构建任务。
+- `Build Firmware`：使用当前 CMake Tools 构建目录
+  `${command:cmake.buildDirectory}` 构建当前 Build Preset。
+- `Flash Firmware (DAPLink)`：先构建当前 Build Preset，再通过
+  `${command:cmake.getLaunchTargetPath}` 烧录当前目标，不再固定使用 `build/Debug`。
+
+使用前在 VS Code 中分别执行 `CMake: Select Configure Preset` 和
+`CMake: Select Build Preset`，并选择同名预设，例如
+`Debug-M14Depth-GpioPushrod`。
 
 烧录任务应沿用当前板卡的 target、UID、频率和 reset 参数，不要只修改 ELF 路径。
 如果需要 Cortex-Debug 单步调试，再在 `.vscode/launch.json` 增加对应 ELF 和
@@ -137,4 +143,5 @@ cmake --build --preset XXX_DEBUG
 | `MS5837_CAL_DEBUG` | 深度传感器 RTT 诊断 | `Build MS5837 CAL Debug` |
 | `USBL_DEBUG` | USBL DMA/协议 RTT 诊断 | `Build USBL Debug` |
 | `INS_DEBUG` | INS 帧接收 RTT 诊断 | `Build INS Debug` |
+| `PUSHROD_DEBUG` | 推杆任务/方向/定时 ACK RTT 诊断 | `Build Pushrod Debug` |
 | `MOTION_DEBUG` | RTT 下发电机、舵机、灯光指令 | `Build Motion Debug` |

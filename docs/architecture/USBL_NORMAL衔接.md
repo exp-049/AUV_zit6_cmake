@@ -20,7 +20,7 @@ AppContext::usbl_driver / UsblState
 
 ### 协议组件
 
-`UserApp/Peripherals/src/USBL_Driver.cpp` 不直接引用 UART/DMA。它通过 `UsblPortOps` 获得字节流，完成：
+`UserApp/Peripherals/USBL/src/USBL_Driver.cpp` 不直接引用 UART/DMA。它通过 `UsblPortOps` 获得字节流，完成：
 
 - `EA AE` 帧头同步；
 - 固定 133 字节长度收帧；
@@ -32,7 +32,7 @@ AppContext::usbl_driver / UsblState
 
 ### 硬件移植层
 
-`UserApp/Porting/src/USBL_Porting.cpp` 绑定 `AUV_UART_USBL`（当前为 `huart3`）：
+`UserApp/Porting/USBL/src/USBL_Porting.cpp` 绑定 `AUV_UART_USBL`（当前为 `huart3`）：
 
 - RX DMA：`DMA1_Stream3`，Circular，512 字节；
 - 串口：115200、8N1；

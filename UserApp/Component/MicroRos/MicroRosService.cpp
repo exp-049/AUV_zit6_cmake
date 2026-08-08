@@ -23,6 +23,8 @@ MicroRosService *MicroRosService::instance_ = nullptr;
 
 bool MicroRosService::init(rcl_node_t *node, rclc_executor_t *executor) {
   instance_ = this;
+  update_params_srv_initialized_ = false;
+  get_params_srv_initialized_ = false;
 
   // ---------- update_params 服务 ----------
   {
@@ -30,8 +32,13 @@ bool MicroRosService::init(rcl_node_t *node, rclc_executor_t *executor) {
         &update_params_srv_, node,
         ROSIDL_GET_SRV_TYPE_SUPPORT(zit6_interfaces, srv, UpdateParams),
         "/zit6/update_params");
-    if (rc != RCL_RET_OK)
+    if (rc != RCL_RET_OK) {
+      ROS_LOG_ERROR("micro-ROS service /zit6/update_params init failed, rc=%d",
+                    static_cast<int>(rc));
+      rcl_reset_error();
       return false;
+    }
+    update_params_srv_initialized_ = true;
 
     zit6_interfaces__srv__UpdateParams_Request__init(&update_req_);
     // 预分配 JSON buffer
@@ -53,8 +60,13 @@ bool MicroRosService::init(rcl_node_t *node, rclc_executor_t *executor) {
     rc = rclc_executor_add_service_with_request_id(
         executor, &update_params_srv_, &update_req_, &update_res_,
         &MicroRosService::updateParamsCb);
-    if (rc != RCL_RET_OK)
+    if (rc != RCL_RET_OK) {
+      ROS_LOG_ERROR(
+          "micro-ROS service /zit6/update_params executor failed, rc=%d",
+          static_cast<int>(rc));
+      rcl_reset_error();
       return false;
+    }
   }
 
   // ---------- get_params 服务 ----------
@@ -63,8 +75,13 @@ bool MicroRosService::init(rcl_node_t *node, rclc_executor_t *executor) {
         &get_params_srv_, node,
         ROSIDL_GET_SRV_TYPE_SUPPORT(zit6_interfaces, srv, GetParams),
         "/zit6/get_params");
-    if (rc != RCL_RET_OK)
+    if (rc != RCL_RET_OK) {
+      ROS_LOG_ERROR("micro-ROS service /zit6/get_params init failed, rc=%d",
+                    static_cast<int>(rc));
+      rcl_reset_error();
       return false;
+    }
+    get_params_srv_initialized_ = true;
 
     zit6_interfaces__srv__GetParams_Request__init(&get_req_);
     rosidl_runtime_c__String__Sequence__init(&get_req_.paths, 8);
@@ -84,8 +101,13 @@ bool MicroRosService::init(rcl_node_t *node, rclc_executor_t *executor) {
     rc = rclc_executor_add_service_with_request_id(
         executor, &get_params_srv_, &get_req_, &get_res_,
         &MicroRosService::getParamsCb);
-    if (rc != RCL_RET_OK)
+    if (rc != RCL_RET_OK) {
+      ROS_LOG_ERROR(
+          "micro-ROS service /zit6/get_params executor failed, rc=%d",
+          static_cast<int>(rc));
+      rcl_reset_error();
       return false;
+    }
   }
 
   return true;
@@ -143,8 +165,14 @@ void MicroRosService::cleanup(rcl_node_t *node) {
     get_res_.config_json.size = 0;
   }
 
-  rcl_service_fini(&update_params_srv_, node);
-  rcl_service_fini(&get_params_srv_, node);
+  if (update_params_srv_initialized_)
+    rcl_service_fini(&update_params_srv_, node);
+  if (get_params_srv_initialized_)
+    rcl_service_fini(&get_params_srv_, node);
+  update_params_srv_initialized_ = false;
+  get_params_srv_initialized_ = false;
+  if (instance_ == this)
+    instance_ = nullptr;
 }
 
 // ============================================================================

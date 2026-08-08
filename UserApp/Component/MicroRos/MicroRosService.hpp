@@ -38,13 +38,16 @@ public:
 
 private:
   // ---------- 服务句柄 ----------
-  rcl_service_t update_params_srv_, get_params_srv_;
+  rcl_service_t update_params_srv_{};
+  rcl_service_t get_params_srv_{};
+  bool update_params_srv_initialized_ = false;
+  bool get_params_srv_initialized_ = false;
 
   // ---------- 请求/响应消息 ----------
-  zit6_interfaces__srv__UpdateParams_Request update_req_;
-  zit6_interfaces__srv__UpdateParams_Response update_res_;
-  zit6_interfaces__srv__GetParams_Request get_req_;
-  zit6_interfaces__srv__GetParams_Response get_res_;
+  zit6_interfaces__srv__UpdateParams_Request update_req_{};
+  zit6_interfaces__srv__UpdateParams_Response update_res_{};
+  zit6_interfaces__srv__GetParams_Request get_req_{};
+  zit6_interfaces__srv__GetParams_Response get_res_{};
 
   auv::system::AppContext *ctx_;
 
