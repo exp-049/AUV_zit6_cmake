@@ -1,12 +1,11 @@
 #ifndef __MOTION_CONTEXT_HPP
 #define __MOTION_CONTEXT_HPP
 
-#include "FreeRTOS.h"
+// LockedField.hpp 提供 FreeRTOS.h/task.h;queue.h 提供 task.h。此处不再重复包含。
+// RosLogger.hpp 仅在 MotionContext.cpp 的 setHomeOffset 中用到，移入 .cpp。
 #include "LockedField.hpp"
 #include "MathUtils.hpp"
-#include "RosLogger.hpp"
 #include "USBL_Driver.hpp"
-#include "task.h"
 #include <array>
 #include <cmath>
 #include <stdint.h>

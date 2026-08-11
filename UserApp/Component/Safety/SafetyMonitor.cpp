@@ -4,6 +4,7 @@
 #include "RosLogger.hpp"
 #include "SystemConfig.hpp"
 #include "SystemContext.hpp"
+#include "ChassisManager.hpp"
 #include "task.h"
 
 namespace auv {

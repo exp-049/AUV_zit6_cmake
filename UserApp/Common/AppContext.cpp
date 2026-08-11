@@ -12,9 +12,10 @@
 #include "RosLogger.hpp"
 #include "SerialHandles.hpp"
 #include "SoftWatchdog.hpp"
-#include "cmsis_os2.h"      // osThreadNew, osThreadAttr_t
-#include "main.h"
-#include "usart.h"
+
+// 注:不再包含 cmsis_os2.h/main.h/usart.h —— 本文件不使用 osThread* 符号,
+// AUV_UART_*/UART_HandleTypeDef 均经 SerialHandles.hpp(→ usart.h → main.h)获得,
+// 保留这三行只是冗余/死 include。
 
 // --- 全局 Porting 实例（硬件适配） ---
 static auv::porting::INS_Porting g_ins_port(&AUV_UART_INS, &AUV_UART_INS, ins_rx_buffer,

@@ -1,6 +1,5 @@
 #include "MotionContext.hpp"
-#include "FreeRTOS.h"
-#include "task.h"
+#include "RosLogger.hpp"
 
 namespace auv {
 namespace motion {

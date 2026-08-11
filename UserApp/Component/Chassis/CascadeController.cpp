@@ -1,9 +1,6 @@
 #include "CascadeController.hpp"
-#include "FreeRTOS.h"
 #include "MathUtils.hpp"
 #include "SystemConfig.hpp"
-#include "main.h"
-#include "task.h"
 #include <Eigen/Core>
 #include <algorithm>
 #include <cmath>
@@ -151,12 +148,9 @@ std::array<float, 6> CascadeController::update() {
 
   // 计算世界系下的实际速度（用于位置环微分项）
   float actual_v_world[6];
-  {
-    auto _n = auv::motion::motion_context.nav_state_.get();
-    auv::algorithm::math::applyRotationToWorld(actual_v_body, actual_v_world,
-                                               _n.pos_world[3], _n.pos_world[4],
-                                               _n.pos_world[5]);
-  }
+  auv::algorithm::math::applyRotationToWorld(actual_v_body, actual_v_world,
+                                             nav.pos_world[3], nav.pos_world[4],
+                                             nav.pos_world[5]);
 
   float v_target_body[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
@@ -188,13 +182,9 @@ std::array<float, 6> CascadeController::update() {
                           profile_target.v;
     }
 
-    {
-      auto _n = auv::motion::motion_context.nav_state_.get();
-      auv::algorithm::math::applyRotationToBody(
-          v_target_world, v_target_body, _n.pos_world[3], _n.pos_world[4],
-          _n.pos_world[5]);
-    }
-
+    auv::algorithm::math::applyRotationToBody(
+        v_target_world, v_target_body, nav.pos_world[3], nav.pos_world[4],
+        nav.pos_world[5]);
   } else if (level_ == auv::motion::ControlLevel::VELOCITY) {
     for (int i = 0; i < 6; i++) {
       if (config_.planner_enabled) {

@@ -3,6 +3,7 @@
 #include "SoftWatchdog.hpp"
 #include "SystemConfig.hpp"
 #include "SystemContext.hpp"
+#include "ChassisManager.hpp"  // g_app_ctx.chassis->applyConfig() 需要完整类型
 #include "cJSON.h"
 #include <cctype>
 #include <cmath>

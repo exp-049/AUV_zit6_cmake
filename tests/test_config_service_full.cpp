@@ -16,6 +16,7 @@
 #include "AppContext.hpp"
 #include "SystemConfig.hpp"
 #include "SystemContext.hpp"
+#include "ChassisManager.hpp"
 #include <gtest/gtest.h>
 #include <cstring>
 #include <string>

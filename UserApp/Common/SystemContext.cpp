@@ -1,6 +1,7 @@
 #include "SystemContext.hpp"
 #include "AppContext.hpp"
 #include "SystemConfig.hpp"
+#include "INS_Driver.hpp"  // g_app_ctx.ins_driver->isDataFresh() 需要完整类型
 
 namespace auv {
 namespace system {

@@ -4,28 +4,10 @@
 #include "LockedField.hpp"
 #include <stdint.h>
 
-// extern 对象声明需要完整类型
-#include "ChassisManager.hpp"
-#include "INS_Driver.hpp"
-#include "MotionController_Driver.hpp"
-#include "USBL_Driver.hpp"
-
-namespace auv::peripheral {
-class Depth_Sensor_Driver;
-class Pushrod_Driver;
-} // namespace auv::peripheral
-
-// --- 底层驱动实例（通过 AppContext 访问，此处为定义提供 extern）---
-namespace auv::peripheral {
-extern INS_Driver ins_driver;
-extern MotionController_Driver motor_driver;
-extern Depth_Sensor_Driver *depth_sensor;
-extern Pushrod_Driver *pushrod_driver;
-extern USBL_Driver usbl_driver;
-} // namespace auv::peripheral
-namespace auv::component {
-extern ChassisManager chassis;
-}
+// 注:此处不再声明底层驱动 extern。全局驱动实例由 AppContext.cpp 定义并注入
+// g_app_ctx(依赖注入容器);各处通过 g_app_ctx.<driver> 指针访问,不依赖
+// SystemContext.hpp 暴露这些全局。此举消除了 INS_Driver.hpp → MotionContext.hpp
+// → FreeRTOS 的传递平台依赖(与 AppContext.hpp 的前向声明风格一致)。
 
 namespace auv {
 namespace system {
