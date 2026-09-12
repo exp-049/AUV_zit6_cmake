@@ -42,7 +42,9 @@ if(NOT AUV_APP_MODE IN_LIST _auv_app_modes)
     message(FATAL_ERROR "Unsupported AUV_APP_MODE='${AUV_APP_MODE}'")
 endif()
 
-# Generate config header from JSON (run on build when config.json changes)
+# Generate config sources from JSON. The generator uses the current time for
+# firmware.version; run it on every build so each newly linked ELF gets a new
+# build timestamp without modifying config.json.
 set(GEN_CONFIG_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/gen_config.py)
 set(CONFIG_JSON ${CMAKE_CURRENT_SOURCE_DIR}/Config/config.json)
 set(GEN_CONFIG_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Config)
@@ -51,15 +53,14 @@ set(GEN_CONFIG_CPP ${GEN_CONFIG_OUT_DIR}/SystemConfig.cpp)
 
 set(GEN_CONFIG_TEMPLATE ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/templates/SystemConfig.hpp.j2)
 
-add_custom_command(
-    OUTPUT ${GEN_CONFIG_HPP} ${GEN_CONFIG_CPP}
+add_custom_target(gen_system_config ALL
     COMMAND python3 ${GEN_CONFIG_SCRIPT} ${CONFIG_JSON} ${GEN_CONFIG_OUT_DIR}
     DEPENDS ${GEN_CONFIG_SCRIPT} ${CONFIG_JSON} ${GEN_CONFIG_TEMPLATE}
+    BYPRODUCTS ${GEN_CONFIG_HPP} ${GEN_CONFIG_CPP}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Generating SystemConfig from config.json"
+    COMMENT "Generating SystemConfig with current firmware build timestamp"
     VERBATIM
 )
-add_custom_target(gen_system_config DEPENDS ${GEN_CONFIG_HPP} ${GEN_CONFIG_CPP})
 
 # Set the project name
 set(CMAKE_PROJECT_NAME AUV_zit6)

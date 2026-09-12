@@ -16,10 +16,12 @@ from .heartbeat import FloatingHeartbeatPanel
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"
 
+PYGAME_IMPORT_ERROR = ""
 try:
     import pygame
-except ImportError:
+except ImportError as exc:
     pygame = None
+    PYGAME_IMPORT_ERROR = str(exc)
 
 # Qt imports
 try:
@@ -251,6 +253,13 @@ class XboxControlWidget(QWidget):
         self.input_thread = None
         self.num_axes = 0
         self.num_buttons = 0
+        self.joystick_name = ""
+        self._joystick_instance_id = None
+        self._joystick_lock = threading.RLock()
+        self._connection_lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._pygame_initialized = False
+        self._joystick_diagnostic = ""
         
         self.setpoint_pub = self.node.create_publisher(ZitSetpoint, '/zit6/cmd/setpoint', 10)
         
@@ -261,13 +270,16 @@ class XboxControlWidget(QWidget):
             try:
                 pygame.init()
                 pygame.joystick.init()
+                self._pygame_initialized = True
             except Exception as e:
+                self._joystick_diagnostic = f"Pygame 初始化失败: {e}"
                 print(f"初始化 Pygame 手柄库失败: {e}")
                 
         self.init_style()
         self.init_ui()
         self.check_joystick_connection()
-        if pygame and self.joystick_connected:
+        # 无论启动时是否插入手柄都启动读取线程，线程会持续扫描热插拔。
+        if self._pygame_initialized:
             self.input_thread = threading.Thread(target=self.read_joystick, daemon=True)
             self.input_thread.start()
             
@@ -361,7 +373,7 @@ class XboxControlWidget(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(10)
         
-        title = QLabel("🎮 Xbox 手柄控制台")
+        title = QLabel("Xbox 手柄控制台")
         title.setStyleSheet("font-size: 16px; font-weight: bold; color: #00e5ff;")
         left_layout.addWidget(title)
         
@@ -399,7 +411,7 @@ class XboxControlWidget(QWidget):
         self.combo_sway.addItems([f"轴 {i}" for i in range(6)])
         self.combo_sway.setCurrentIndex(0) # 默认 轴 0
         self.chk_sway_inv = QCheckBox()
-        self.chk_sway_inv.setChecked(True)
+        self.chk_sway_inv.setChecked(False)  # 默认不反转，保持手柄 Sway 原始方向
         cfg_grid.addWidget(self.combo_sway, 2, 1)
         cfg_grid.addWidget(self.chk_sway_inv, 2, 2)
         
@@ -468,7 +480,43 @@ class XboxControlWidget(QWidget):
         dz_grid.addWidget(self.spin_general_dz, 1, 1)
         
         left_layout.addWidget(dz_group)
-        
+
+        # 3. 下发模式选择 GroupBox (推力下发 / 位置增量)
+        drv_group = QGroupBox("指令下发模式 (Publish Mode)")
+        drv_grid = QGridLayout(drv_group)
+        drv_grid.setContentsMargins(12, 12, 12, 12)
+        drv_grid.setSpacing(8)
+
+        drv_grid.addWidget(QLabel("下发方式:"), 0, 0)
+        self.combo_drive_mode = QComboBox()
+        self.combo_drive_mode.addItems(["推力下发 (FORCE)", "位置增量 (POS Increment)"])
+        self.combo_drive_mode.currentIndexChanged.connect(self.on_drive_mode_changed)
+        drv_grid.addWidget(self.combo_drive_mode, 0, 1)
+
+        # 位置增量模式下，摇杆拉满对应最多平移/旋转的量
+        drv_grid.addWidget(QLabel("平移最大增量 (m):"), 1, 0)
+        self.spin_inc_max_linear = QDoubleSpinBox()
+        self.spin_inc_max_linear.setRange(0.01, 10.0)
+        self.spin_inc_max_linear.setValue(0.1)
+        self.spin_inc_max_linear.setSingleStep(0.01)
+        self.spin_inc_max_linear.setEnabled(False)
+        drv_grid.addWidget(self.spin_inc_max_linear, 1, 1)
+
+        drv_grid.addWidget(QLabel("旋转最大增量 (rad):"), 2, 0)
+        self.spin_inc_max_yaw = QDoubleSpinBox()
+        self.spin_inc_max_yaw.setRange(0.01, 6.2832)
+        self.spin_inc_max_yaw.setValue(0.1)
+        self.spin_inc_max_yaw.setSingleStep(0.01)
+        self.spin_inc_max_yaw.setEnabled(False)
+        drv_grid.addWidget(self.spin_inc_max_yaw, 2, 1)
+
+        # 提示当前处于增量模式的标签
+        self.lbl_drive_mode_hint = QLabel("当前: 推力下发 (control_key=0x32)")
+        self.lbl_drive_mode_hint.setStyleSheet("color: #ff9800; font-size: 11px; font-weight: bold;")
+        drv_grid.addWidget(self.lbl_drive_mode_hint, 3, 0, 1, 2)
+
+        left_layout.addWidget(drv_group)
+
         # 启用开关
         self.btn_joy_toggle = QPushButton("启用手柄控制")
         self.btn_joy_toggle.setCheckable(True)
@@ -508,41 +556,194 @@ class XboxControlWidget(QWidget):
         
         main_layout.addWidget(right_widget, stretch=6)
 
-    def check_joystick_connection(self):
-        if not pygame:
+    def _clear_joystick_state(self):
+        self.axes = [0.0] * 6
+        self.btn_states = {
+            'A': False, 'B': False, 'X': False, 'Y': False,
+            'LB': False, 'RB': False, 'back': False, 'start': False,
+        }
+        self.hat_state = (0, 0)
+        self.last_a_state = False
+
+    def _disconnect_joystick(self, reason=""):
+        """断开时清零输入并停控；只在状态发生变化时发送一次停止命令。"""
+        with self._joystick_lock:
+            old_joystick = self.joystick
+            was_connected = self.joystick_connected or self.joystick is not None
+            was_active = self.control_active
             self.joystick_connected = False
-            return
+            self.joystick = None
+            self.joystick_name = ""
+            self._joystick_instance_id = None
+            self.num_axes = 0
+            self.num_buttons = 0
+            self.control_active = False
+            self._clear_joystick_state()
+
+        if old_joystick is not None:
+            try:
+                old_joystick.quit()
+            except Exception:
+                pass
+        if was_connected or was_active:
+            suffix = f" ({reason})" if reason else ""
+            print(f"手柄已断开{suffix}")
+            self.send_stop_command()
+
+    def _connect_joystick(self):
+        """打开当前第一个手柄，读取能力信息并记录实例 ID。"""
+        joystick = None
+        try:
+            if pygame.joystick.get_count() <= 0:
+                return False
+            joystick = pygame.joystick.Joystick(0)
+            joystick.init()
+            name = joystick.get_name()
+            num_axes = joystick.get_numaxes()
+            num_buttons = joystick.get_numbuttons()
+            try:
+                initial_a_state = (num_buttons > 0 and
+                                    bool(joystick.get_button(0)))
+            except Exception:
+                initial_a_state = False
+            try:
+                instance_id = joystick.get_instance_id()
+            except Exception:
+                instance_id = None
+        except Exception as exc:
+            if joystick is not None:
+                try:
+                    joystick.quit()
+                except Exception:
+                    pass
+            print(f"打开手柄失败: {exc}")
+            return False
+
+        with self._joystick_lock:
+            self.joystick = joystick
+            self.joystick_name = name
+            self._joystick_instance_id = instance_id
+            self.num_axes = num_axes
+            self.num_buttons = num_buttons
+            self.joystick_connected = True
+            self._clear_joystick_state()
+            # 如果插入时 A 键正被按住，等待释放后再允许边沿触发启停。
+            self.last_a_state = initial_a_state
+        self._joystick_diagnostic = ""
+        print(f"手柄已连接: {name} (轴={num_axes}, 按键={num_buttons})")
+        return True
+
+    def check_joystick_connection(self):
+        """轮询并校验设备句柄，支持启动后插入、运行中拔出和重新插入。"""
+        # GUI 定时器和后台读取线程都会触发检查，避免并发打开两个句柄。
+        with self._connection_lock:
+            return self._check_joystick_connection()
+
+    def _check_joystick_connection(self):
+        if not pygame or not self._pygame_initialized:
+            if not pygame:
+                self._joystick_diagnostic = (
+                    "pygame 未安装" if not PYGAME_IMPORT_ERROR else
+                    f"pygame 不可用: {PYGAME_IMPORT_ERROR}")
+            elif not self._joystick_diagnostic:
+                self._joystick_diagnostic = "SDL 手柄模块未初始化"
+            self._disconnect_joystick(self._joystick_diagnostic)
+            return False
+
         try:
             pygame.joystick.init()
             count = pygame.joystick.get_count()
-            if count > 0:
-                if not self.joystick_connected or not self.joystick:
-                    self.joystick = pygame.joystick.Joystick(0)
-                    self.joystick.init()
-                    self.num_axes = self.joystick.get_numaxes()
-                    self.num_buttons = self.joystick.get_numbuttons()
-                    self.joystick_connected = True
-            else:
-                self.joystick_connected = False
-                self.joystick = None
-        except Exception:
-            self.joystick_connected = False
-            self.joystick = None
+        except Exception as exc:
+            self._joystick_diagnostic = f"SDL 查询失败: {exc}"
+            self._disconnect_joystick(str(exc))
+            return False
 
-    def safe_get_axis(self, axis_index):
-        if self.joystick and 0 <= axis_index < self.num_axes:
-            try:
-                return self.joystick.get_axis(axis_index)
-            except Exception:
-                pass
+        if count <= 0:
+            if os.path.isdir("/dev/input"):
+                self._joystick_diagnostic = "未检测到设备"
+            else:
+                self._joystick_diagnostic = "容器未映射 /dev/input"
+            self._disconnect_joystick(self._joystick_diagnostic)
+            return False
+
+        with self._joystick_lock:
+            joystick = self.joystick
+            connected = self.joystick_connected
+
+        if not connected or joystick is None:
+            return self._connect_joystick()
+
+        # 设备数量不变时也要探测旧句柄，避免“拔出后重新插入”被误认为仍是旧设备。
+        try:
+            with self._joystick_lock:
+                if self.joystick is not joystick or not self.joystick_connected:
+                    return False
+                name = joystick.get_name()
+                num_axes = joystick.get_numaxes()
+                num_buttons = joystick.get_numbuttons()
+                try:
+                    instance_id = joystick.get_instance_id()
+                except Exception:
+                    instance_id = self._joystick_instance_id
+        except Exception as exc:
+            self._joystick_diagnostic = f"设备句柄失效: {exc}"
+            self._disconnect_joystick(f"设备句柄失效: {exc}")
+            return self._connect_joystick()
+
+        reconnect = False
+        with self._joystick_lock:
+            if (self._joystick_instance_id is not None and
+                    instance_id is not None and
+                    instance_id != self._joystick_instance_id):
+                reconnect = True
+            else:
+                self.joystick_name = name
+                self.num_axes = num_axes
+                self.num_buttons = num_buttons
+                reconnect = False
+
+        if reconnect:
+            self._disconnect_joystick("检测到设备已更换")
+            return self._connect_joystick()
+        self._joystick_diagnostic = ""
+        return True
+
+    def _process_joystick_events(self):
+        """优先处理 Pygame 热插拔事件，轮询逻辑作为兼容和兜底。"""
+        if not pygame or not self._pygame_initialized:
+            return
+        try:
+            events = pygame.event.get()
+        except Exception:
+            return
+
+        added = False
+        current_id = self._joystick_instance_id
+        added_type = getattr(pygame, "JOYDEVICEADDED", None)
+        removed_type = getattr(pygame, "JOYDEVICEREMOVED", None)
+        for event in events:
+            if event.type == added_type:
+                added = True
+            elif event.type == removed_type:
+                removed_id = getattr(event, "instance_id", None)
+                if current_id is None or removed_id == current_id:
+                    self._disconnect_joystick("收到拔出事件")
+
+        if added or not self.joystick_connected:
+            self.check_joystick_connection()
+
+    def safe_get_axis(self, axis_index, joystick=None):
+        with self._joystick_lock:
+            device = joystick if joystick is not None else self.joystick
+            if device and 0 <= axis_index < self.num_axes:
+                return device.get_axis(axis_index)
         return 0.0
 
-    def safe_get_button(self, btn_index):
-        if self.joystick and btn_index < self.num_buttons:
-            try:
-                return self.joystick.get_button(btn_index)
-            except Exception:
-                pass
+    def safe_get_button(self, btn_index, joystick=None):
+        with self._joystick_lock:
+            device = joystick if joystick is not None else self.joystick
+            if device and 0 <= btn_index < self.num_buttons:
+                return device.get_button(btn_index)
         return False
 
     def apply_deadzone(self, val, deadzone):
@@ -550,13 +751,41 @@ class XboxControlWidget(QWidget):
             return 0.0
         return val
 
+    def is_increment_mode(self):
+        return self.combo_drive_mode.currentIndex() == 1
+
+    def on_drive_mode_changed(self):
+        inc_mode = self.is_increment_mode()
+        # 位置增量模式下启用最大增量输入框
+        self.spin_inc_max_linear.setEnabled(inc_mode)
+        self.spin_inc_max_yaw.setEnabled(inc_mode)
+        if inc_mode:
+            # POSITION(0) | Body(0x10) | Incremental(0x20) = 0x30
+            self.lbl_drive_mode_hint.setText("当前: 位置增量下发 (control_key=0x30)")
+            self.lbl_drive_mode_hint.setStyleSheet("color: #4caf50; font-size: 11px; font-weight: bold;")
+        else:
+            # ACTUATOR(2) | Body(0x10) | Incremental(0x20) = 0x32
+            self.lbl_drive_mode_hint.setText("当前: 推力下发 (control_key=0x32)")
+            self.lbl_drive_mode_hint.setStyleSheet("color: #ff9800; font-size: 11px; font-weight: bold;")
+        # 切换模式后重置摇杆输出，避免残留
+        if not self.control_active:
+            self.send_stop_command()
+
     def read_joystick(self):
-        while rclpy.ok():
+        while rclpy.ok() and not self._stop_event.is_set():
+            self._process_joystick_events()
+            # 事件机制在不同 SDL/Pygame 版本上行为不完全一致，保留定期轮询。
             if not self.joystick_connected or not self.joystick:
-                time.sleep(0.5)
+                self.check_joystick_connection()
+            if not self.joystick_connected or not self.joystick:
+                self._stop_event.wait(0.1)
                 continue
             try:
-                pygame.event.pump()
+                with self._joystick_lock:
+                    joystick = self.joystick
+                    if joystick is None or not self.joystick_connected:
+                        continue
+                    pygame.event.pump()
                 
                 # 动态获取配置的通道索引和方向极性并计算控制值
                 surge_axis = self.combo_surge.currentIndex()
@@ -573,27 +802,29 @@ class XboxControlWidget(QWidget):
                 p_inv = -1.0 if self.chk_pitch_inv.isChecked() else 1.0
                 y_inv = -1.0 if self.chk_yaw_inv.isChecked() else 1.0
                 
-                self.axes[0] = self.safe_get_axis(surge_axis) * s_inv
-                self.axes[1] = self.safe_get_axis(sway_axis) * sw_inv
-                self.axes[2] = self.safe_get_axis(heave_axis) * h_inv
-                self.axes[3] = 0.0  # Roll 兼容字段，固件控制路径旁路
-                self.axes[4] = 0.0  # Pitch 兼容字段，固件控制路径旁路
-                self.axes[5] = self.safe_get_axis(yaw_axis) * y_inv
-                
-                # 获取各个按键状态（经典 Xbox 布局索引）
-                self.btn_states['A'] = self.safe_get_button(0)
-                self.btn_states['B'] = self.safe_get_button(1)
-                self.btn_states['X'] = self.safe_get_button(2)
-                self.btn_states['Y'] = self.safe_get_button(3)
-                self.btn_states['LB'] = self.safe_get_button(4)
-                self.btn_states['RB'] = self.safe_get_button(5)
-                self.btn_states['back'] = self.safe_get_button(6)
-                self.btn_states['start'] = self.safe_get_button(7)
-                
-                if self.joystick.get_numhats() > 0:
-                    self.hat_state = self.joystick.get_hat(0)
-                else:
-                    self.hat_state = (0, 0)
+                with self._joystick_lock:
+                    if self.joystick is not joystick or not self.joystick_connected:
+                        continue
+                    self.axes[0] = self.safe_get_axis(surge_axis, joystick) * s_inv
+                    self.axes[1] = self.safe_get_axis(sway_axis, joystick) * sw_inv
+                    self.axes[2] = self.safe_get_axis(heave_axis, joystick) * h_inv
+                    self.axes[3] = 0.0  # Roll 兼容字段，固件控制路径旁路
+                    self.axes[4] = 0.0  # Pitch 兼容字段，固件控制路径旁路
+                    self.axes[5] = self.safe_get_axis(yaw_axis, joystick) * y_inv
+
+                    # 获取各个按键状态（经典 Xbox 布局索引）
+                    self.btn_states['A'] = self.safe_get_button(0, joystick)
+                    self.btn_states['B'] = self.safe_get_button(1, joystick)
+                    self.btn_states['X'] = self.safe_get_button(2, joystick)
+                    self.btn_states['Y'] = self.safe_get_button(3, joystick)
+                    self.btn_states['LB'] = self.safe_get_button(4, joystick)
+                    self.btn_states['RB'] = self.safe_get_button(5, joystick)
+                    self.btn_states['back'] = self.safe_get_button(6, joystick)
+                    self.btn_states['start'] = self.safe_get_button(7, joystick)
+                    if joystick.get_numhats() > 0:
+                        self.hat_state = joystick.get_hat(0)
+                    else:
+                        self.hat_state = (0, 0)
                 
                 a_state = self.btn_states['A']
                 if a_state and not self.last_a_state:
@@ -601,9 +832,9 @@ class XboxControlWidget(QWidget):
                     if not self.control_active:
                         self.send_stop_command()
                 self.last_a_state = a_state
-            except Exception:
-                pass
-            time.sleep(0.02)
+            except Exception as exc:
+                self._disconnect_joystick(f"读取失败: {exc}")
+            self._stop_event.wait(0.02)
 
     def on_joy_toggle_clicked(self, checked):
         self.control_active = checked
@@ -614,7 +845,8 @@ class XboxControlWidget(QWidget):
         self.check_joystick_connection()
         
         if not self.joystick_connected:
-            self.joy_status_label.setText("未连接手柄，正在扫描...")
+            diagnostic = self._joystick_diagnostic or "正在扫描..."
+            self.joy_status_label.setText(f"未连接手柄：{diagnostic}")
             self.joy_status_label.setStyleSheet("color: #ff5722;")
             self.joy_active_label.setText("控制状态: 未就绪")
             self.joy_active_label.setStyleSheet("color: #888888;")
@@ -626,19 +858,19 @@ class XboxControlWidget(QWidget):
             # 手柄模型更新为离线状态
             self.visualizer.update_state([0.0]*6, {'A': False, 'B': False, 'X': False, 'Y': False, 'LB': False, 'RB': False, 'back': False, 'start': False}, (0,0), False)
             return
-            
+
         self.btn_joy_toggle.setEnabled(True)
-        self.joy_status_label.setText(f"已连接: {self.joystick.get_name()}")
+        self.joy_status_label.setText(f"已连接: {self.joystick_name}")
         self.joy_status_label.setStyleSheet("color: #00e5ff; font-weight: bold;")
         
         if self.control_active:
-            self.joy_active_label.setText("控制状态: 已启用 (ACTIVE) 🟢")
+            self.joy_active_label.setText("控制状态: 已启用 (ACTIVE)")
             self.joy_active_label.setStyleSheet("color: #4caf50; font-weight: bold;")
             self.btn_joy_toggle.setChecked(True)
             self.btn_joy_toggle.setText("禁用手柄控制 (A键)")
             self.btn_joy_toggle.setStyleSheet("background-color: #d84315; color: white;")
         else:
-            self.joy_active_label.setText("控制状态: 未启用 (STANDBY) 🟡")
+            self.joy_active_label.setText("控制状态: 未启用 (STANDBY)")
             self.joy_active_label.setStyleSheet("color: #ff9800; font-weight: bold;")
             self.btn_joy_toggle.setChecked(False)
             self.btn_joy_toggle.setText("启用手柄控制 (A键)")
@@ -665,26 +897,49 @@ class XboxControlWidget(QWidget):
             pass
 
     def ros_control_timer_callback(self):
-        if self.control_active:
-            msg = ZitSetpoint()
-            msg.control_key = 50
-            
-            # 从界面获取死区配置
-            s_dz = self.spin_surge_dz.value()
-            g_dz = self.spin_general_dz.value()
-            
-            msg.x = self.apply_deadzone(self.axes[0], s_dz)
-            msg.y = self.apply_deadzone(self.axes[1], g_dz)
-            msg.z = self.apply_deadzone(self.axes[2], g_dz)
+        if not self.control_active:
+            return
+        msg = ZitSetpoint()
+
+        # 从界面获取通用死区配置
+        s_dz = self.spin_surge_dz.value()
+        g_dz = self.spin_general_dz.value()
+
+        if self.is_increment_mode():
+            # ── 位置增量下发 (POSITION | Body | Incremental) ──
+            # control_key = 0x30，type_mask = 0（全部轴生效）
+            # 摇杆拉满 → 平移/旋转各轴最多增量；摇杆回中 → 增量 0（保持当前目标）
+            max_lin = self.spin_inc_max_linear.value()
+            max_yaw = self.spin_inc_max_yaw.value()
+            msg.control_key = 0x30
+            msg.type_mask = 0
+            # 机体系增量：surge→x, sway→y, heave→z, yaw→yaw（回中为 0）
+            msg.x = self.apply_deadzone(self.axes[0], s_dz) * max_lin
+            msg.y = self.apply_deadzone(self.axes[1], g_dz) * max_lin
+            msg.z = self.apply_deadzone(self.axes[2], g_dz) * max_lin
             msg.roll = 0.0  # 兼容字段；固件控制路径旁路
             msg.pitch = 0.0  # 兼容字段；固件控制路径旁路
-            msg.yaw = self.apply_deadzone(self.axes[5], g_dz)
+            msg.yaw = self.apply_deadzone(self.axes[5], g_dz) * max_yaw
             self.setpoint_pub.publish(msg)
+            return
+
+        msg.control_key = 50
+        msg.type_mask = 0
+        msg.x = self.apply_deadzone(self.axes[0], s_dz)
+        msg.y = self.apply_deadzone(self.axes[1], g_dz)
+        msg.z = self.apply_deadzone(self.axes[2], g_dz)
+        msg.roll = 0.0  # 兼容字段；固件控制路径旁路
+        msg.pitch = 0.0  # 兼容字段；固件控制路径旁路
+        msg.yaw = self.apply_deadzone(self.axes[5], g_dz)
+        self.setpoint_pub.publish(msg)
 
     def close(self):
         self.control_active = False
         self.send_stop_command()
-        if pygame:
+        self._stop_event.set()
+        if self.input_thread and self.input_thread.is_alive():
+            self.input_thread.join(timeout=0.5)
+        if pygame and self._pygame_initialized:
             try:
                 pygame.quit()
             except Exception:
@@ -737,13 +992,6 @@ def main(args=None):
             sys.exit(1)
             
         pygame.init()
-        pygame.joystick.init()
-        if pygame.joystick.get_count() == 0:
-            print("Error: No joystick connected.")
-            sys.exit(1)
-            
-        joystick = pygame.joystick.Joystick(0)
-        joystick.init()
         print("=" * 60)
         print(f" [Xbox Control CLI] 手柄控制器已启动！")
         print("=" * 60)
@@ -752,52 +1000,13 @@ def main(args=None):
         
         active = False
         last_a_state = False
-        num_axes = joystick.get_numaxes()
-        num_buttons = joystick.get_numbuttons()
-        
-        def apply_deadzone(val, deadzone):
-            if abs(val) < deadzone:
-                return 0.0
-            return val
-            
-        try:
-            while rclpy.ok():
-                pygame.event.pump()
-                
-                surge = joystick.get_axis(1) if 1 < num_axes else 0.0
-                sway = -joystick.get_axis(0) if 0 < num_axes else 0.0
-                heave = joystick.get_axis(4) if 4 < num_axes else 0.0
-                yaw = joystick.get_axis(3) if 3 < num_axes else 0.0
-                
-                a_state = joystick.get_button(0) if 0 < num_buttons else False
-                if a_state and not last_a_state:
-                    active = not active
-                    if not active:
-                        msg = ZitSetpoint()
-                        msg.control_key = 16
-                        msg.x = 0.0
-                        msg.y = 0.0
-                        msg.z = 0.0
-                        msg.roll = 0.0
-                        msg.pitch = 0.0
-                        msg.yaw = 0.0
-                        setpoint_pub.publish(msg)
-                        
-                last_a_state = a_state
-                print(f"Surge: {surge:+.2f} | Sway: {sway:+.2f} | Heave: {heave:+.2f} | Yaw: {yaw:+.2f} | Active: {active}", end="\r")
-                
-                s_msg = ZitSetpoint()
-                s_msg.control_key = 50
-                s_msg.x = -apply_deadzone(surge, parsed_args.deadzone)
-                s_msg.y = apply_deadzone(sway, parsed_args.deadzone)
-                s_msg.z = apply_deadzone(heave, parsed_args.deadzone)
-                s_msg.roll = 0.0
-                s_msg.pitch = 0.0
-                s_msg.yaw = apply_deadzone(yaw, parsed_args.deadzone)
-                setpoint_pub.publish(s_msg)
-                
-                time.sleep(0.1)
-        except KeyboardInterrupt:
+        joystick = None
+        num_axes = 0
+        num_buttons = 0
+        joystick_instance_id = None
+        waiting_message_shown = False
+
+        def publish_stop():
             msg = ZitSetpoint()
             msg.control_key = 16
             msg.x = 0.0
@@ -807,6 +1016,127 @@ def main(args=None):
             msg.pitch = 0.0
             msg.yaw = 0.0
             setpoint_pub.publish(msg)
+
+        def disconnect_joystick(reason=""):
+            nonlocal joystick, num_axes, num_buttons
+            nonlocal joystick_instance_id, active, last_a_state
+            had_device = joystick is not None or active
+            joystick = None
+            num_axes = 0
+            num_buttons = 0
+            joystick_instance_id = None
+            active = False
+            last_a_state = False
+            if had_device:
+                suffix = f" ({reason})" if reason else ""
+                print(f"手柄已断开{suffix}")
+                publish_stop()
+
+        def connect_joystick():
+            nonlocal joystick, num_axes, num_buttons
+            nonlocal joystick_instance_id, waiting_message_shown, last_a_state
+            candidate = None
+            try:
+                pygame.joystick.init()
+                if pygame.joystick.get_count() <= 0:
+                    return False
+                candidate = pygame.joystick.Joystick(0)
+                candidate.init()
+                joystick = candidate
+                num_axes = candidate.get_numaxes()
+                num_buttons = candidate.get_numbuttons()
+                last_a_state = (num_buttons > 0 and
+                                bool(candidate.get_button(0)))
+                try:
+                    joystick_instance_id = candidate.get_instance_id()
+                except Exception:
+                    joystick_instance_id = None
+                waiting_message_shown = False
+                print(f"手柄已连接: {candidate.get_name()} "
+                      f"(轴={num_axes}, 按键={num_buttons})")
+                return True
+            except Exception as exc:
+                if candidate is not None:
+                    try:
+                        candidate.quit()
+                    except Exception:
+                        pass
+                joystick = None
+                print(f"打开手柄失败: {exc}")
+                return False
+        
+        def apply_deadzone(val, deadzone):
+            if abs(val) < deadzone:
+                return 0.0
+            return val
+            
+        try:
+            while rclpy.ok():
+                try:
+                    events = pygame.event.get()
+                except Exception:
+                    events = []
+
+                removed = False
+                added = False
+                for event in events:
+                    if event.type == getattr(pygame, "JOYDEVICEADDED", None):
+                        added = True
+                    elif event.type == getattr(pygame, "JOYDEVICEREMOVED", None):
+                        removed_id = getattr(event, "instance_id", None)
+                        if (joystick_instance_id is None or
+                                removed_id == joystick_instance_id):
+                            removed = True
+
+                try:
+                    device_count = pygame.joystick.get_count()
+                except Exception:
+                    device_count = 0
+
+                if removed or device_count <= 0:
+                    disconnect_joystick("收到拔出事件" if removed else "未检测到设备")
+                if joystick is None and (added or device_count > 0):
+                    connect_joystick()
+
+                if joystick is None:
+                    if not waiting_message_shown:
+                        print("等待手柄插入...")
+                        waiting_message_shown = True
+                    time.sleep(0.1)
+                    continue
+
+                try:
+                    pygame.event.pump()
+                
+                    surge = joystick.get_axis(1) if 1 < num_axes else 0.0
+                    sway = joystick.get_axis(0) if 0 < num_axes else 0.0
+                    heave = joystick.get_axis(4) if 4 < num_axes else 0.0
+                    yaw = joystick.get_axis(3) if 3 < num_axes else 0.0
+                
+                    a_state = joystick.get_button(0) if 0 < num_buttons else False
+                    if a_state and not last_a_state:
+                        active = not active
+                        if not active:
+                            publish_stop()
+                        
+                    last_a_state = a_state
+                    print(f"Surge: {surge:+.2f} | Sway: {sway:+.2f} | Heave: {heave:+.2f} | Yaw: {yaw:+.2f} | Active: {active}", end="\r")
+                
+                    s_msg = ZitSetpoint()
+                    s_msg.control_key = 50
+                    s_msg.x = -apply_deadzone(surge, parsed_args.deadzone)
+                    s_msg.y = apply_deadzone(sway, parsed_args.deadzone)
+                    s_msg.z = apply_deadzone(heave, parsed_args.deadzone)
+                    s_msg.roll = 0.0
+                    s_msg.pitch = 0.0
+                    s_msg.yaw = apply_deadzone(yaw, parsed_args.deadzone)
+                    setpoint_pub.publish(s_msg)
+                except Exception as exc:
+                    disconnect_joystick(f"读取失败: {exc}")
+                
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            publish_stop()
         finally:
             pygame.quit()
             node.destroy_node()

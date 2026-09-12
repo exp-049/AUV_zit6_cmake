@@ -11,6 +11,7 @@
 ## 主要入口
 
 - [架构说明](architecture/架构说明.md)
+- [系统架构与运行时序](architecture/系统架构与运行时序.md)
 - [USBL NORMAL 衔接](architecture/USBL_NORMAL衔接.md)
 - [节点通信协议](protocols/节点通信.md)
 - [与 VIT6 的通信](protocols/与vit6的通信.md)

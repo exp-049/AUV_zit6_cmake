@@ -40,6 +40,10 @@ def _finite_pose(values):
 class Pose3DCanvas(QWidget):
     """Small interactive 3D canvas with an RViz-style path and body triad."""
 
+    # NED-friendly oblique view: +N is up, +E is right, +D is down.
+    DEFAULT_AZIMUTH = -90.0
+    DEFAULT_ELEVATION = -28.0
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumSize(520, 420)
@@ -48,8 +52,8 @@ class Pose3DCanvas(QWidget):
         self.points = []
         self.pose = None
         self.max_points = 3000
-        self.azimuth = -45.0
-        self.elevation = 28.0
+        self.azimuth = self.DEFAULT_AZIMUTH
+        self.elevation = self.DEFAULT_ELEVATION
         self.zoom = 1.0
         self.follow = True
         self.show_grid = True
@@ -79,6 +83,13 @@ class Pose3DCanvas(QWidget):
 
     def set_grid(self, checked):
         self.show_grid = bool(checked)
+        self.update()
+
+    def reset_view(self):
+        """Restore the NED-friendly view and the default zoom."""
+        self.azimuth = self.DEFAULT_AZIMUTH
+        self.elevation = self.DEFAULT_ELEVATION
+        self.zoom = 1.0
         self.update()
 
     def mousePressEvent(self, event):
@@ -142,6 +153,62 @@ class Pose3DCanvas(QWidget):
         painter.setPen(QPen(color, width))
         painter.drawLine(self._project(start, center, scale), self._project(end, center, scale))
 
+    def _draw_axis_3d(self, painter, start, end, center, scale, color, label,
+                      style=Qt.SolidLine, width=2):
+        """Draw a labeled 3D axis with an arrowhead in screen space."""
+        start_px = self._project(start, center, scale)
+        end_px = self._project(end, center, scale)
+        pen = QPen(color, width)
+        pen.setStyle(style)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawLine(start_px, end_px)
+
+        dx = end_px.x() - start_px.x()
+        dy = end_px.y() - start_px.y()
+        length = math.hypot(dx, dy)
+        if length > 1.0:
+            ux, uy = dx / length, dy / length
+            px, py = -uy, ux
+            base_x = end_px.x() - ux * 10.0
+            base_y = end_px.y() - uy * 10.0
+            arrow = QPolygon([
+                end_px,
+                QPoint(round(base_x + px * 4.0), round(base_y + py * 4.0)),
+                QPoint(round(base_x - px * 4.0), round(base_y - py * 4.0)),
+            ])
+            painter.setPen(QPen(color, 1))
+            painter.setBrush(color)
+            painter.drawPolygon(arrow)
+
+        painter.setPen(QPen(color, 1))
+        painter.setFont(QFont("Sans", 9, QFont.Bold))
+        painter.drawText(end_px + QPoint(6, -6), label)
+
+    def _draw_ned_compass(self, painter):
+        """Draw a fixed screen-space compass so screen direction is unambiguous."""
+        box_x = max(8, self.width() - 126)
+        box_y = 12
+        origin = QPoint(box_x + 52, box_y + 48)
+        painter.setPen(QPen(QColor("#52636b"), 1))
+        painter.setBrush(QColor(16, 21, 26, 220))
+        painter.drawRoundedRect(box_x, box_y, 116, 82, 6, 6)
+        painter.setPen(QPen(QColor("#cfd8dc"), 1))
+        painter.setFont(QFont("Sans", 8, QFont.Bold))
+        painter.drawText(box_x + 8, box_y + 14, "NED 固定方向")
+
+        def draw_compass_axis(end, color, label):
+            painter.setPen(QPen(color, 2))
+            painter.drawLine(origin, end)
+            painter.setBrush(color)
+            painter.drawEllipse(end, 2, 2)
+            painter.setPen(QPen(color, 1))
+            painter.drawText(end + QPoint(4, 4), label)
+
+        draw_compass_axis(origin + QPoint(0, -25), QColor("#ef5350"), "N")
+        draw_compass_axis(origin + QPoint(28, 0), QColor("#66bb6a"), "E")
+        draw_compass_axis(origin + QPoint(0, 25), QColor("#42a5f5"), "D")
+
     def paintEvent(self, event):
         del event
         painter = QPainter(self)
@@ -166,11 +233,21 @@ class Pose3DCanvas(QWidget):
                     painter, (offset, -grid_radius, 0.0),
                     (offset, grid_radius, 0.0), center, scale, grid_color)
 
-        # World axes: X north, Y east, Z down (NED).
+        # World axes are translated to the current vehicle position only for
+        # readability; translation does not change their NED orientation.
         axis_len = max(1.5, 2.5 / max(self.zoom, 0.35))
-        self._draw_line_3d(painter, (0, 0, 0), (axis_len, 0, 0), center, scale, QColor("#ef5350"), 2)
-        self._draw_line_3d(painter, (0, 0, 0), (0, axis_len, 0), center, scale, QColor("#66bb6a"), 2)
-        self._draw_line_3d(painter, (0, 0, 0), (0, 0, axis_len), center, scale, QColor("#42a5f5"), 2)
+        world_origin = self.pose[:3] if self.pose else (0.0, 0.0, 0.0)
+        world_axes = (
+            ("+N", (world_origin[0] + axis_len, world_origin[1], world_origin[2]),
+             QColor("#ef5350")),
+            ("+E", (world_origin[0], world_origin[1] + axis_len, world_origin[2]),
+             QColor("#66bb6a")),
+            ("+D", (world_origin[0], world_origin[1], world_origin[2] + axis_len),
+             QColor("#42a5f5")),
+        )
+        for label, endpoint, color in world_axes:
+            self._draw_axis_3d(painter, world_origin, endpoint, center, scale,
+                               color, label, Qt.SolidLine, 2)
 
         if self.points:
             painter.setPen(QPen(QColor("#00e5ff"), 2))
@@ -234,15 +311,20 @@ class Pose3DCanvas(QWidget):
                     self._project(model_world[end], center, scale),
                 )
 
-            self._draw_line_3d(painter, origin, (x + rotation[0][0] * body_len,
-                                                 y + rotation[1][0] * body_len,
-                                                 z + rotation[2][0] * body_len), center, scale, QColor("#ff5252"), 4)
-            self._draw_line_3d(painter, origin, (x + rotation[0][1] * body_len,
-                                                 y + rotation[1][1] * body_len,
-                                                 z + rotation[2][1] * body_len), center, scale, QColor("#69f0ae"), 4)
-            self._draw_line_3d(painter, origin, (x + rotation[0][2] * body_len,
-                                                 y + rotation[1][2] * body_len,
-                                                 z + rotation[2][2] * body_len), center, scale, QColor("#448aff"), 4)
+            body_axes = (
+                ("bX", (x + rotation[0][0] * body_len,
+                         y + rotation[1][0] * body_len,
+                         z + rotation[2][0] * body_len), QColor("#ff8a80")),
+                ("bY", (x + rotation[0][1] * body_len,
+                         y + rotation[1][1] * body_len,
+                         z + rotation[2][1] * body_len), QColor("#b9f6ca")),
+                ("bZ", (x + rotation[0][2] * body_len,
+                         y + rotation[1][2] * body_len,
+                         z + rotation[2][2] * body_len), QColor("#82b1ff")),
+            )
+            for label, endpoint, color in body_axes:
+                self._draw_axis_3d(painter, origin, endpoint, center, scale,
+                                   color, label, Qt.DashLine, 3)
             current = self._project(origin, center, scale)
             painter.setPen(QPen(QColor("#ffffff"), 2))
             painter.setBrush(QColor("#ffd740"))
@@ -250,19 +332,20 @@ class Pose3DCanvas(QWidget):
 
         painter.setPen(QPen(QColor("#90a4ae"), 1))
         painter.setFont(QFont("Sans", 9))
-        painter.drawText(12, 20, "拖动旋转  ·  滚轮缩放  ·  X=N  Y=E  Z=Down")
+        painter.drawText(12, 20, "拖动旋转  ·  滚轮缩放  ·  默认视角：N↑  E→  D↓")
         painter.setPen(QPen(QColor("#ef5350"), 2))
-        painter.drawText(14, self.height() - 38, "X/N")
+        painter.drawText(14, self.height() - 38, "世界 +N")
         painter.setPen(QPen(QColor("#66bb6a"), 2))
-        painter.drawText(55, self.height() - 38, "Y/E")
+        painter.drawText(72, self.height() - 38, "世界 +E")
         painter.setPen(QPen(QColor("#42a5f5"), 2))
-        painter.drawText(95, self.height() - 38, "Z/D")
-        painter.setPen(QPen(QColor("#ff5252"), 2))
-        painter.drawText(14, self.height() - 18, "body X")
-        painter.setPen(QPen(QColor("#69f0ae"), 2))
-        painter.drawText(75, self.height() - 18, "body Y")
-        painter.setPen(QPen(QColor("#448aff"), 2))
-        painter.drawText(136, self.height() - 18, "body Z")
+        painter.drawText(130, self.height() - 38, "世界 +D")
+        painter.setPen(QPen(QColor("#ff8a80"), 2))
+        painter.drawText(14, self.height() - 18, "机体 bX")
+        painter.setPen(QPen(QColor("#b9f6ca"), 2))
+        painter.drawText(82, self.height() - 18, "机体 bY")
+        painter.setPen(QPen(QColor("#82b1ff"), 2))
+        painter.drawText(150, self.height() - 18, "机体 bZ")
+        self._draw_ned_compass(painter)
         painter.end()
 
 
@@ -314,6 +397,9 @@ class TrajectoryViewerWidget(QWidget):
         self.grid_cb.setChecked(True)
         self.grid_cb.toggled.connect(self.canvas.set_grid)
         controls_layout.addRow(self.grid_cb)
+        reset_view_button = QPushButton("重置 NED 视角")
+        reset_view_button.clicked.connect(self.canvas.reset_view)
+        controls_layout.addRow(reset_view_button)
         self.max_points_spin = QSpinBox()
         self.max_points_spin.setRange(100, 20000)
         self.max_points_spin.setSingleStep(100)

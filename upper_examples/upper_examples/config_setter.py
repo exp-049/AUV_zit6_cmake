@@ -6,6 +6,7 @@ import sys
 import argparse
 import json
 import threading
+from pathlib import Path
 
 import rclpy
 from rclpy.node import Node
@@ -216,20 +217,38 @@ class ConfigWidget(QWidget):
     def load_structure(self):
         """从本地 config.json 加载参数路径和默认值（作为"新值"列）"""
         from ament_index_python.packages import get_package_share_directory
-        search_paths = [
-            self.config_path,
-            os.path.join(os.getcwd(), 'UserApp/Config/config.json'),
-            os.path.join(os.getcwd(), 'config.json'),
-        ]
-        
+
+        # ``ros2 run`` normally executes a copied/symlinked module from an
+        # install or build tree, so deriving one fixed project root from
+        # ``__file__`` is not reliable.  Walk both the module location and
+        # the current workspace upwards and check the known source layouts.
+        search_paths = []
+        configured_path = os.environ.get('ZIT6_CONFIG_PATH')
+        if configured_path:
+            search_paths.append(configured_path)
+        search_paths.append(self.config_path)
+        roots = [Path(__file__).resolve().parent, Path.cwd().resolve()]
+        for root in roots:
+            for parent in (root, *root.parents):
+                search_paths.extend([
+                    str(parent / 'UserApp' / 'Config' / 'config.json'),
+                    str(parent / 'config.json'),
+                    str(parent / 'third_party' / 'AUV_zit6_cmake' /
+                        'UserApp' / 'Config' / 'config.json'),
+                ])
+
         try:
             share_dir = get_package_share_directory('upper_examples')
             search_paths.insert(0, os.path.join(share_dir, 'config.json'))
         except:
             pass
-        
+
         found = False
+        seen_paths = set()
         for p in search_paths:
+            if not p or p in seen_paths:
+                continue
+            seen_paths.add(p)
             if os.path.exists(p):
                 self.config_path = p
                 found = True

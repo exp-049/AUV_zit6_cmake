@@ -9,7 +9,9 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
-        ('share/' + package_name, ['package.xml']),
+        # Keep the parameter editor usable when launched via ``ros2 run``;
+        # the source config lives one directory above this package.
+        ('share/' + package_name, ['package.xml', '../config.json']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
