@@ -6,8 +6,9 @@ extern "C" {
 #endif
 
 void UserApp_ControlTask(void *argument);
+void UserApp_MonitorTask(void *argument);
 void UserApp_MicroRosTask(void *argument);
-void UserApp_IICTask(void *argument);
+void UserApp_Start(void);
 
 #ifdef __cplusplus
 }

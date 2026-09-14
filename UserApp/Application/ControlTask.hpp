@@ -1,35 +1,32 @@
 #ifndef __CONTROL_TASK_HPP
 #define __CONTROL_TASK_HPP
 
-#include "GlobalContext.hpp"
-#include "FreeRTOS.h"
-#include <stdint.h>
+#include "../Common/AppContext.hpp"
+#include "../Common/MotionContext.hpp"
+#include "USBL_Driver.hpp"
+#include <cstdint>
 
 class ControlTask {
 public:
-	ControlTask() = default;
-	void run();
+  explicit ControlTask(auv::system::AppContext *ctx) : ctx_(ctx) {}
+  void run();
 
 private:
-	static void fillActualState(const auv::common::NavState &nav, float (&actual_p)[4], float (&actual_v)[4]);
+  auv::system::AppContext *ctx_;
+  static constexpr uint32_t kLoopPeriodMs = 10;
 
-	static constexpr uint32_t kLoopPeriodMs = 10;
-	static constexpr uint32_t kArmedHeartbeatTimeoutMs = 500; // 恢复：短阈值，快速 disarm
-	static constexpr uint32_t kDisarmedHeartbeatTimeoutMs = 1000;
-	static constexpr uint32_t kArmMinDurationMs = 1000;
-	static constexpr uint32_t kArmMinHeartbeatCount = 10;
-	static constexpr uint32_t kRemoteModeHeartbeatData = 3;
+  uint32_t last_wake_time_ = 0;
+  uint32_t last_tick_ = 0;
+  uint32_t overrun_count_ = 0;
+  bool first_cycle_ = true;
 
-	TickType_t last_wake_time_ = 0;
-	uint32_t last_tick_ = 0;
+  /** SITL 模式下无新数据时保持的上次有效导航状态 */
+  auv::motion::NavState last_sitl_state_{};
+  auv::peripheral::UsblState usbl_state_{};
 
-	void init();
-	void refreshHardwareWatchdogIfNeeded();
-	auv::common::NavState updateNavigation();
-	void setControlLevelNone(const auv::common::NavState &nav);
-	void forceDisarmWithNeutralLevel(const auv::common::NavState &nav);
-	void handleArmState(const auv::common::NavState &nav, uint32_t now);
-	void computeAndPublish(const auv::common::NavState &nav);
+  void init();
+  void updateNavigation();
+  void computeAndPublish();
 };
 
 #endif // __CONTROL_TASK_HPP

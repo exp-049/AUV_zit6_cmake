@@ -6,22 +6,121 @@
             "hidden": true,
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/${presetName}",
-		    "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
+            "toolchainFile": "${sourceDir}/UserApp/Peripherals/HAL/gcc-arm-none-eabi.cmake",
             "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }
         },
         {
             "name": "Debug",
             "inherits": "default",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug"
+                "CMAKE_BUILD_TYPE": "Debug",
+                "AUV_APP_MODE": "NORMAL",
+                "AUV_HARDWARE_PRESET": "1"
             }
         },
         {
             "name": "Release",
             "inherits": "default",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release"
+                "CMAKE_BUILD_TYPE": "Release",
+                "AUV_APP_MODE": "NORMAL",
+                "AUV_HARDWARE_PRESET": "1"
+            }
+        },
+        {
+            "name": "MS5837_CAL_DEBUG",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "AUV_APP_MODE": "MS5837_CAL_DEBUG",
+                "AUV_HARDWARE_PRESET": "1"
+            }
+        },
+        {
+            "name": "USBL_DEBUG",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "AUV_APP_MODE": "USBL_DEBUG",
+                "AUV_HARDWARE_PRESET": "1"
+            }
+        },
+        {
+            "name": "INS_DEBUG",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "AUV_APP_MODE": "INS_DEBUG",
+                "AUV_HARDWARE_PRESET": "1"
+            }
+        },
+        {
+            "name": "PUSHROD_DEBUG",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "AUV_APP_MODE": "PUSHROD_DEBUG",
+                "AUV_HARDWARE_PRESET": "2"
+            }
+        },
+        {
+            "name": "MOTION_DEBUG",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "AUV_APP_MODE": "MOTION_DEBUG",
+                "AUV_HARDWARE_PRESET": "1"
+            }
+        },
+        {
+            "name": "Debug-SelfCalcBoard",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "1"
+            }
+        },
+        {
+            "name": "Debug-SelfDepth-GpioPushrod",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "2"
+            }
+        },
+        {
+            "name": "Debug-CommercialDepth",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "3"
+            }
+        },
+        {
+            "name": "Debug-M14Depth",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "4"
+            }
+        },
+        {
+            "name": "Debug-I2CDepth",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "5"
+            }
+        },
+        {
+            "name": "Debug-CommercialDepth-GpioPushrod",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "6"
+            }
+        },
+        {
+            "name": "Debug-M14Depth-GpioPushrod",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "7"
             }
         }
     ],
@@ -33,6 +132,54 @@
         {
             "name": "Release",
             "configurePreset": "Release"
+        },
+        {
+            "name": "MS5837_CAL_DEBUG",
+            "configurePreset": "MS5837_CAL_DEBUG"
+        },
+        {
+            "name": "USBL_DEBUG",
+            "configurePreset": "USBL_DEBUG"
+        },
+        {
+            "name": "INS_DEBUG",
+            "configurePreset": "INS_DEBUG"
+        },
+        {
+            "name": "PUSHROD_DEBUG",
+            "configurePreset": "PUSHROD_DEBUG"
+        },
+        {
+            "name": "MOTION_DEBUG",
+            "configurePreset": "MOTION_DEBUG"
+        },
+        {
+            "name": "Debug-SelfCalcBoard",
+            "configurePreset": "Debug-SelfCalcBoard"
+        },
+        {
+            "name": "Debug-SelfDepth-GpioPushrod",
+            "configurePreset": "Debug-SelfDepth-GpioPushrod"
+        },
+        {
+            "name": "Debug-CommercialDepth",
+            "configurePreset": "Debug-CommercialDepth"
+        },
+        {
+            "name": "Debug-M14Depth",
+            "configurePreset": "Debug-M14Depth"
+        },
+        {
+            "name": "Debug-I2CDepth",
+            "configurePreset": "Debug-I2CDepth"
+        },
+        {
+            "name": "Debug-CommercialDepth-GpioPushrod",
+            "configurePreset": "Debug-CommercialDepth-GpioPushrod"
+        },
+        {
+            "name": "Debug-M14Depth-GpioPushrod",
+            "configurePreset": "Debug-M14Depth-GpioPushrod"
         }
     ]
 }

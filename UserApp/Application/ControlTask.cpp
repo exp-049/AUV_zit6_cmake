@@ -1,288 +1,267 @@
-#include "AppMain.hpp"
 #include "ControlTask.hpp"
-#include "FreeRTOS.h"
-#include "task.h"
-#include "SoftWatchdog.hpp"
-#include "SystemConfig.hpp"
-#include "AuvSimulator.hpp"
-#include <string.h>
-#include "SerialPort.hpp"
-#include <cstdio>
+#include "Pushrod_Porting_Config.h"
+#include "AppMain.hpp"
+#include "../Component/Chassis/ChassisManager.hpp"
+#include "../Component/HitlSimulator/HitlSimulator.hpp"
+#include "../Component/RosLogger/RosLogger.hpp"
+#include "../Config/SystemConfig.hpp"
+#include "../Common/SystemContext.hpp"
+#include "../Peripherals/HAL/Core/Inc/main.h"
+#include "../Peripherals/HAL/Middlewares/Third_Party/FreeRTOS/Source/include/FreeRTOS.h"
+#include "../Peripherals/HAL/Middlewares/Third_Party/FreeRTOS/Source/include/task.h"
+#include "INS_Porting.hpp"
+#include "INS_Driver.hpp"
+#include "Depth_Sensor_Driver.hpp"
+#include "Pushrod_Driver.hpp"
+#include "MS5837_LogConfig.hpp"
+#include <cstring>
 
-using namespace auv::device;
-using namespace auv::control;
-
-// 仿真引擎实例 (HITL 模式)
-static AuvSimulator g_hitl_sim(0.01f);
-static bool g_sim_inited = false;
-
-
-void ControlTask::fillActualState(const auv::common::NavState &nav, float (&actual_p)[4], float (&actual_v)[4]) {
-    actual_p[0] = nav.x;
-    actual_p[1] = nav.y;
-    actual_p[2] = nav.z;
-    actual_p[3] = nav.yaw;
-
-    actual_v[0] = nav.vx;
-    actual_v[1] = nav.vy;
-    actual_v[2] = nav.vz;
-    actual_v[3] = nav.vyaw;
-}
+#if AUV_SIMULATION_ENABLE
+static auv::component::HitlSimulator g_hitl_sim(0.01f);
+#endif
 
 void ControlTask::run() {
-    init();
+  init();
 
-    for (;;) {
-        refreshHardwareWatchdogIfNeeded();
+  last_tick_ = static_cast<uint32_t>(xTaskGetTickCount());
+  first_cycle_ = true;
 
-        const uint32_t now = HAL_GetTick();
-        last_dt_ms = static_cast<float>(now - last_tick_);
-        last_tick_ = now;
-
-        auv::common::NavState nav = updateNavigation();
-        handleArmState(nav, now);
-        computeAndPublish(nav);
-
-        // 周期性调试信息（非阻塞，通过 UART5 DMA，忙时丢弃）
-        static uint32_t last_log_ms = 0;
-        if (now - last_log_ms >= 1000) {
-            last_log_ms = now;
-            char dbgbuf[128];
-            int n = std::snprintf(dbgbuf, sizeof(dbgbuf), "DBG t=%lu dt=%.1f z=%.2f armed=%d\r\n",
-                                  (unsigned long)now, last_dt_ms, nav.z, is_system_armed ? 1 : 0);
-            if (n > 0) {
-                auv::porting::SerialPort::transmitDebug(reinterpret_cast<const uint8_t*>(dbgbuf), (uint16_t)(n > (int)sizeof(dbgbuf) ? (int)sizeof(dbgbuf) : n));
-            }
-        }
-
-        vTaskDelayUntil(&last_wake_time_, pdMS_TO_TICKS(kLoopPeriodMs));
+  for (;;) {
+    const uint32_t loop_start_tick =
+        static_cast<uint32_t>(xTaskGetTickCount());
+    if (first_cycle_) {
+      auv::motion::motion_context.last_dt_ms_.set(
+          static_cast<float>(kLoopPeriodMs));
+      first_cycle_ = false;
+    } else {
+      auv::motion::motion_context.last_dt_ms_.set(static_cast<float>(
+          (loop_start_tick - last_tick_) * portTICK_PERIOD_MS));
     }
+    last_tick_ = loop_start_tick;
+
+    const uint32_t exec_start_ms = HAL_GetTick();
+    updateNavigation();
+    computeAndPublish();
+    const uint32_t exec_ms = HAL_GetTick() - exec_start_ms;
+    auv::motion::motion_context.last_exec_ms_.set(static_cast<float>(exec_ms));
+
+    if (exec_ms > kLoopPeriodMs) {
+      overrun_count_++;
+      auv::motion::motion_context.control_overrun_count_.set(overrun_count_);
+      ROS_LOG_WARN("ControlTask overrun: exec=%lu ms, count=%lu",
+                   (unsigned long)exec_ms, (unsigned long)overrun_count_);
+    }
+
+    TickType_t wake_tick = static_cast<TickType_t>(last_wake_time_);
+    vTaskDelayUntil(&wake_tick, pdMS_TO_TICKS(kLoopPeriodMs));
+    last_wake_time_ = static_cast<uint32_t>(wake_tick);
+  }
 }
 
 void ControlTask::init() {
-    memset(ins_rx_buffer, 0, sizeof(ins_rx_buffer));
-    // 初始化 motor_tx_packet：保留/设置帧头帧尾和 id，清零有效载荷字段
-    taskENTER_CRITICAL();
-    motor_tx_packet.head[0] = 0xFA;
-    motor_tx_packet.head[1] = 0xAF;
-    motor_tx_packet.id = 0x01;
-    motor_tx_packet.Fx = 0.0f;
-    motor_tx_packet.Fy = 0.0f;
-    motor_tx_packet.Fz = 0.0f;
-    motor_tx_packet.Fyaw = 0.0f;
-    motor_tx_packet.Fpitch = 0.0f;
-    motor_tx_packet.Froll = 0.0f;
-    motor_tx_packet.tail[0] = 0xFB;
-    motor_tx_packet.tail[1] = 0xBF;
-    taskEXIT_CRITICAL();
+  memset(ins_rx_buffer, 0, sizeof(ins_rx_buffer));
 
-    ins_driver.init();
-    SoftWatchdog::getInstance().init(auv::config::sys_config.soft_watchdog);
-    
-    // 初始化底盘 PID 参数与运动学约束 (从 SystemConfig 加载)
-    auv::control::chassis.applyConfig(auv::config::sys_config.chassis);
+  ctx_->ins_driver->init();
+  // NORMAL 只负责接收并缓存 USBL 数据，不改变当前 INS/深度数据源选择。
+  ctx_->usbl_driver->init();
+  ctx_->chassis->applyConfig(auv::config::sys_config.chassis);
 
-    // 简单测试：非阻塞地通过 UART5 发送一条调试信息（忙时丢弃）
-    const char test_msg[] = "DEBUG: UART5 OK\r\n";
-    auv::porting::SerialPort::transmitDebug(reinterpret_cast<const uint8_t*>(test_msg), sizeof(test_msg) - 1);
+  ctx_->logger->init();
 
-    last_wake_time_ = xTaskGetTickCount();
-    last_tick_ = HAL_GetTick();
+  /* 创建 SITL 导航数据队列（长度 3，生产者 onSimNav → 消费者 updateNavigation）
+   */
+  if (auv::motion::motion_context.sitl_nav_queue == nullptr) {
+    auv::motion::motion_context.sitl_nav_queue =
+        xQueueCreate(3, sizeof(auv::motion::NavState));
+  }
+
+  /* USBL topic FIFO：保存尚未发送到 micro-ROS 的有效帧。 */
+  if (auv::motion::motion_context.usbl_topic_queue == nullptr) {
+    auv::motion::motion_context.usbl_topic_queue =
+        xQueueCreate(8, sizeof(auv::motion::UsblTopicSample));
+  }
+
+  /* 深度传感器初始化（Init 内部注册回调 + 初始化，start 创建任务/启动 DMA） */
+  ctx_->depth_sensor->Init();
+  ctx_->depth_sensor->start();
+
+#if AUV_PRESET_USES_GPIO_PUSHROD
+  // The GPIO backend owns its PB7/PB8 lifecycle. The self-UART backend is
+  // intentionally not initialized here a second time because the depth
+  // driver owns the shared UART4 DMA lifecycle.
+  ctx_->pushrod_driver->Init();
+  ctx_->pushrod_driver->start();
+#endif
+
+  ROS_LOG_INFO("System ControlTask initialized");
+
+  last_wake_time_ = xTaskGetTickCount();
+  last_tick_ = HAL_GetTick();
 }
 
-void ControlTask::refreshHardwareWatchdogIfNeeded() {
-    if (SoftWatchdog::getInstance().check()) {
-        HAL_IWDG_Refresh(&hiwdg1);
+void ControlTask::updateNavigation() {
+  auv::motion::NavState state;
+
+  // 1. 获取原始导航输入
+#if AUV_SIMULATION_ENABLE
+  if (auv::config::sys_config.simulation.hitl_enabled) {
+    auto p = g_hitl_sim.getPosition();
+    auto v = g_hitl_sim.getVelocity();
+    for (int i = 0; i < 6; i++) {
+      state.pos_world[i] = p[i];
+      state.vel_body[i] = v[i];
     }
+    {
+      auto ns = auv::system::system_context.nav_status_.get();
+      ns.imu_state = 4;
+      ns.timestamp = HAL_GetTick();
+      auv::system::system_context.nav_status_.set(ns);
+    }
+  } else
+#endif
+      if (auv::config::sys_config.simulation.sitl_enabled) {
+    /* 从队列 drain 到最新（FIFO → 丢弃旧帧，只保留最新一帧） */
+    {
+      bool got_new = false;
+      while (xQueueReceive(auv::motion::motion_context.sitl_nav_queue, &state,
+                           0) == pdTRUE) {
+        last_sitl_state_ = state;
+        got_new = true;
+      }
+      if (!got_new) {
+        state = last_sitl_state_;
+      }
+    }
+    {
+      auto ns = auv::system::system_context.nav_status_.get();
+      ns.imu_state = 4;
+      ns.timestamp = HAL_GetTick();
+      auv::system::system_context.nav_status_.set(ns);
+    }
+  } else {
+    state = ctx_->ins_driver->getNavState();
+    ctx_->ins_driver->update(state);
+    // 轮询 DMA 环形缓冲并解包最新 USBL 帧。数据暂不参与融合，供后续
+    // 数据源选择/融合模块通过 AppContext::usbl_driver 读取。
+    if (ctx_->usbl_driver->update(usbl_state_)) {
+      auv::motion::UsblTopicSample sample{};
+      sample.state = usbl_state_;
+      auv::peripheral::UsblPortDiagnostics diagnostics{};
+      ctx_->usbl_driver->getDiagnostics(diagnostics);
+      sample.frame_number = diagnostics.valid_frames;
+
+      auto queue = auv::motion::motion_context.usbl_topic_queue;
+      if (queue != nullptr && xQueueSend(queue, &sample, 0) != pdPASS) {
+        // 队列满时丢弃最旧帧，保证 topic 最终拿到最新数据。
+        auv::motion::UsblTopicSample discarded{};
+        (void)xQueueReceive(queue, &discarded, 0);
+        (void)xQueueSend(queue, &sample, 0);
+      }
+    }
+
+    // The selected Depth_Sensor_Driver is the single physical Z source in
+    // NORMAL mode. Read() first polls the selected backend and then exposes
+    // its latest valid sample through getMS5837Z(). Do not gate this copy on
+    // the legacy runtime z_data_source enum: when that enum is
+    // USE_INS_INTEGRATED_Z, the old code silently left pos_world[2] at the
+    // INS value (normally zero), even though the depth backend was running.
+    const int depth_frame_ready = ctx_->depth_sensor->Read();
+    state.pos_world[2] = ctx_->depth_sensor->getMS5837Z();
+
+    // Keep one backend-independent diagnostic snapshot for all three depth
+    // implementations. UART-only fields are zero for I2C and commercial
+    // backends that do not expose them.
+    static uint32_t last_depth_diag_ms = 0U;
+    const uint32_t depth_diag_now = HAL_GetTick();
+    if ((uint32_t)(depth_diag_now - last_depth_diag_ms) >= 1000U) {
+      last_depth_diag_ms = depth_diag_now;
+      auv::peripheral::DepthDiagnostics diagnostics{};
+      ctx_->depth_sensor->getDiagnostics(diagnostics);
+      const long z_milli =
+          (long)(state.pos_world[2] * 1000.0f +
+                 (state.pos_world[2] >= 0.0f ? 0.5f : -0.5f));
+      const long z_abs_milli = z_milli < 0L ? -z_milli : z_milli;
+      const char *z_sign = z_milli < 0L ? "-" : "";
+      char rx_preview_hex[33] = {};
+      static constexpr char kHex[] = "0123456789ABCDEF";
+      for (uint8_t i = 0U; i < diagnostics.rx_preview_count; ++i) {
+        rx_preview_hex[i * 2U] =
+            kHex[(diagnostics.rx_preview[i] >> 4U) & 0x0FU];
+        rx_preview_hex[i * 2U + 1U] = kHex[diagnostics.rx_preview[i] & 0x0FU];
+      }
+      MS5837_LOG_DIAG(
+          "Depth main: frame=%d z=%s%ld.%03ld connected=%d ack=%d "
+          "bytes=%lu valid=%lu data=%lu rx=%lu pos=%lu err=%lu",
+          depth_frame_ready, z_sign, z_abs_milli / 1000L, z_abs_milli % 1000L,
+          diagnostics.connected ? 1 : 0,
+          diagnostics.handshake_acknowledged ? 1 : 0,
+          (unsigned long)diagnostics.rx_byte_count,
+          (unsigned long)diagnostics.valid_frame_count,
+          (unsigned long)diagnostics.data_frame_count,
+          (unsigned long)diagnostics.rx_event_count,
+          (unsigned long)diagnostics.dma_write_pos,
+          (unsigned long)diagnostics.rx_error_count);
+      MS5837_LOG_DIAG(
+          "Depth proto: parse=%lu hs=%lu push=%lu nr=%lu last=%02x/%u raw=%s",
+          (unsigned long)diagnostics.parser_error_count,
+          (unsigned long)diagnostics.handshake_ack_count,
+          (unsigned long)diagnostics.pushrod_ack_count,
+          (unsigned long)diagnostics.sensor_not_ready_count,
+          (unsigned int)diagnostics.last_frame_type,
+          (unsigned int)diagnostics.last_frame_length, rx_preview_hex);
+    }
+  }
+
+  // 2. 应用解锁原点平移与旋转变换
+  auto home = auv::motion::motion_context.home_offset_.get();
+  bool use_offset = home.active;
+  const auto &offset = home.offset;
+
+  if (use_offset) {
+    float diff[6];
+    for (int i = 0; i < 6; i++)
+      diff[i] = state.pos_world[i] - offset[i];
+
+    auv::algorithm::math::applyRotationToBody(diff, state.pos_world.data(),
+                                              offset[3], offset[4], offset[5]);
+
+    for (int i = 3; i < 6; i++) {
+      state.pos_world[i] =
+          auv::motion::MotionContext::wrapAngle(state.pos_world[i]);
+    }
+  }
+
+  // 3. 写入 MotionContext
+  auv::motion::motion_context.nav_state_.set(state);
 }
 
-auv::common::NavState ControlTask::updateNavigation() {
-    auv::common::NavState nav;
+void ControlTask::computeAndPublish() {
+  auto forces = ctx_->chassis->update();
 
-    // 锁定逻辑：如果已经解锁，则根据当时是否触发了仿真初始化来决定数据源，不再受运行时 config 突变影响
-    bool use_sim = is_system_armed ? g_sim_inited : auv::config::sys_config.simulation.hitl_enabled;
+#if AUV_SIMULATION_ENABLE
+  if (auv::config::sys_config.simulation.hitl_enabled) {
+    g_hitl_sim.step(forces);
+  }
+#endif
 
-    // 检查是否启用 HITL 仿真模式
-    if (use_sim) {
-        if (!g_sim_inited) {
-            // 首次启动仿真，尝试对齐当前传感器位置（如果有的话）
-            auto hardware_nav = auv::shared::snapshotNavState();
-            float p0[4] = {hardware_nav.x, hardware_nav.y, hardware_nav.z, hardware_nav.yaw};
-            g_hitl_sim.reset(p0);
-            g_sim_inited = true;
-        }
+  auv::motion::motion_context.last_output_forces_.set(forces);
 
-        auto p = g_hitl_sim.getPosition();
-        auto v = g_hitl_sim.getVelocity();
-        nav.x = p[0]; nav.y = p[1]; nav.z = p[2]; nav.yaw = p[3];
-        nav.vx = v[0]; nav.vy = v[1]; nav.vz = v[2]; nav.vyaw = v[3];
-        nav.imu_state = 4; // 强制模拟为最优导航状态 (Mode 4)
-        nav.timestamp = HAL_GetTick();
-    } else {
-        // 正常：读取原始硬件数据
-        nav = auv::shared::snapshotNavState();
-        ins_driver.update(nav);
+  const bool armed = auv::system::system_context.arm_state_.get().is_armed;
+  const bool thrust_ok = armed
+                             ? ctx_->motor_driver->publishThrust(
+                                   forces[0], forces[1], forces[2], forces[5],
+                                   forces[4], forces[3])
+                             : ctx_->motor_driver->publishThrust(0, 0, 0, 0, 0, 0);
 
-        // 根据配置选择是否使用独立的 MS5837 深度覆盖融合深度
-        if (auv::config::sys_config.sensors.z_data_source == auv::config::ZDataSource::USE_MS5837_Z) {
-            float depth_snapshot = 0.0f;
-            taskENTER_CRITICAL();
-            depth_snapshot = current_depth_z;
-            taskEXIT_CRITICAL();
-
-            nav.z = depth_snapshot;
-        }
-        g_sim_inited = false; // 退出仿真时重置标记
-    }
-
-    taskENTER_CRITICAL();
-    shared_nav_state = nav;
-    taskEXIT_CRITICAL();
-
-    return nav;
-}
-
-void ControlTask::setControlLevelNone(const auv::common::NavState &nav) {
-    float actual_p[4];
-    float actual_v[4];
-    fillActualState(nav, actual_p, actual_v);
-    chassis.setControlLevel(auv::common::ControlLevel::NONE, actual_p, actual_v);
-}
-
-void ControlTask::forceDisarmWithNeutralLevel(const auv::common::NavState &nav) {
-    taskENTER_CRITICAL();
-    is_system_armed = false;
-    arm_heartbeat_count = 0;
-    auv::device::ins_driver.clearHomeOffset(); // 失锁时恢复原始坐标系
-    taskEXIT_CRITICAL();
-    setControlLevelNone(nav);
-}
-
-void ControlTask::handleArmState(const auv::common::NavState &nav, uint32_t now) {
-    taskENTER_CRITICAL();
-    const bool armed_snapshot = is_system_armed;
-    const uint32_t heartbeat_snapshot = last_arm_heartbeat_ms;
-    const uint32_t heartbeat_count_snapshot = arm_heartbeat_count;
-    const uint32_t arm_start_snapshot = arm_start_ms;
-    taskEXIT_CRITICAL();
-
-    if (armed_snapshot) {
-        if (now - heartbeat_snapshot > kArmedHeartbeatTimeoutMs) {
-            forceDisarmWithNeutralLevel(nav);
-        }
-        return;
-    }
-
-    if (chassis.getControlLevel() != auv::common::ControlLevel::NONE) {
-        setControlLevelNone(nav);
-    }
-
-    if (heartbeat_count_snapshot >= kArmMinHeartbeatCount &&
-        (now - arm_start_snapshot >= kArmMinDurationMs)) {
-        taskENTER_CRITICAL();
-        const uint32_t hbt_data = last_arm_heartbeat_data;
-        taskEXIT_CRITICAL();
-
-        // 允许解锁逻辑：
-        // 1. 数据为 kRemoteModeHeartbeatData (3)
-        // 2. 数据为 1 且 (导航有效 或 处于仿真模式)
-        bool can_arm = (hbt_data == kRemoteModeHeartbeatData) || 
-                       (hbt_data == 1 && (auv::shared::isNavigationValid(nav) || auv::config::sys_config.simulation.hitl_enabled));
-
-        if (can_arm) {
-            taskENTER_CRITICAL();
-            if (!is_system_armed) {
-                // 解锁瞬间的行为锁定：
-                // 1. 锁定仿真模式状态：如果在此时开启了仿真，则整个 Arm 周期都应维持仿真
-                // (此处通过 g_sim_inited 标志位配合 sys_config 实现逻辑锁定)
-                
-                // 2. 注入驱动层偏移（建立“家”坐标系）
-                // 注意：在仿真模式下，nav 已经是相对坐标，但 setHomeOffset 会处理初始对齐
-                auv::device::ins_driver.setHomeOffset(nav.x, nav.y, nav.z, nav.yaw);
-                
-                // 3. 锁定控制器目标为当前点（即新坐标系的 0 点）
-                target_p[0] = 0.0f;
-                target_p[1] = 0.0f;
-                target_p[2] = 0.0f;
-                target_p[3] = 0.0f;
-            }
-            is_system_armed = true;
-            taskEXIT_CRITICAL();
-
-            const char amsg[] = "INFO: System ARMED\r\n";
-            auv::porting::SerialPort::transmitDebug((uint8_t*)amsg, sizeof(amsg)-1);
-        } else {
-            // 如果是因为导航无效导致的无法解锁，打印提示
-            if (hbt_data == 1 && !(auv::shared::isNavigationValid(nav) || auv::config::sys_config.simulation.hitl_enabled)) {
-                static uint32_t last_warn_ms = 0;
-                if (now - last_warn_ms > 2000) {
-                    last_warn_ms = now;
-                    const char msg[] = "WARN: Arm denied - Navigation NOT valid\r\n";
-                    auv::porting::SerialPort::transmitDebug((uint8_t*)msg, sizeof(msg)-1);
-                }
-            }
-            taskENTER_CRITICAL();
-            arm_heartbeat_count = 0;
-            taskEXIT_CRITICAL();
-        }
-    }
-
-    if (now - heartbeat_snapshot > kDisarmedHeartbeatTimeoutMs) {
-        taskENTER_CRITICAL();
-        arm_heartbeat_count = 0;
-        taskEXIT_CRITICAL();
-    }
-}
-
-void ControlTask::computeAndPublish(const auv::common::NavState &nav) {
-    float actual_p[4];
-    float actual_v[4];
-    fillActualState(nav, actual_p, actual_v);
-
-    float target_snapshot[4];
-    taskENTER_CRITICAL();
-    for (int i = 0; i < 4; ++i) {
-        target_snapshot[i] = target_p[i];
-    }
-    taskEXIT_CRITICAL();
-
-    auto forces = chassis.update(actual_p, actual_v, target_snapshot);
-
-    // 如果满足仿真锁定状态，将计算出的推力喂回仿真引擎
-    bool use_sim = is_system_armed ? g_sim_inited : auv::config::sys_config.simulation.hitl_enabled;
-    if (use_sim && g_sim_inited) {
-        float k = auv::config::sys_config.simulation.thrust_k;
-        std::array<float, 4> masses = {
-            auv::config::sys_config.chassis.x.mass * k,
-            auv::config::sys_config.chassis.y.mass * k,
-            auv::config::sys_config.chassis.z.mass * k,
-            auv::config::sys_config.chassis.yaw.mass * k
-        };
-        std::array<float, 4> drags = {
-            auv::config::sys_config.chassis.x.drag * k,
-            auv::config::sys_config.chassis.y.drag * k,
-            auv::config::sys_config.chassis.z.drag * k,
-            auv::config::sys_config.chassis.yaw.drag * k
-        };
-        g_hitl_sim.step(forces, masses, drags, k);
-    }
-
-    taskENTER_CRITICAL();
-    for (int i = 0; i < 4; ++i) {
-        last_output_forces[i] = forces[i];
-    }
-    const bool armed = is_system_armed;
-    taskEXIT_CRITICAL();
-
-    if (armed) {
-        motor_driver.publishThrust(forces[0], forces[1], forces[2], forces[3]);
-    } else {
-        motor_driver.publishThrust(0, 0, 0, 0);
-    }
+  if (!thrust_ok) {
+    const uint32_t fail_count =
+        auv::motion::motion_context.thrust_tx_fail_count_.get() + 1;
+    auv::motion::motion_context.thrust_tx_fail_count_.set(fail_count);
+  }
 }
 
 void UserApp_ControlTask(void *argument) {
-    (void)argument;
-    ControlTask runner;
-    runner.run();
+  (void)argument;
+  ControlTask runner(&auv::system::g_app_ctx);
+  runner.run();
 }

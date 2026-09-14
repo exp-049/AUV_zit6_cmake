@@ -1,8 +1,60 @@
 import json
 import os
 import sys
+from datetime import datetime
+from jinja2 import Environment, FileSystemLoader
 
-def get_cpp_type(val):
+TYPE_MAP = {
+    "uint32": ("ParamType::UINT32", "uint32_t"),
+    "uint32_t": ("ParamType::UINT32", "uint32_t"),
+    "int32": ("ParamType::INT32", "int32_t"),
+    "int32_t": ("ParamType::INT32", "int32_t"),
+    "float": ("ParamType::FLOAT", "float"),
+    "float32": ("ParamType::FLOAT", "float"),
+    "bool": ("ParamType::BOOL", "bool"),
+    "boolean": ("ParamType::BOOL", "bool"),
+    "string": ("ParamType::STRING", "const char*"),
+    "cstring": ("ParamType::STRING", "const char*"),
+    "enum_z": ("ParamType::ENUM_Z", "ZDataSource"),
+    "zdatasource": ("ParamType::ENUM_Z", "ZDataSource"),
+}
+
+def load_type_overrides(config_path):
+    base_dir = os.path.dirname(config_path)
+    type_path = os.path.join(base_dir, "config.types.json")
+    if not os.path.exists(type_path):
+        return {}
+    try:
+        with open(type_path, 'r') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def resolve_type_override(override):
+    if override is None:
+        return None, None
+    if isinstance(override, dict):
+        t = override.get("type") or override.get("param_type")
+        cpp_override = override.get("cpp_type")
+    else:
+        t = override
+        cpp_override = None
+    if not t:
+        return None, None
+    t_norm = str(t).strip().lower()
+    if t_norm.startswith("enum"):
+        return "ParamType::ENUM_Z", (cpp_override or "ZDataSource")
+    mapped = TYPE_MAP.get(t_norm)
+    if not mapped:
+        return None, None
+    return mapped[0], (cpp_override or mapped[1])
+
+def get_cpp_type(val, path="", type_overrides=None):
+    if type_overrides and path in type_overrides:
+        p_type, cpp_type = resolve_type_override(type_overrides[path])
+        if p_type:
+            return p_type, cpp_type
     if isinstance(val, bool):
         return "ParamType::BOOL", "bool"
     if isinstance(val, int):
@@ -11,19 +63,25 @@ def get_cpp_type(val):
         return "ParamType::FLOAT", "float"
     if isinstance(val, str):
         # 特殊处理枚举
-        if "use_ms5837_z" in val or "use_ins" in val:
-             return "ParamType::ENUM_Z", "ZDataSource"
+        enum_vals = {
+            "use_ms5837_z",
+            "use_ins_integrated_z",
+            "use_ins_pressure_z",
+            "use_manometer_z",
+        }
+        if val in enum_vals:
+            return "ParamType::ENUM_Z", "ZDataSource"
         return "ParamType::STRING", "const char*"
     return None, None
 
-def collect_params(data, prefix=""):
+def collect_params(data, prefix="", type_overrides=None):
     params = []
     for k, v in data.items():
         path = f"{prefix}.{k}" if prefix else k
         if isinstance(v, dict):
-            params.extend(collect_params(v, path))
+            params.extend(collect_params(v, path, type_overrides))
         else:
-            p_type, cpp_type = get_cpp_type(v)
+            p_type, cpp_type = get_cpp_type(v, path, type_overrides)
             if p_type:
                 params.append({
                     "path": path,
@@ -34,137 +92,157 @@ def collect_params(data, prefix=""):
                 })
     return params
 
+AXIS_FIELDS = [
+    "pos_kp", "pos_ki", "pos_kd", "pos_i_limit", "pos_output_limit",
+    "vel_kp", "vel_ki", "vel_kd", "vel_i_limit", "vel_output_limit",
+    "max_v", "max_a", "mass", "drag",
+]
+
+
+def _as_bool(value, path):
+    """Normalize JSON booleans while accepting legacy string values."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        value_lower = value.strip().lower()
+        if value_lower == "true":
+            return True
+        if value_lower == "false":
+            return False
+    raise ValueError(f"{path} must be a boolean")
+
+
+def _as_uint32(value, path):
+    """Normalize an integral JSON number while accepting legacy 3000.0 text."""
+    if isinstance(value, bool):
+        raise ValueError(f"{path} must be an unsigned integer")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{path} must be an unsigned integer") from None
+    if not number.is_integer() or number < 0 or number > 0xFFFFFFFF:
+        raise ValueError(f"{path} must be an unsigned integer")
+    return int(number)
+
+
+def _normalize_known_types(config):
+    """Keep generator input types aligned with SystemConfig field types."""
+    system = config.setdefault("system", {})
+    depth_board = system.setdefault("depth_calc_board", {})
+    depth_board["enabled"] = _as_bool(
+        depth_board.get("enabled", False), "system.depth_calc_board.enabled")
+
+    watchdog = system.setdefault("soft_watchdog", {})
+    watchdog["timeout_ms"] = _as_uint32(
+        watchdog["timeout_ms"], "system.soft_watchdog.timeout_ms")
+    for key in ("check_microros", "check_ins", "check_depth"):
+        watchdog[key] = _as_bool(
+            watchdog[key], f"system.soft_watchdog.{key}")
+
+    chassis = config.setdefault("chassis", {})
+    chassis["planner_enabled"] = _as_bool(
+        chassis.get("planner_enabled", False), "chassis.planner_enabled")
+
+    simulation = config.setdefault("simulation", {})
+    for key in ("hitl_enabled", "sitl_enabled"):
+        simulation[key] = _as_bool(
+            simulation[key], f"simulation.{key}")
+
+
+def _format_literal(v):
+    """将 Python 值格式化为 C++ 字面量"""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, float):
+        return f"{v}f"
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, str):
+        return f'"{v}"'
+    return str(v)
+
+
+def _gen_axis_init(axis_dict):
+    """生成单个 AxisConfig 的初始化字符串"""
+    parts = []
+    for field in AXIS_FIELDS:
+        if field in axis_dict:
+            parts.append(f".{field} = {_format_literal(axis_dict[field])}")
+    return "{\n            " + ",\n            ".join(parts) + "\n        }"
+
+
 def gen_system_config(json_path, out_dir):
     with open(json_path, 'r') as f:
         config = json.load(f)
+    _normalize_known_types(config)
 
     os.makedirs(out_dir, exist_ok=True)
     header_path = os.path.join(out_dir, 'SystemConfig.hpp')
 
-    # 生成结构体定义 (这里简化处理，手动定义核心结构以保证兼容性，元数据自动生成)
-    # 实际上可以完全自动生成，但为了保持现有代码不崩溃，我们先定义好顶层结构
-    
-    content = """#ifndef __SYSTEM_CONFIG_HPP
-#define __SYSTEM_CONFIG_HPP
-
-#include <stdint.h>
-#include <stddef.h>
-
-namespace auv {
-namespace config {
-
-enum class ParamType {
-    FLOAT,
-    UINT32,
-    INT32,
-    BOOL,
-    STRING,
-    ENUM_Z
-};
-
-struct ParamMeta {
-    const char* path;
-    void* ptr;
-    ParamType type;
-};
-
-// 传感器枚举定义
-enum class ZDataSource {
-    USE_INS_INTEGRATED_Z,
-    USE_MS5837_Z
-};
-
-// --- 自动生成的配置结构体 ---
-
-struct AxisConfig {
-    float pos_kp;
-    float pos_ki;
-    float pos_kd;
-    float pos_i_limit;
-    float pos_output_limit;
-    float vel_kp;
-    float vel_ki;
-    float vel_kd;
-    float vel_i_limit;
-    float vel_output_limit;
-    float max_v;
-    float max_a;
-    float mass;
-    float drag;
-};
-
-struct ChassisConfig {
-    bool planner_enabled;
-    AxisConfig x;
-    AxisConfig y;
-    AxisConfig z;
-    AxisConfig yaw;
-};
-
-struct SoftWatchdogConfig {
-    uint32_t timeout_ms;
-    bool check_microros;
-    bool check_ins;
-    bool check_depth;
-};
-
-struct InsConfig {
-    float init_lat;
-    float init_lon;
-};
-
-struct SensorsConfig {
-    ZDataSource z_data_source;
-};
-
-struct SimulationConfig {
-    bool hitl_enabled;
-    float mass;
-    float drag;
-    float thrust_k;
-};
-
-struct SystemConfig {
-    ChassisConfig chassis;
-    InsConfig ins;
-    SoftWatchdogConfig soft_watchdog;
-    SensorsConfig sensors;
-    SimulationConfig simulation;
-};
-
-// 全局配置实例声明
-extern SystemConfig sys_config;
-
-// 参数注册表声明
-extern const ParamMeta SYSTEM_PARAMS[];
-extern const size_t SYSTEM_PARAMS_COUNT;
-
-} // namespace config
-} // namespace auv
-
-#endif
-"""
+    # 使用 Jinja2 模板生成结构体定义头文件
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    template_dir = os.path.join(script_dir, 'templates')
+    env = Environment(loader=FileSystemLoader(template_dir))
+    template = env.get_template('SystemConfig.hpp.j2')
+    sys_cfg = config.get('system', {})
+    depth_calc_board = bool(sys_cfg.get('depth_calc_board', {}).get('enabled', False))
+    content = template.render(
+        depth_calc_board=depth_calc_board)
 
     # 生成注册表源文件 (SystemConfig.cpp)
-    params = collect_params(config)
-    
+    if isinstance(config.get("types"), dict):
+        type_overrides = config.get("types")
+    else:
+        type_overrides = load_type_overrides(json_path)
+    config_for_params = {k: v for k, v in config.items() if k != "types"}
+    # 剥离不需要注册为运行时参数的顶层键
+    config_for_params.pop("firmware", None)  # 由手动注册处理
+    # 剥离 system 中不需要注册为运行时参数的部分
+    if "system" in config_for_params:
+        sys_params = dict(config_for_params["system"])
+        sys_params.pop("depth_calc_board", None)
+        config_for_params["system"] = sys_params
+    params = collect_params(config_for_params, type_overrides=type_overrides)
+
+    z_src = str(sys_cfg.get('z_data_sourse', 'use_ins_integrated_z'))
+    if z_src == 'use_ms5837_z':
+        z_enum = 'USE_MS5837_Z'
+    elif z_src in ('use_ins_pressure_z', 'use_manometer_z'):
+        z_enum = 'USE_INS_PRESSURE_Z'
+    else:
+        z_enum = 'USE_INS_INTEGRATED_Z'
+
+    # ---- 生成 chassis 初始化 ----
+    chassis_cfg = config.get("chassis", {})
+    chassis_lines = [f"        .planner_enabled = {_format_literal(chassis_cfg.get('planner_enabled', False))}"]
+    for axis_name in ("x", "y", "z", "roll", "pitch", "yaw"):
+        axis_dict = chassis_cfg.get(axis_name, {})
+        chassis_lines.append(f"        .{axis_name} = {_gen_axis_init(axis_dict)}")
+    chassis_init = ",\n".join(chassis_lines)
+
+    # ---- 生成 ins 初始化 ----
+    ins_cfg = config.get("ins", {})
+    ins_init = f".init_lat = {_format_literal(ins_cfg.get('init_lat', 0.0))}, .init_lon = {_format_literal(ins_cfg.get('init_lon', 0.0))}"
+
+    # ---- 自动生成固件版本 (YY_MM_DD-HHMM) ----
+    fw_version = datetime.now().strftime("%y_%m_%d-%H%M")
+
     cpp_content = f"""#include "SystemConfig.hpp"
 
 namespace auv {{
 namespace config {{
 
 SystemConfig sys_config = {{
-    .chassis = {{
-        .planner_enabled = {str(config['chassis']['planner_enabled']).lower()},
-        .x = {{ {config['chassis']['x']['pos_kp']}, {config['chassis']['x']['pos_ki']}, {config['chassis']['x']['pos_kd']}, {config['chassis']['x']['pos_i_limit']}, {config['chassis']['x']['pos_output_limit']}, {config['chassis']['x']['vel_kp']}, {config['chassis']['x']['vel_ki']}, {config['chassis']['x']['vel_kd']}, {config['chassis']['x']['vel_i_limit']}, {config['chassis']['x']['vel_output_limit']}, {config['chassis']['x']['max_v']}, {config['chassis']['x']['max_a']}, {config['chassis']['x']['mass']}, {config['chassis']['x']['drag']} }},
-        .y = {{ {config['chassis']['y']['pos_kp']}, {config['chassis']['y']['pos_ki']}, {config['chassis']['y']['pos_kd']}, {config['chassis']['y']['pos_i_limit']}, {config['chassis']['y']['pos_output_limit']}, {config['chassis']['y']['vel_kp']}, {config['chassis']['y']['vel_ki']}, {config['chassis']['y']['vel_kd']}, {config['chassis']['y']['vel_i_limit']}, {config['chassis']['y']['vel_output_limit']}, {config['chassis']['y']['max_v']}, {config['chassis']['y']['max_a']}, {config['chassis']['y']['mass']}, {config['chassis']['y']['drag']} }},
-        .z = {{ {config['chassis']['z']['pos_kp']}, {config['chassis']['z']['pos_ki']}, {config['chassis']['z']['pos_kd']}, {config['chassis']['z']['pos_i_limit']}, {config['chassis']['z']['pos_output_limit']}, {config['chassis']['z']['vel_kp']}, {config['chassis']['z']['vel_ki']}, {config['chassis']['z']['vel_kd']}, {config['chassis']['z']['vel_i_limit']}, {config['chassis']['z']['vel_output_limit']}, {config['chassis']['z']['max_v']}, {config['chassis']['z']['max_a']}, {config['chassis']['z']['mass']}, {config['chassis']['z']['drag']} }},
-        .yaw = {{ {config['chassis']['yaw']['pos_kp']}, {config['chassis']['yaw']['pos_ki']}, {config['chassis']['yaw']['pos_kd']}, {config['chassis']['yaw']['pos_i_limit']}, {config['chassis']['yaw']['pos_output_limit']}, {config['chassis']['yaw']['vel_kp']}, {config['chassis']['yaw']['vel_ki']}, {config['chassis']['yaw']['vel_kd']}, {config['chassis']['yaw']['vel_i_limit']}, {config['chassis']['yaw']['vel_output_limit']}, {config['chassis']['yaw']['max_v']}, {config['chassis']['yaw']['max_a']}, {config['chassis']['yaw']['mass']}, {config['chassis']['yaw']['drag']} }}
+    .system = {{
+        .soft_watchdog = {{ {sys_cfg['soft_watchdog']['timeout_ms']}, {str(sys_cfg['soft_watchdog']['check_microros']).lower()}, {str(sys_cfg['soft_watchdog']['check_ins']).lower()}, {str(sys_cfg['soft_watchdog']['check_depth']).lower()} }},
+        .sensors = {{ ZDataSource::{z_enum} }},
     }},
-    .ins = {{ {config['ins']['init_lat']}, {config['ins']['init_lon']} }},
-    .soft_watchdog = {{ {config['soft_watchdog']['timeout_ms']}, {str(config['soft_watchdog']['check_microros']).lower()}, {str(config['soft_watchdog']['check_ins']).lower()}, {str(config['soft_watchdog']['check_depth']).lower()} }},
-    .sensors = {{ ZDataSource::{ "USE_MS5837_Z" if config['z_data_sourse'] == 'use_ms5837_z' else "USE_INS_INTEGRATED_Z" } }},
-    .simulation = {{ {str(config['simulation']['hitl_enabled']).lower()}, {config['simulation']['mass']}, {config['simulation']['drag']}, {config['simulation']['thrust_k']} }}
+    .chassis = {{
+{chassis_init}
+    }},
+    .ins = {{ {ins_init} }},
+    .simulation = {{ {str(config['simulation']['hitl_enabled']).lower()}, {str(config['simulation']['sitl_enabled']).lower()}, {config['simulation']['mass']}, {config['simulation']['drag']}, {config['simulation']['thrust_k']}, {config['simulation']['metacentric_height']} }},
+    .firmware_version = "{fw_version}"
 }};
 
 const ParamMeta SYSTEM_PARAMS[] = {{
@@ -173,14 +251,17 @@ const ParamMeta SYSTEM_PARAMS[] = {{
     for p in params:
         cpp_path = p['path']
         # 修正 JSON 路径到 C++ 成员路径的映射
-        if cpp_path == "z_data_sourse": cpp_path = "sensors.z_data_source"
+        if cpp_path == "z_data_sourse" or cpp_path == "system.z_data_sourse":
+            cpp_path = "system.sensors.z_data_source"
         # 不再需要旧的 PID 映射，因为现在是扁平化的 AxisConfig
 
         cpp_content += f'    {{"{p["path"]}", &sys_config.{cpp_path}, {p["type"]}}},\n'
     
+    # 手动添加非 JSON 配置项的注册
+    cpp_content += '    {"firmware.version", sys_config.firmware_version, ParamType::STRING},\n'
     cpp_content += "    {NULL, NULL, ParamType::FLOAT}\n"
     cpp_content += "};\n\n"
-    cpp_content += f"const size_t SYSTEM_PARAMS_COUNT = {len(params)};\n\n"
+    cpp_content += f"const size_t SYSTEM_PARAMS_COUNT = {len(params) + 1};\n\n"
     cpp_content += "} // namespace config\n"
     cpp_content += "} // namespace auv\n"
 

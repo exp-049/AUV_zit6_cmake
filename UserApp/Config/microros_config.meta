@@ -1,0 +1,14 @@
+{
+    "rmw_microxrcedds": {
+        "RMW_UXRCE_MAX_PUBLISHERS": 10,
+        "RMW_UXRCE_MAX_SUBSCRIPTIONS": 8,
+        "RMW_UXRCE_MAX_SERVICES": 4,
+        "RMW_UXRCE_MAX_CLIENTS": 4,
+        "RMW_UXRCE_MAX_HISTORY": 4,
+        "RMW_UXRCE_MAX_INPUT_RELIABLE_ENTITIES": 2,
+        "RMW_UXRCE_MAX_OUTPUT_RELIABLE_ENTITIES": 2
+    },
+    "microxrcedds_client": {
+        "UCLIENT_CUSTOM_TRANSPORT_MTU": 2048
+    }
+}

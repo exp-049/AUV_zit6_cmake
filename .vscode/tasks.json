@@ -4,16 +4,295 @@
         {
             "label": "Build Firmware",
             "type": "shell",
-            "command": "cmake --build build/Debug",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${command:cmake.buildDirectory}",
+                "--"
+            ],
             "group": "build",
             "problemMatcher": [
                 "$gcc"
             ]
         },
         {
-            "label": "Flash Firmware (OpenOCD)",
+            "label": "Build SelfCalcBoard Firmware",
             "type": "shell",
-            "command": "openocd -f interface/stlink.cfg -c 'transport select hla_swd' -c 'adapter speed 100' -f target/stm32h7x.cfg -c 'program build/Debug/AUV_zit6.elf verify reset exit'",
+            "command": "cmake --build --preset Debug-SelfCalcBoard",
+            "group": "build",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Build MS5837 CAL Debug",
+            "type": "shell",
+            "command": "cmake --build --preset MS5837_CAL_DEBUG",
+            "group": "build",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Build USBL Debug",
+            "type": "shell",
+            "command": "cmake --build --preset USBL_DEBUG",
+            "group": "build",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Build INS Debug",
+            "type": "shell",
+            "command": "cmake --build --preset INS_DEBUG",
+            "group": "build",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Build Pushrod Debug",
+            "type": "shell",
+            "command": "cmake --build --preset PUSHROD_DEBUG",
+            "group": "build",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Build Motion Debug",
+            "type": "shell",
+            "command": "cmake --build --preset MOTION_DEBUG",
+            "group": "build",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Flash Firmware (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "load",
+                "--target",
+                "stm32h743xx",
+                "--uid",
+                "6894719E6D7C",
+                "--frequency",
+                "2m",
+                "--connect",
+                "attach",
+                "--erase",
+                "sector",
+                "-O",
+                "load.pre_reset=off",
+                "-O",
+                "load.post_reset=sysresetreq",
+                "${command:cmake.getLaunchTargetPath}"
+            ],
+            "dependsOn": "Build Firmware",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash SelfCalcBoard Firmware (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "load",
+                "--target",
+                "stm32h743xx",
+                "--uid",
+                "6894719E6D7C",
+                "--frequency",
+                "2m",
+                "--connect",
+                "attach",
+                "--erase",
+                "sector",
+                "-O",
+                "load.pre_reset=off",
+                "-O",
+                "load.post_reset=sysresetreq",
+                "${workspaceFolder}/build/Debug-SelfCalcBoard/UserApp/AUV_zit6.elf"
+            ],
+            "dependsOn": "Build SelfCalcBoard Firmware",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Reset Target (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "commander",
+                "--target",
+                "stm32h743xx",
+                "--uid",
+                "6894719E6D7C",
+                "--frequency",
+                "2m",
+                "--connect",
+                "attach",
+                "--command",
+                "reset sysresetreq"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash MS5837 CAL Debug (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "load", "--target", "stm32h743xx", "--uid", "6894719E6D7C",
+                "--frequency", "2m", "--connect", "attach", "--erase", "sector",
+                "-O", "load.pre_reset=off", "-O", "load.post_reset=sysresetreq",
+                "${workspaceFolder}/build/MS5837_CAL_DEBUG/UserApp/AUV_zit6.elf"
+            ],
+            "dependsOn": "Build MS5837 CAL Debug",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "View MS5837 RTT (DAPLink)",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "${workspaceFolder}/scripts/view_ms5837_rtt.sh"
+            ],
+            "dependsOn": "Flash MS5837 CAL Debug (DAPLink)",
+            "dependsOrder": "sequence",
+            "presentation": {
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash USBL Debug (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "load", "--target", "stm32h743xx", "--uid", "6894719E6D7C",
+                "--frequency", "2m", "--connect", "attach", "--erase", "sector",
+                "-O", "load.pre_reset=off", "-O", "load.post_reset=sysresetreq",
+                "${workspaceFolder}/build/USBL_DEBUG/UserApp/AUV_zit6.elf"
+            ],
+            "dependsOn": "Build USBL Debug",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash INS Debug (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "load", "--target", "stm32h743xx", "--uid", "6894719E6D7C",
+                "--frequency", "2m", "--connect", "attach", "--erase", "sector",
+                "-O", "load.pre_reset=off", "-O", "load.post_reset=sysresetreq",
+                "${workspaceFolder}/build/INS_DEBUG/UserApp/AUV_zit6.elf"
+            ],
+            "dependsOn": "Build INS Debug",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash Pushrod Debug (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "load", "--target", "stm32h743xx", "--uid", "6894719E6D7C",
+                "--frequency", "2m", "--connect", "attach", "--erase", "sector",
+                "-O", "load.pre_reset=off", "-O", "load.post_reset=sysresetreq",
+                "${workspaceFolder}/build/PUSHROD_DEBUG/UserApp/AUV_zit6.elf"
+            ],
+            "dependsOn": "Build Pushrod Debug",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash Motion Debug (DAPLink)",
+            "type": "shell",
+            "command": "${env:HOME}/.local/bin/pyocd",
+            "args": [
+                "load", "--target", "stm32h743xx", "--uid", "6894719E6D7C",
+                "--frequency", "2m", "--connect", "attach", "--erase", "sector",
+                "-O", "load.pre_reset=off", "-O", "load.post_reset=sysresetreq",
+                "${workspaceFolder}/build/MOTION_DEBUG/UserApp/AUV_zit6.elf"
+            ],
+            "dependsOn": "Build Motion Debug",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Start Motion RTTD",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "${workspaceFolder}/scripts/motion_rtt.sh",
+                "rttd"
+            ],
+            "dependsOn": "Flash Motion Debug (DAPLink)",
+            "dependsOrder": "sequence",
+            "presentation": {
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Connect Motion RTT (nc)",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "${workspaceFolder}/scripts/motion_rtt.sh",
+                "nc"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "View Motion RTT (pyOCD)",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "${workspaceFolder}/scripts/motion_rtt.sh",
+                "view"
+            ],
+            "dependsOn": "Flash Motion Debug (DAPLink)",
+            "dependsOrder": "sequence",
+            "presentation": {
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash Firmware (ST-Link)",
+            "type": "shell",
+            "command": "openocd -f interface/stlink.cfg -c 'transport select hla_swd' -c 'adapter speed 100' -f target/stm32h7x.cfg -c 'program ${command:cmake.getLaunchTargetPath} verify reset exit'",
+            "dependsOn": "Build Firmware",
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash Firmware (J-Link)",
+            "type": "shell",
+            "command": "openocd -f interface/jlink.cfg -c 'transport select swd' -c 'adapter speed 100' -c 'reset_config srst_only srst_nogate connect_assert_srst' -f target/stm32h7x.cfg -c 'program ${command:cmake.getLaunchTargetPath} verify reset exit'",
+            "dependsOn": "Build Firmware",
+            "dependsOrder": "sequence",
             "group": "build",
             "problemMatcher": []
         }
