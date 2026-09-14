@@ -26,7 +26,9 @@ log/
 .project
 .cproject
 .mxproject
-.vscode/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
 .idea/
 
 # ---- 代码生成器输出 ----
@@ -54,9 +56,11 @@ UserApp/Thirdparty/micro_ros_stm32cubemx_utils/microros_static_library_ide/libra
 *~
 
 # ---- 用户配置 ----
-config.json
-CMakePresets.json
+# Ignore local configuration/presets in any subdirectory, but keep the
+# repository-root preset under version control.
+**/config.json
+**/CMakePresets.json
 !/CMakePresets.json
 
 # ---- 用户文档工作区 ----
-Usr/
+/Usr/
