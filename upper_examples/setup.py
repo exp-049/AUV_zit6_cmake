@@ -1,6 +1,14 @@
+import os
+from pathlib import Path
+
 from setuptools import find_packages, setup
 
 package_name = 'upper_examples'
+package_root = Path(__file__).resolve().parent
+config_file = os.path.relpath(
+    package_root.parent / 'UserApp' / 'Config' / 'config.json',
+    package_root,
+)
 
 setup(
     name=package_name,
@@ -10,8 +18,9 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         # Keep the parameter editor usable when launched via ``ros2 run``;
-        # the source config lives one directory above this package.
-        ('share/' + package_name, ['package.xml', '../config.json']),
+        # the firmware configuration is stored under UserApp/Config.
+        ('share/' + package_name,
+            ['package.xml', str(config_file)]),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

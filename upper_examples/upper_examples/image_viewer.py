@@ -10,6 +10,7 @@ choose between the local machine and the vehicle computer.
 """
 
 import argparse
+from datetime import datetime
 import os
 from pathlib import Path
 import signal
@@ -452,7 +453,12 @@ class ImageViewerWidget(QWidget):
         sidebar_layout.addWidget(self.btn_refresh)
 
         self.btn_record = QPushButton("开始录制四路")
-        self.btn_record.setEnabled(False)
+        # Keep the button clickable even before discovery finishes.  When a
+        # required stream is missing, start_recording() explains the reason
+        # in the status label instead of making the click appear ignored.
+        self.btn_record.setEnabled(True)
+        self.btn_record.setToolTip(
+            "按当前发现的可用 MJPEG 路数录制；不存在的路会自动跳过")
         self.btn_record.clicked.connect(self.toggle_recording)
         self.btn_record.setStyleSheet(
             "background-color: #455a64; color: white; padding: 7px;")
@@ -533,8 +539,7 @@ class ImageViewerWidget(QWidget):
         return Path.cwd()
 
     def _recording_source(self):
-        """Return one endpoint that exposes all four camera MJPEG streams."""
-        required = {"front", "front_annotated", "down", "down_annotated"}
+        """Return one endpoint and all available direct MJPEG streams."""
         groups = {}
         for stream in self._available_streams:
             if stream.get("transport") != "mjpeg":
@@ -543,11 +548,18 @@ class ImageViewerWidget(QWidget):
                    stream.get("port"))
             groups.setdefault(key, set()).add(stream.get("path"))
 
-        candidates = [key for key, paths in groups.items()
-                      if required.issubset(paths)]
+        candidates = [key for key, paths in groups.items() if paths]
         candidates.sort(key=lambda key: (
             0 if key[0] == "localhost" else 1, key[2]))
-        return candidates[0][1:] if candidates else None
+        if not candidates:
+            return None
+
+        key = candidates[0]
+        preferred_order = (
+            "front", "front_annotated", "down", "down_annotated")
+        paths = groups[key]
+        streams = [path for path in preferred_order if path in paths]
+        return key[1], key[2], streams
 
     def toggle_recording(self):
         if self._record_process is not None and self._record_process.poll() is None:
@@ -562,8 +574,7 @@ class ImageViewerWidget(QWidget):
         source = self._recording_source()
         if source is None:
             self.record_status_label.setText(
-                "需要先探测到同一地址上的四路流："
-                "front、front_annotated、down、down_annotated")
+                "未发现可用的直接 MJPEG 流，暂不开始录制")
             return
 
         root = self._workspace_root()
@@ -573,22 +584,28 @@ class ImageViewerWidget(QWidget):
                 f"找不到录制脚本：{script}")
             return
 
-        output_dir = root / "video_record"
+        output_root = root / "video_record"
+        record_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = output_root / record_timestamp
+        suffix = 1
+        while output_dir.exists():
+            output_dir = output_root / f"{record_timestamp}_{suffix:02d}"
+            suffix += 1
         try:
-            output_dir.mkdir(parents=True, exist_ok=True)
+            output_root.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            self.record_status_label.setText(
-                f"无法创建录制目录：{output_dir}\n{exc}")
+            self.record_status_label.setText(f"无法创建录制目录：{output_root}\n{exc}")
             return
 
-        host, port = source
+        host, port, streams = source
         environment = os.environ.copy()
         environment.update({
             "GORTC_HOST": str(host),
             "GORTC_PORT": str(port),
-            "GORTC_STREAMS": (
-                "front front_annotated down down_annotated"),
-            "OUT_DIR": str(output_dir),
+            "GORTC_STREAMS": " ".join(streams),
+            "OUT_DIR": str(output_root),
+            "RECORD_DIR": str(output_dir),
+            "RECORD_TIMESTAMP": output_dir.name,
             "VIDEO_FPS": os.environ.get("ZIT6_RECORD_FPS", "10"),
             "SEGMENT_SECONDS": os.environ.get("ZIT6_RECORD_SEGMENT_SECONDS", "2"),
         })
@@ -615,7 +632,10 @@ class ImageViewerWidget(QWidget):
         self.record_status_label.setStyleSheet(
             "font-size: 11px; color: #ff8a80; padding: 2px;")
         self.record_status_label.setText(
-            f"录制中：4 路 TS\n来源 {host}:{port}\n输出 {output_dir}")
+            f"录制中：{len(streams)} 路 TS\n"
+            f"来源 {host}:{port}\n"
+            f"流：{' / '.join(streams)}\n"
+            f"输出 {output_dir}")
 
     def stop_recording(self):
         process = self._record_process
@@ -755,9 +775,7 @@ class ImageViewerWidget(QWidget):
             selections.append(selected)
 
         if not available:
-            self.btn_record.setEnabled(
-                self._record_process is not None
-                and self._record_process.poll() is None)
+            self.btn_record.setEnabled(True)
             self.scan_status_label.setText(
                 "未发现可用图像流（已扫描 8090 和 go2rtc 回退端口）")
             for slot, label in enumerate(self._video_labels):
@@ -767,11 +785,16 @@ class ImageViewerWidget(QWidget):
                     self._video_status[slot].setText("等待自动重连")
             return
 
-        self.btn_record.setEnabled(
-            self._record_process is not None
-            or self._recording_source() is not None)
-        self.scan_status_label.setText(
-            f"发现 {len(available)} 路视频流，可分别选择两个画面")
+        self.btn_record.setEnabled(True)
+        recording_source = self._recording_source()
+        if recording_source is None:
+            self.scan_status_label.setText(
+                f"发现 {len(available)} 路视频流，但没有可录制的直接 MJPEG 流")
+        else:
+            record_count = len(recording_source[2])
+            self.scan_status_label.setText(
+                f"发现 {len(available)} 路视频流，可录制 {record_count} 路；"
+                "缺失的路会自动跳过")
         for slot, stream in enumerate(selections):
             if stream is None:
                 continue
