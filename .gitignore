@@ -6,6 +6,10 @@
 build/
 build_ninja/
 build_tests/
+# Colcon build roots with an environment suffix (for example build_foxy).
+/build_*/
+/install_*/
+/log_*/
 bin/
 obj/
 install/
@@ -49,6 +53,7 @@ UserApp/Thirdparty/micro_ros_stm32cubemx_utils/microros_static_library_ide/libra
 
 # ---- Python 缓存 ----
 **/__pycache__/
+**/.pytest_cache/
 *.pyc
 
 # ---- CubeMX 生成的可选文件 ----
