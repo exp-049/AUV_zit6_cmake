@@ -10,6 +10,13 @@ import time
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import UInt32
+from .topic_compat import DualTopicPublisher
+
+HEARTBEAT_TOPICS = (
+    '/auv/hardware/zit6/cmd/heartbeat',
+    # The current MCU subscribes to agxhbt (not cmd/heartbeat).
+    '/zit6/cmd/agxhbt',
+)
 
 HEARTBEAT_DEFAULT_FREQ_HZ = 2.0
 HEARTBEAT_INTERVAL_S = 1.0 / HEARTBEAT_DEFAULT_FREQ_HZ
@@ -35,7 +42,8 @@ class FloatingHeartbeatPanel(QFrame):
         self.pub_timer = None
         self.draggable = True
         
-        self.pub = self.node.create_publisher(UInt32, '/zit6/cmd/agxhbt', 10)
+        self.pub = DualTopicPublisher(
+            self.node, UInt32, HEARTBEAT_TOPICS, 10)
         self.drag_position = None
         
         self.init_ui()
@@ -237,7 +245,7 @@ def main(args=None):
         print(" 按下 Ctrl+C 可停止下发...")
         print("=" * 60)
 
-        pub = node.create_publisher(UInt32, '/zit6/cmd/agxhbt', 10)
+        pub = DualTopicPublisher(node, UInt32, HEARTBEAT_TOPICS, 10)
         msg = UInt32()
         msg.data = parsed_args.mode
         interval = 1.0 / parsed_args.freq

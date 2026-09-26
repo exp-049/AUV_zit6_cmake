@@ -11,6 +11,16 @@ from pathlib import Path
 import rclpy
 from rclpy.node import Node
 from zit6_interfaces.srv import GetParams, UpdateParams
+from .topic_compat import first_ready_service_client
+
+GET_PARAMS_SERVICES = (
+    '/auv/hardware/zit6/get_params',
+    '/zit6/get_params',
+)
+UPDATE_PARAMS_SERVICES = (
+    '/auv/hardware/zit6/update_params',
+    '/zit6/update_params',
+)
 
 # 导入共享的浮动心跳面板
 from .heartbeat import FloatingHeartbeatPanel
@@ -37,8 +47,15 @@ class ConfigWidget(QWidget):
         super().__init__()
         self.node = node
         
-        self.get_client = self.node.create_client(GetParams, '/zit6/get_params')
-        self.update_client = self.node.create_client(UpdateParams, '/zit6/update_params')
+        self.get_clients = tuple(
+            self.node.create_client(GetParams, name)
+            for name in GET_PARAMS_SERVICES
+        )
+        self.update_clients = tuple(
+            self.node.create_client(UpdateParams, name)
+            for name in UPDATE_PARAMS_SERVICES
+        )
+        self._selected_update_client = None
         
         self.params_map = {}
         self._pending_batches = None
@@ -281,13 +298,15 @@ class ConfigWidget(QWidget):
             print(f"Failed to load config.json: {e}")
 
     def fetch_params(self, paths=[], show_popup=True):
-        if not self.get_client.wait_for_service(timeout_sec=1.0):
+        client = first_ready_service_client(self.get_clients)
+        if client is None:
             if show_popup:
-                self.fetch_signal.emit(False, "无法连接到参数获取服务！\n请检查 Agent 是否在线。")
+                self.fetch_signal.emit(
+                    False, "新旧参数获取服务都不可用！\n请检查仿真桥或 Agent。")
             return
         req = GetParams.Request()
         req.paths = paths
-        future = self.get_client.call_async(req)
+        future = client.call_async(req)
         future.add_done_callback(lambda f: self._fetch_done(f, show_popup))
 
     def _fetch_done(self, future, show_popup=True):
@@ -361,6 +380,10 @@ class ConfigWidget(QWidget):
         self._pending_batches = batches
         self._batch_ok = 0
         self._batch_fail = 0
+        # Pin one server for the whole batch so a discovery change cannot split
+        # a single edit across the simulator and the MCU.
+        self._selected_update_client = first_ready_service_client(
+            self.update_clients)
 
         for b in range(batches):
             start = b * self.MAX_BATCH
@@ -368,7 +391,8 @@ class ConfigWidget(QWidget):
             self._push_batch(paths[start:end], values[start:end])
 
     def _push_batch(self, paths, values):
-        if not self.update_client.wait_for_service(timeout_sec=1.0):
+        client = self._selected_update_client
+        if client is None:
             with self._batch_lock:
                 self._batch_fail += 1
             self._check_batch_done()
@@ -376,7 +400,7 @@ class ConfigWidget(QWidget):
         req = UpdateParams.Request()
         req.paths = paths
         req.values = [str(v) for v in values]
-        future = self.update_client.call_async(req)
+        future = client.call_async(req)
         future.add_done_callback(self._update_done)
 
     def _update_done(self, future):
@@ -407,6 +431,7 @@ class ConfigWidget(QWidget):
             ok = self._batch_ok
             fail = self._batch_fail
             self._pending_batches = None
+            self._selected_update_client = None
 
         if fail == 0:
             self.update_signal.emit(

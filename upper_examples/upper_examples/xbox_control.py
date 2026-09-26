@@ -10,6 +10,12 @@ import time
 import rclpy
 from rclpy.node import Node
 from zit6_interfaces.msg import ZitSetpoint
+from .topic_compat import DualTopicPublisher
+
+SETPOINT_TOPICS = (
+    '/auv/hardware/zit6/cmd/setpoint',
+    '/zit6/cmd/setpoint',
+)
 
 # 导入共享的心跳面板
 from .heartbeat import FloatingHeartbeatPanel
@@ -261,7 +267,8 @@ class XboxControlWidget(QWidget):
         self._pygame_initialized = False
         self._joystick_diagnostic = ""
         
-        self.setpoint_pub = self.node.create_publisher(ZitSetpoint, '/zit6/cmd/setpoint', 10)
+        self.setpoint_pub = DualTopicPublisher(
+            self.node, ZitSetpoint, SETPOINT_TOPICS, 10)
         
         # 负责手柄指令的 10Hz 定时下发
         self.control_timer = self.node.create_timer(0.1, self.ros_control_timer_callback)
@@ -996,7 +1003,8 @@ def main(args=None):
         print(f" [Xbox Control CLI] 手柄控制器已启动！")
         print("=" * 60)
         
-        setpoint_pub = node.create_publisher(ZitSetpoint, '/zit6/cmd/setpoint', 10)
+        setpoint_pub = DualTopicPublisher(
+            node, ZitSetpoint, SETPOINT_TOPICS, 10)
         
         active = False
         last_a_state = False

@@ -10,6 +10,16 @@ import time
 import rclpy
 from rclpy.node import Node
 from zit6_interfaces.msg import ZitSetpoint, ZitStatus
+from .topic_compat import DualTopicPublisher, create_priority_subscriptions
+
+SETPOINT_TOPICS = (
+    '/auv/hardware/zit6/cmd/setpoint',
+    '/zit6/cmd/setpoint',
+)
+STATUS_TOPICS = (
+    '/auv/hardware/zit6/state/status',
+    '/zit6/state/status',
+)
 
 # Qt imports
 try:
@@ -33,14 +43,14 @@ class MotionControlWidget(QWidget):
         self.seq = 0
         
         # 1. 发布者
-        self.pub = self.node.create_publisher(ZitSetpoint, '/zit6/cmd/setpoint', 10)
+        self.pub = DualTopicPublisher(
+            self.node, ZitSetpoint, SETPOINT_TOPICS, 10)
         
         # 2. 订阅者
-        self.status_sub = self.node.create_subscription(
-            ZitStatus,
-            '/zit6/state/status',
+        self.status_subs = create_priority_subscriptions(
+            self.node,
+            [(ZitStatus, topic) for topic in STATUS_TOPICS],
             self.status_callback,
-            10
         )
         
         self.init_style()
@@ -259,7 +269,7 @@ class MotionControlWidget(QWidget):
         right_layout.setContentsMargins(5, 5, 5, 5)
         right_layout.setSpacing(10)
         
-        title_right = QLabel("📊 实时状态监测 (/zit6/state/status)")
+        title_right = QLabel("📊 实时状态监测（新话题优先，兼容旧状态）")
         title_right.setStyleSheet("font-size: 15px; font-weight: bold; color: #00e5ff;")
         right_layout.addWidget(title_right)
         
@@ -453,7 +463,7 @@ class MotionControlWidget(QWidget):
         except Exception:
             pass
 
-    def status_callback(self, msg):
+    def status_callback(self, msg, _topic):
         self.status_signal.emit(msg)
 
     def update_status_ui(self, msg):

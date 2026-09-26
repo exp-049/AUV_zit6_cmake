@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""Network MJPEG image monitor.
+"""Preview the iceoryx2 camera streams exposed by go2rtc.
 
-The image monitor deliberately does not subscribe to ROS image topics. The
-vision process already exposes raw and annotated frames as MJPEG streams;
-using HTTP here keeps large video frames out of DDS and lets the console
-choose between the local machine and the vehicle computer.
+Camera pixels arrive at camera_streamer over iceoryx2 and are encoded as
+H.264 before go2rtc exposes them. The GUI uses HTTP/WebRTC for preview and the HTTP MP4 API for recording;
+pixels do not travel through ROS/DDS.
 """
 
 import argparse
@@ -18,7 +17,6 @@ import sys
 import subprocess
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -33,26 +31,39 @@ try:
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QListWidget, QListWidgetItem, QPushButton, QLabel, QSplitter,
-        QSizePolicy, QMenu, QAction, QComboBox,
+        QSizePolicy, QMenu, QAction, QComboBox, QLineEdit, QStackedWidget,
+        QCheckBox, QSpinBox,
     )
-    from PyQt5.QtCore import Qt, pyqtSignal, QThread, QTimer
+    from PyQt5.QtCore import Qt, pyqtSignal, QThread, QTimer, QUrl
+    _QT_BINDING = "PyQt5"
     from PyQt5.QtGui import QImage, QPixmap
 except ImportError:
     from PySide6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QListWidget, QListWidgetItem, QPushButton, QLabel, QSplitter,
-        QSizePolicy, QMenu, QComboBox,
+        QSizePolicy, QMenu, QComboBox, QLineEdit, QStackedWidget,
+        QCheckBox, QSpinBox,
     )
-    from PySide6.QtCore import Qt, Signal as pyqtSignal, QThread, QTimer
+    from PySide6.QtCore import Qt, Signal as pyqtSignal, QThread, QTimer, QUrl
+    _QT_BINDING = "PySide6"
     from PySide6.QtGui import QImage, QPixmap, QAction
 
+try:
+    if _QT_BINDING == "PyQt5":
+        from PyQt5.QtWebEngineWidgets import (
+            QWebEngineView, QWebEngineSettings, QWebEngineScript,
+        )
+    else:
+        from PySide6.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
+        from PySide6.QtWebEngineCore import QWebEngineScript
+except ImportError:
+    QWebEngineView = None
+    QWebEngineSettings = None
+    QWebEngineScript = None
 
-DEFAULT_MJPEG_PORT = 8090
-DEFAULT_GO2RTC_PORT = 1984
-NETWORK_HOSTS = (
-    ("localhost", "127.0.0.1"),
-    ("192.168.16.10", "192.168.16.10"),
-)
+
+DEFAULT_ENDPOINT = os.environ.get(
+    "ZIT6_GO2RTC_ENDPOINT", "192.168.16.10:1984")
 STREAMS = (
     ("front", "前视", "raw", "原始"),
     ("front_annotated", "前视", "annotated", "标注"),
@@ -60,208 +71,44 @@ STREAMS = (
     ("down_annotated", "下视", "annotated", "标注"),
 )
 
+GO2RTC_WEBRTC_COMPAT_JS = r"""
+(() => {
+    const prototype = window.RTCPeerConnection &&
+        window.RTCPeerConnection.prototype;
+    if (!prototype || "connectionState" in prototype) return;
 
-def _configured_ports():
-    """Return ports worth probing, with explicit environment values first.
-
-    uv_camera uses 8090 for its direct MJPEG source and starts go2rtc on
-    1984, falling back through the following ports when 1984 is occupied.
-    The environment override also lets an operator use a custom preview
-    port without changing the GUI.
-    """
-    ports = []
-
-    def add(value):
-        try:
-            value = int(value)
-        except (TypeError, ValueError):
-            return
-        if 1 <= value <= 65535 and value not in ports:
-            ports.append(value)
-
-    for name in ("ZIT6_IMAGE_PORT", "ZIT6_GO2RTC_PORT"):
-        add(os.environ.get(name))
-    for value in os.environ.get("ZIT6_IMAGE_PORTS", "").split(","):
-        add(value.strip())
-
-    add(DEFAULT_MJPEG_PORT)
-    # Match composed.py's automatic go2rtc fallback window.
-    for port in range(DEFAULT_GO2RTC_PORT, DEFAULT_GO2RTC_PORT + 101):
-        add(port)
-    # Cover common manually selected MJPEG preview ports too.
-    for port in range(8080, 8101):
-        add(port)
-    return ports
-
-
-def _probe_port(host, port, timeout=0.6):
-    """Identify a port only when it returns a real MJPEG stream."""
-    probes = (
-        ("mjpeg", f"http://{host}:{port}/front"),
-        ("go2rtc", f"http://{host}:{port}/api/stream.mjpeg?src=front"),
-    )
-    for transport, url in probes:
-        request = Request(
-            url,
-            headers={
-                "Accept": "multipart/x-mixed-replace",
-                "Cache-Control": "no-cache",
-                "User-Agent": "ZIT6-console-image-monitor/1.0",
-            },
-        )
-        try:
-            response = urlopen(request, timeout=timeout)
-            try:
-                content_type = response.headers.get("Content-Type", "").lower()
-                if (response.getcode() == 200
-                        and "multipart/x-mixed-replace" in content_type):
-                    return transport
-            finally:
-                response.close()
-        except (HTTPError, URLError, OSError, TimeoutError):
-            pass
-    return None
-
-
-def _probe_http_mjpeg(url, timeout=1.5):
-    """Return whether an HTTP URL exposes an MJPEG response."""
-    request = Request(
-        url,
-        headers={
-            "Accept": "multipart/x-mixed-replace",
-            "Cache-Control": "no-cache",
-            "User-Agent": "ZIT6-console-image-monitor/1.0",
+    // QtWebEngine 5.12 (Chromium 69) lacks the connectionState API used by
+    // go2rtc's player. Map its connection events to the available ICE state.
+    Object.defineProperty(prototype, "connectionState", {
+        configurable: true,
+        get() {
+            const state = this.iceConnectionState;
+            if (state === "completed") return "connected";
+            if (state === "checking") return "connecting";
+            return state;
         },
-    )
-    try:
-        response = urlopen(request, timeout=timeout)
-        try:
-            return (response.getcode() == 200
-                    and "multipart/x-mixed-replace" in
-                    response.headers.get("Content-Type", "").lower())
-        finally:
-            response.close()
-    except (HTTPError, URLError, OSError, TimeoutError):
-        return False
+    });
 
-
-def _stream_definitions(open_ports=None):
-    """Return direct-MJPEG and go2rtc-MJPEG endpoint candidates."""
-    if open_ports is None:
-        open_ports = [
-            (host_label, host, port)
-            for host_label, host in NETWORK_HOSTS
-            for port in _configured_ports()
-        ]
-
-    streams = []
-    for endpoint in open_ports:
-        host_label, host, port = endpoint[:3]
-        transport_hint = endpoint[3] if len(endpoint) > 3 else None
-        for path, camera, mode, mode_label in STREAMS:
-            base = {
-                "host_label": host_label,
-                "host": host,
-                "port": port,
-                "path": path,
-                "camera": camera,
-                "mode": mode,
-                "mode_label": mode_label,
-            }
-            transports = ((transport_hint,) if transport_hint else
-                          ("mjpeg", "go2rtc"))
-            for transport in transports:
-                if transport == "mjpeg":
-                    streams.append(dict(
-                        base,
-                        transport="mjpeg",
-                        transport_label="直接 MJPEG",
-                        id=f"{host_label}:{port}/{path}",
-                        url=f"http://{host}:{port}/{path}",
-                    ))
-                else:
-                    streams.append(dict(
-                        base,
-                        transport="go2rtc",
-                        transport_label="go2rtc MJPEG",
-                        id=f"{host_label}:{port}/api/stream.mjpeg?src={path}",
-                        url=(f"http://{host}:{port}/api/stream.mjpeg?src={path}"),
-                    ))
-    return streams
-
-
-def _probe_stream(stream, timeout=1.5):
-    """Check HTTP/MJPEG headers without waiting for a video frame."""
-    try:
-        available = _probe_http_mjpeg(stream["url"], timeout=timeout)
-        return dict(stream, available=available, error="" if available else (
-            "不是 MJPEG 流"
-        ))
-    except HTTPError as exc:
-        return dict(stream, available=False, error=f"HTTP {exc.code}")
-    except (URLError, OSError, TimeoutError) as exc:
-        reason = getattr(exc, "reason", exc)
-        return dict(stream, available=False, error=str(reason))
-    except Exception as exc:  # Keep one bad endpoint from stopping discovery.
-        return dict(stream, available=False, error=str(exc))
-
-
-class StreamProbeThread(QThread):
-    """Probe all local/remote endpoints without blocking the Qt event loop."""
-
-    streams_ready = pyqtSignal(object)
-
-    def __init__(self, streams, parent=None):
-        super().__init__(parent)
-        self._streams = list(streams or [])
-        self._stop_event = threading.Event()
-
-    def stop(self):
-        self._stop_event.set()
-
-    def run(self):
-        results = []
-        port_candidates = [
-            (host_label, host, port)
-            for host_label, host in NETWORK_HOSTS
-            for port in _configured_ports()
-        ]
-        open_ports = []
-        with ThreadPoolExecutor(max_workers=32) as executor:
-            futures = {
-                executor.submit(_probe_port, host, port): (host_label, host, port)
-                for host_label, host, port in port_candidates
-            }
-            for future in as_completed(futures):
-                if self._stop_event.is_set():
-                    return
-                endpoint = futures[future]
-                try:
-                    if future.result():
-                        open_ports.append(endpoint)
-                except Exception:
-                    pass
-
-        streams = _stream_definitions(open_ports)
-        if not streams:
-            self.streams_ready.emit([])
-            return
-
-        with ThreadPoolExecutor(max_workers=min(32, len(streams))) as executor:
-            futures = {
-                executor.submit(_probe_stream, stream): stream
-                for stream in streams
-            }
-            for future in as_completed(futures):
-                if self._stop_event.is_set():
-                    return
-                try:
-                    result = future.result()
-                    if result.get("available"):
-                        results.append(result)
-                except Exception:
-                    pass
-        self.streams_ready.emit(results)
+    const addEventListener = prototype.addEventListener;
+    prototype.addEventListener = function(type, listener, options) {
+        if (type !== "connectionstatechange") {
+            return addEventListener.call(this, type, listener, options);
+        }
+        return addEventListener.call(
+            this,
+            "iceconnectionstatechange",
+            function(event) {
+                if (typeof listener === "function") {
+                    listener.call(this, event);
+                } else if (listener && typeof listener.handleEvent === "function") {
+                    listener.handleEvent(event);
+                }
+            },
+            options,
+        );
+    };
+})();
+"""
 
 
 def _extract_jpeg_frames(buffer):
@@ -369,37 +216,43 @@ class ClickableLabel(QLabel):
 
 
 class ImageViewerWidget(QWidget):
-    """Show two independently selectable network MJPEG streams."""
+    """Show two independently selectable network video streams."""
 
     pin_toggled_signal = pyqtSignal(bool)
 
-    def __init__(self, node):
+    def __init__(self, node, auto_connect=True):
         super().__init__()
         self.node = node  # Kept for the shared heartbeat panel/API.
         self.aspect_ratio_mode = Qt.KeepAspectRatio
-        self._probe_thread = None
-        self._available_streams = []
         self._source_selects = []
+        self._transport_selects = []
         self._video_panes = []
+        self._video_stacks = []
         self._video_labels = []
+        self._video_webviews = []
         self._video_status = []
         self._stream_threads = [None, None]
         self._current_streams = [None, None]
         self._last_pixmaps = [QPixmap(), QPixmap()]
         self._frame_counts = [0, 0]
+        self._active_endpoint = None
+        self._endpoint_dirty = False
         self._record_process = None
         self._record_output_dir = None
         self._record_started_at = None
+        self._record_streams = []
+        self._record_format = "mkv"
+        self._record_log_path = None
+        self._record_log_handle = None
+        self._record_stop_requested = False
 
         self.init_ui()
 
-        self.scan_timer = QTimer(self)
-        self.scan_timer.timeout.connect(self.scan_streams)
-        self.scan_timer.start(5000)
         self.record_timer = QTimer(self)
         self.record_timer.timeout.connect(self._poll_recording)
         self.record_timer.start(1000)
-        QTimer.singleShot(0, self.scan_streams)
+        if auto_connect:
+            QTimer.singleShot(0, self.connect_selected_streams)
 
     def init_ui(self):
         layout = QHBoxLayout(self)
@@ -412,53 +265,137 @@ class ImageViewerWidget(QWidget):
         sidebar_layout = QVBoxLayout(self.sidebar_widget)
         sidebar_layout.setContentsMargins(5, 5, 5, 5)
 
-        title_label = QLabel("网络图像源（非 ROS 话题）")
+        title_label = QLabel("网络图像源（go2rtc）")
         title_label.setStyleSheet(
             "font-size: 15px; font-weight: bold; color: #00e5ff; "
             "margin-bottom: 5px;")
         sidebar_layout.addWidget(title_label)
 
         hint_label = QLabel(
-            "自动探测 localhost 和 192.168.16.10\n"
-            "端口：8090 及 go2rtc 1984 的自动回退端口")
+            "预览和录像都使用 go2rtc HTTP 地址（默认端口 1984）；"
+            "预览可选 WebRTC、MSE 或自动选择")
         hint_label.setStyleSheet("font-size: 11px; color: #9aa7ad;")
         hint_label.setWordWrap(True)
         sidebar_layout.addWidget(hint_label)
 
+        endpoint_label = QLabel("预览/API 地址（HTTP，默认端口 1984）")
+        endpoint_label.setStyleSheet("color: #00e5ff; font-weight: bold;")
+        sidebar_layout.addWidget(endpoint_label)
+
+        self.endpoint_edit = QLineEdit(DEFAULT_ENDPOINT)
+        self.endpoint_edit.setPlaceholderText("例如 192.168.16.10:1984")
+        self.endpoint_edit.setStyleSheet(
+            "QLineEdit { background: #1e1e1e; color: #e0e0e0; "
+            "padding: 6px; border: 1px solid #444; border-radius: 5px; }")
+        self.endpoint_edit.textEdited.connect(self._on_endpoint_edited)
+        self.endpoint_edit.returnPressed.connect(self.connect_selected_streams)
+        sidebar_layout.addWidget(self.endpoint_edit)
+
+        self.btn_connect = QPushButton("连接/应用地址")
+        self.btn_connect.clicked.connect(self.connect_selected_streams)
+        sidebar_layout.addWidget(self.btn_connect)
+
         for slot in range(2):
+            default_camera = "前视" if slot == 0 else "下视"
             slot_label = QLabel(f"画面 {slot + 1} 来源")
             slot_label.setStyleSheet("color: #00e5ff; font-weight: bold;")
             sidebar_layout.addWidget(slot_label)
 
             combo = QComboBox()
-            combo.setEnabled(False)
             combo.setMinimumContentsLength(18)
             combo.setStyleSheet(
                 "QComboBox { background: #1e1e1e; color: #e0e0e0; "
                 "padding: 6px; border: 1px solid #444; border-radius: 5px; }"
             )
+            for path, camera, mode, mode_label in STREAMS:
+                label = f"{camera} / {mode_label}"
+                source = {
+                    "path": path,
+                    "camera": camera,
+                    "mode": mode,
+                    "mode_label": mode_label,
+                }
+                combo.addItem(label, source)
+            default_index = next(
+                index for index, source in enumerate(STREAMS)
+                if source[1] == default_camera and source[2] == "raw")
+            combo.setCurrentIndex(default_index)
             combo.currentIndexChanged.connect(
                 lambda index, s=slot: self._on_source_selected(s, index))
             self._source_selects.append(combo)
             sidebar_layout.addWidget(combo)
 
-        self.scan_status_label = QLabel("正在探测网络图像源...")
-        self.scan_status_label.setStyleSheet(
+            transport_label = QLabel(f"画面 {slot + 1} 接收方式")
+            transport_label.setStyleSheet("color: #9aa7ad;")
+            sidebar_layout.addWidget(transport_label)
+            transport_combo = QComboBox()
+            transport_combo.addItem("WebRTC（低延迟）", "webrtc")
+            transport_combo.addItem("MSE（H.264）", "mse")
+            transport_combo.addItem("自动选择", "auto")
+            transport_combo.setStyleSheet(
+                "QComboBox { background: #1e1e1e; color: #e0e0e0; "
+                "padding: 6px; border: 1px solid #444; border-radius: 5px; }")
+            transport_combo.currentIndexChanged.connect(
+                lambda index, s=slot: self._on_source_selected(
+                    s, self._source_selects[s].currentIndex()))
+            self._transport_selects.append(transport_combo)
+            sidebar_layout.addWidget(transport_combo)
+
+        self.address_status_label = QLabel("默认地址将在启动时尝试连接")
+        self.address_status_label.setStyleSheet(
             "font-size: 11px; color: #888888; padding: 5px;")
-        self.scan_status_label.setWordWrap(True)
-        sidebar_layout.addWidget(self.scan_status_label)
+        self.address_status_label.setWordWrap(True)
+        sidebar_layout.addWidget(self.address_status_label)
 
-        self.btn_refresh = QPushButton("刷新网络源")
-        self.btn_refresh.clicked.connect(self.scan_streams)
-        sidebar_layout.addWidget(self.btn_refresh)
+        record_options_label = QLabel("录制设置")
+        record_options_label.setStyleSheet("color: #00e5ff; font-weight: bold;")
+        sidebar_layout.addWidget(record_options_label)
 
-        self.btn_record = QPushButton("开始录制四路")
-        # Keep the button clickable even before discovery finishes.  When a
-        # required stream is missing, start_recording() explains the reason
-        # in the status label instead of making the click appear ignored.
+        self.record_stream_checks = []
+        for slot in range(2):
+            check = QCheckBox()
+            check.setChecked(True)
+            check.setStyleSheet("color: #cfd8dc; padding: 2px;")
+            self.record_stream_checks.append(check)
+            self._update_record_stream_label(slot)
+            sidebar_layout.addWidget(check)
+
+        format_label = QLabel("保存格式")
+        format_label.setStyleSheet("color: #9aa7ad;")
+        sidebar_layout.addWidget(format_label)
+        self.record_format_combo = QComboBox()
+        self.record_format_combo.addItem("MKV（保留原编码）", "mkv")
+        self.record_format_combo.addItem("MP4（H.264，音频有则 AAC）", "mp4")
+        self.record_format_combo.setToolTip(
+            "MKV 和 MP4 都保留 H.264 视频，不做二次压缩；若有音频，MP4 转为 AAC。"
+            "停止时会将首个媒体时间戳归零并重新封装。")
+        sidebar_layout.addWidget(self.record_format_combo)
+
+        record_path_label = QLabel(
+            "录像通过 go2rtc HTTP MP4 接口（1984）接收 H.264；MKV/MP4 都保留原视频码流，"
+            "与预览选择 WebRTC、MSE 或自动选择无关。")
+        record_path_label.setStyleSheet("font-size: 11px; color: #9aa7ad;")
+        record_path_label.setWordWrap(True)
+        sidebar_layout.addWidget(record_path_label)
+
+        duration_label = QLabel("录制时长（墙上时钟秒；0 表示手动停止）")
+        duration_label.setStyleSheet("color: #9aa7ad;")
+        duration_label.setToolTip(
+            "计时从收到首帧后开始。输出文件保留视频源时间轴；"
+            "仿真速度低于实时速率时，文件时长会短于此设置。")
+        sidebar_layout.addWidget(duration_label)
+        self.record_duration_spin = QSpinBox()
+        self.record_duration_spin.setRange(0, 86400)
+        self.record_duration_spin.setValue(0)
+        self.record_duration_spin.setSuffix(" 秒")
+        self.record_duration_spin.setSpecialValueText("手动停止")
+        sidebar_layout.addWidget(self.record_duration_spin)
+
+        self.btn_record = QPushButton("开始录制")
         self.btn_record.setEnabled(True)
         self.btn_record.setToolTip(
-            "按当前发现的可用 MJPEG 路数录制；不存在的路会自动跳过")
+            "录制勾选的当前画面源；通过 go2rtc HTTP API 复制 H.264，停止后封装成 MKV 或 MP4，"
+            "不依赖 RTSP，也不受预览选择 WebRTC 或 MSE 影响。")
         self.btn_record.clicked.connect(self.toggle_recording)
         self.btn_record.setStyleSheet(
             "background-color: #455a64; color: white; padding: 7px;")
@@ -480,9 +417,6 @@ class ImageViewerWidget(QWidget):
         self.splitter.addWidget(self.sidebar_widget)
 
         display_widget = QWidget()
-        # Stack the two camera panes vertically.  This preserves the
-        # left-hand source controls while giving each 16:9 stream a useful
-        # width and enough height to inspect the image.
         display_layout = QVBoxLayout(display_widget)
         display_layout.setContentsMargins(0, 0, 0, 0)
         display_layout.setSpacing(6)
@@ -492,13 +426,13 @@ class ImageViewerWidget(QWidget):
             pane_layout = QVBoxLayout(pane)
             pane_layout.setContentsMargins(0, 0, 0, 0)
 
-            title = QLabel(f"画面 {slot + 1}（等待来源）")
+            title = QLabel(f"画面 {slot + 1}")
             title.setStyleSheet(
                 "font-size: 14px; font-weight: bold; color: #00e5ff; "
                 "padding: 3px;")
             pane_layout.addWidget(title)
 
-            image_label = ClickableLabel("正在探测图像流...")
+            image_label = ClickableLabel("等待连接图像流...")
             image_label.setAlignment(Qt.AlignCenter)
             image_label.setStyleSheet(
                 "background-color: #1a1a1a; border: 1px solid #333333; "
@@ -508,7 +442,31 @@ class ImageViewerWidget(QWidget):
             image_label.customContextMenuRequested.connect(
                 lambda pos, s=slot: self.show_context_menu(s, pos))
             image_label.double_clicked.connect(self.toggle_fullscreen)
-            pane_layout.addWidget(image_label, 1)
+            video_stack = QStackedWidget()
+            video_stack.addWidget(image_label)
+            web_view = None
+            if QWebEngineView is not None:
+                web_view = QWebEngineView()
+                if QWebEngineScript is not None:
+                    compatibility = QWebEngineScript()
+                    compatibility.setName("go2rtc-chromium69-webrtc-state")
+                    compatibility.setInjectionPoint(
+                        QWebEngineScript.DocumentCreation)
+                    compatibility.setWorldId(QWebEngineScript.MainWorld)
+                    compatibility.setRunsOnSubFrames(False)
+                    compatibility.setSourceCode(GO2RTC_WEBRTC_COMPAT_JS)
+                    web_view.page().scripts().insert(compatibility)
+                web_view.setStyleSheet("background-color: #000000;")
+                if QWebEngineSettings is not None:
+                    settings = web_view.settings()
+                    autoplay = getattr(
+                        QWebEngineSettings, "PlaybackRequiresUserGesture", None)
+                    if autoplay is not None:
+                        settings.setAttribute(autoplay, False)
+                web_view.loadFinished.connect(
+                    lambda ok, s=slot: self._on_web_view_loaded(s, ok))
+                video_stack.addWidget(web_view)
+            pane_layout.addWidget(video_stack, 1)
 
             status = QLabel("未连接")
             status.setStyleSheet(
@@ -517,7 +475,9 @@ class ImageViewerWidget(QWidget):
             pane_layout.addWidget(status)
 
             self._video_panes.append(pane)
+            self._video_stacks.append(video_stack)
             self._video_labels.append(image_label)
+            self._video_webviews.append(web_view)
             self._video_status.append(status)
             display_layout.addWidget(pane, 1)
 
@@ -538,28 +498,39 @@ class ImageViewerWidget(QWidget):
         # the ROS workspace.  The directory is created when recording starts.
         return Path.cwd()
 
-    def _recording_source(self):
-        """Return one endpoint and all available direct MJPEG streams."""
-        groups = {}
-        for stream in self._available_streams:
-            if stream.get("transport") != "mjpeg":
-                continue
-            key = (stream.get("host_label"), stream.get("host"),
-                   stream.get("port"))
-            groups.setdefault(key, set()).add(stream.get("path"))
+    def _update_record_stream_label(self, slot):
+        if slot >= len(getattr(self, "record_stream_checks", [])):
+            return
+        source = self._source_selects[slot].currentData()
+        if source:
+            description = f"{source['camera']} / {source['mode_label']}"
+        else:
+            description = "未选择来源"
+        self.record_stream_checks[slot].setText(
+            f"录制画面 {slot + 1}：{description}")
 
-        candidates = [key for key, paths in groups.items() if paths]
-        candidates.sort(key=lambda key: (
-            0 if key[0] == "localhost" else 1, key[2]))
-        if not candidates:
+    def _recording_source(self):
+        """Return checked GUI sources and the applied go2rtc HTTP endpoint."""
+        if self._endpoint_dirty:
+            self.record_status_label.setText(
+                "预览地址已修改；先点击“连接/应用地址”再开始录制")
+            return None
+        if self._active_endpoint is None:
+            self.record_status_label.setText("先连接 go2rtc 地址，再开始录制")
             return None
 
-        key = candidates[0]
-        preferred_order = (
-            "front", "front_annotated", "down", "down_annotated")
-        paths = groups[key]
-        streams = [path for path in preferred_order if path in paths]
-        return key[1], key[2], streams
+        streams = []
+        for slot, check in enumerate(self.record_stream_checks):
+            if not check.isChecked():
+                continue
+            source = self._source_selects[slot].currentData()
+            if source and source["path"] not in streams:
+                streams.append(source["path"])
+
+        return {
+            "endpoint": self._active_endpoint,
+            "streams": streams,
+        }
 
     def toggle_recording(self):
         if self._record_process is not None and self._record_process.poll() is None:
@@ -569,19 +540,23 @@ class ImageViewerWidget(QWidget):
 
     def start_recording(self):
         if self._record_process is not None:
+            if self._record_process.poll() is None:
+                return
             self._record_process = None
+            self._close_record_log()
 
         source = self._recording_source()
         if source is None:
-            self.record_status_label.setText(
-                "未发现可用的直接 MJPEG 流，暂不开始录制")
+            return
+        streams = source["streams"]
+        if not streams:
+            self.record_status_label.setText("请至少勾选一个画面源")
             return
 
         root = self._workspace_root()
         script = root / "scripts" / "record_go2rtc.sh"
         if not script.is_file():
-            self.record_status_label.setText(
-                f"找不到录制脚本：{script}")
+            self.record_status_label.setText(f"找不到录制脚本：{script}")
             return
 
         output_root = root / "video_record"
@@ -593,48 +568,59 @@ class ImageViewerWidget(QWidget):
             suffix += 1
         try:
             output_root.mkdir(parents=True, exist_ok=True)
+            output_dir.mkdir(parents=True, exist_ok=False)
         except OSError as exc:
-            self.record_status_label.setText(f"无法创建录制目录：{output_root}\n{exc}")
+            self.record_status_label.setText(
+                f"无法创建录制目录：{output_dir}\n{exc}")
             return
 
-        host, port, streams = source
+        endpoint = source["endpoint"]
+        record_format = self.record_format_combo.currentData()
+        duration = self.record_duration_spin.value()
+        self._record_log_path = output_dir / "recorder.log"
         environment = os.environ.copy()
         environment.update({
-            "GORTC_HOST": str(host),
-            "GORTC_PORT": str(port),
+            "GORTC_HOST": endpoint["host"],
+            "GORTC_PORT": str(endpoint["port"]),
             "GORTC_STREAMS": " ".join(streams),
             "OUT_DIR": str(output_root),
             "RECORD_DIR": str(output_dir),
             "RECORD_TIMESTAMP": output_dir.name,
-            "VIDEO_FPS": os.environ.get("ZIT6_RECORD_FPS", "10"),
-            "SEGMENT_SECONDS": os.environ.get("ZIT6_RECORD_SEGMENT_SECONDS", "2"),
+            "RECORD_FORMAT": str(record_format),
         })
 
         try:
+            self._record_log_handle = open(
+                self._record_log_path, "w", encoding="utf-8", buffering=1)
             self._record_process = subprocess.Popen(
-                ["bash", str(script), "0"],
+                ["bash", str(script), str(duration)],
                 cwd=str(root),
                 env=environment,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
+                stdout=self._record_log_handle,
                 stderr=subprocess.STDOUT,
             )
         except OSError as exc:
             self._record_process = None
+            self._close_record_log()
             self.record_status_label.setText(f"启动录制失败：{exc}")
             return
 
         self._record_output_dir = output_dir
+        self._record_streams = streams
+        self._record_format = record_format
         self._record_started_at = time.monotonic()
+        self._record_stop_requested = False
+        self.btn_record.setEnabled(True)
         self.btn_record.setText("停止录制")
         self.btn_record.setStyleSheet(
             "background-color: #b71c1c; color: white; padding: 7px;")
         self.record_status_label.setStyleSheet(
-            "font-size: 11px; color: #ff8a80; padding: 2px;")
+            "font-size: 11px; color: #ffcc80; padding: 2px;")
         self.record_status_label.setText(
-            f"录制中：{len(streams)} 路 TS\n"
-            f"来源 {host}:{port}\n"
-            f"流：{' / '.join(streams)}\n"
+            f"正在检查并录制 {len(streams)} 路 {record_format.upper()}\n"
+            f"HTTP {endpoint['authority']}\n"
+            f"来源：{' / '.join(streams)}\n"
             f"输出 {output_dir}")
 
     def stop_recording(self):
@@ -643,170 +629,201 @@ class ImageViewerWidget(QWidget):
             return
         if process.poll() is None:
             try:
-                # The script traps SIGINT and forwards it to all four ffmpeg
-                # workers, allowing each MPEG-TS segment to close cleanly.
                 process.send_signal(signal.SIGINT)
-                process.wait(timeout=8.0)
-            except (OSError, subprocess.TimeoutExpired):
+            except OSError:
                 try:
                     process.terminate()
-                    process.wait(timeout=2.0)
-                except (OSError, subprocess.TimeoutExpired):
-                    try:
-                        process.kill()
-                    except OSError:
-                        pass
-
-        self._record_process = None
-        self._record_started_at = None
-        self.btn_record.setText("开始录制四路")
-        self.btn_record.setStyleSheet(
-            "background-color: #455a64; color: white; padding: 7px;")
-        if self._record_output_dir is not None:
+                except OSError:
+                    pass
+            self._record_stop_requested = True
+            self.btn_record.setEnabled(False)
             self.record_status_label.setStyleSheet(
-                "font-size: 11px; color: #81c784; padding: 2px;")
+                "font-size: 11px; color: #ffcc80; padding: 2px;")
             self.record_status_label.setText(
-                f"录制已停止\n文件目录：{self._record_output_dir}")
+                f"正在停止并验证录像文件…\n目录：{self._record_output_dir}")
+            return
+        self._poll_recording()
 
     def _poll_recording(self):
         process = self._record_process
         if process is None:
             return
         if process.poll() is None:
-            elapsed = int(time.monotonic() - (self._record_started_at or time.monotonic()))
+            if self._record_stop_requested:
+                self.record_status_label.setText(
+                    f"正在停止并验证录像文件…\n目录：{self._record_output_dir}")
+                return
+            elapsed = int(time.monotonic() - (
+                self._record_started_at or time.monotonic()))
+            log_lines = []
+            if self._record_log_path is not None:
+                try:
+                    log_lines = self._record_log_path.read_text(
+                        encoding="utf-8", errors="replace").splitlines()
+                except OSError:
+                    pass
+            ready = sum(line.startswith("已收到画面：") for line in log_lines)
+            phase = ("录制中" if ready >= len(self._record_streams)
+                     else f"等待视频流 ({ready}/{len(self._record_streams)})")
+            errors = [line for line in log_lines
+                      if line.startswith("错误：") or line.startswith("不可用：")]
+            detail = f"\n{errors[-1]}" if errors else ""
             self.record_status_label.setText(
-                f"录制中：4 路 TS ({elapsed}s)\n"
-                f"输出 {self._record_output_dir}")
+                f"{phase}：{len(self._record_streams)} 路 "
+                f"{self._record_format.upper()} ({elapsed}s)\n"
+                f"来源：{' / '.join(self._record_streams)}\n"
+                f"输出 {self._record_output_dir}{detail}")
             return
 
         return_code = process.returncode
         self._record_process = None
         self._record_started_at = None
-        self.btn_record.setText("开始录制四路")
+        self._record_stop_requested = False
+        self._close_record_log()
+        self.btn_record.setEnabled(True)
+        self.btn_record.setText("开始录制")
         self.btn_record.setStyleSheet(
             "background-color: #455a64; color: white; padding: 7px;")
-        self.record_status_label.setStyleSheet(
-            "font-size: 11px; color: #81c784; padding: 2px;")
         if return_code == 0:
+            self.record_status_label.setStyleSheet(
+                "font-size: 11px; color: #81c784; padding: 2px;")
             self.record_status_label.setText(
                 f"录制已完成\n文件目录：{self._record_output_dir}")
         else:
+            details = self._record_log_tail()
             self.record_status_label.setStyleSheet(
                 "font-size: 11px; color: #ff8a80; padding: 2px;")
             self.record_status_label.setText(
-                f"录制进程已退出（代码 {return_code}）\n"
-                f"目录：{self._record_output_dir}")
+                f"录制进程已退出（代码 {return_code}）\n{details}\n"
+                f"日志：{self._record_log_path}")
+
+    def _close_record_log(self):
+        handle = self._record_log_handle
+        self._record_log_handle = None
+        if handle is not None:
+            try:
+                handle.flush()
+                handle.close()
+            except OSError:
+                pass
+
+    def _record_log_tail(self, limit=16):
+        if self._record_log_path is None:
+            return ""
+        try:
+            lines = self._record_log_path.read_text(
+                encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return "无法读取录制日志"
+        return "\n".join(lines[-limit:])
 
     @staticmethod
     def _stream_item_text(stream):
         return (
             f"{stream['host_label']}:{stream['port']}  /  "
             f"{stream['camera']}  /  {stream['mode_label']}  /  "
-            f"{stream.get('transport_label', 'MJPEG')}")
+            f"{stream.get('transport_label', '视频')}")
 
     @staticmethod
-    def _stream_sort_key(stream):
-        return (
-            0 if stream["host_label"] == "localhost" else 1,
-            0 if stream["camera"] == "前视" else 1,
-            0 if stream["mode"] == "raw" else 1,
-            0 if stream.get("transport") == "mjpeg" else 1,
-            stream["port"],
-        )
+    def _parse_endpoint(value):
+        """Parse a go2rtc host:port address; HTTP is used by the recorder too."""
+        from urllib.parse import urlsplit
 
-    @classmethod
-    def _default_stream(cls, streams, camera):
-        matching = [stream for stream in streams if stream["camera"] == camera]
-        return min(matching, key=cls._stream_sort_key) if matching else None
+        value = value.strip()
+        if not value:
+            raise ValueError("请输入 go2rtc 地址，例如 192.168.16.10:1984")
+        if "://" not in value:
+            value = "http://" + value
 
-    def scan_streams(self):
-        if self._probe_thread is not None and self._probe_thread.isRunning():
-            return
+        try:
+            parsed = urlsplit(value)
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("地址格式错误，请使用 IP:端口，例如 192.168.16.10:1984") from exc
 
-        self.btn_refresh.setEnabled(False)
-        self.scan_status_label.setText(
-            "正在探测 localhost 和 192.168.16.10 的端口和视频流...")
-        probe = StreamProbeThread(None, self)
-        self._probe_thread = probe
-        probe.streams_ready.connect(self._on_probe_results)
-        probe.finished.connect(lambda p=probe: self._on_probe_finished(p))
-        probe.start()
+        if parsed.scheme.lower() != "http":
+            raise ValueError("当前只支持 HTTP go2rtc 地址")
+        if not parsed.hostname or port is None or not 1 <= port <= 65535:
+            raise ValueError("地址需要包含有效端口，例如 192.168.16.10:1984")
+        if (parsed.username or parsed.password or parsed.path not in ("", "/")
+                or parsed.query or parsed.fragment):
+            raise ValueError("这里只填写主机和端口，不要添加路径或账号信息")
 
-    def _on_probe_finished(self, probe):
-        if self._probe_thread is probe:
-            self._probe_thread = None
-        self.btn_refresh.setEnabled(True)
+        host = parsed.hostname
+        authority = parsed.netloc
+        recorder_host = f"[{host}]" if ":" in host else host
+        return {
+            "host": host,
+            "recorder_host": recorder_host,
+            "port": port,
+            "authority": authority,
+        }
 
-    def _on_probe_results(self, results):
-        available = [stream for stream in results if stream.get("available")]
-        available.sort(key=self._stream_sort_key)
-        self._available_streams = available
+    def _on_endpoint_edited(self, text):
+        self._endpoint_dirty = True
+        self.address_status_label.setText("地址已修改；点击“连接/应用地址”后生效")
+        self.address_status_label.setStyleSheet(
+            "font-size: 11px; color: #ffcc80; padding: 5px;")
 
-        current_ids = [
-            stream.get("id") if stream is not None else None
-            for stream in self._current_streams
-        ]
-        selections = []
-        for slot, combo in enumerate(self._source_selects):
-            combo.blockSignals(True)
-            combo.clear()
-            for stream in available:
-                combo.addItem(self._stream_item_text(stream), stream)
-            combo.setEnabled(bool(available))
-
-            selected = next(
-                (stream for stream in available
-                 if stream.get("id") == current_ids[slot]),
-                None,
-            )
-            if selected is None:
-                selected = self._default_stream(
-                    available, "前视" if slot == 0 else "下视")
-            if selected is not None:
-                selected_index = next(
-                    (index for index, stream in enumerate(available)
-                     if stream.get("id") == selected.get("id")),
-                    -1,
-                )
-                combo.setCurrentIndex(selected_index)
-            else:
-                combo.setCurrentIndex(-1)
-            combo.blockSignals(False)
-            selections.append(selected)
-
-        if not available:
-            self.btn_record.setEnabled(True)
-            self.scan_status_label.setText(
-                "未发现可用图像流（已扫描 8090 和 go2rtc 回退端口）")
-            for slot, label in enumerate(self._video_labels):
-                if self._stream_threads[slot] is None:
-                    label.setPixmap(QPixmap())
-                    label.setText("未发现可用图像流")
-                    self._video_status[slot].setText("等待自动重连")
-            return
-
-        self.btn_record.setEnabled(True)
-        recording_source = self._recording_source()
-        if recording_source is None:
-            self.scan_status_label.setText(
-                f"发现 {len(available)} 路视频流，但没有可录制的直接 MJPEG 流")
+    def _stream_for_slot(self, slot, endpoint):
+        source = self._source_selects[slot].currentData()
+        if not source:
+            return None
+        path = source["path"]
+        authority = endpoint["authority"]
+        transport = self._transport_selects[slot].currentData()
+        base_url = f"http://{authority}"
+        if transport == "auto":
+            url = f"{base_url}/stream.html?src={path}"
+            transport_label = "go2rtc 自动选择"
+        elif transport == "mse":
+            url = f"{base_url}/stream.html?src={path}&mode=mse"
+            transport_label = "MSE / H.264"
         else:
-            record_count = len(recording_source[2])
-            self.scan_status_label.setText(
-                f"发现 {len(available)} 路视频流，可录制 {record_count} 路；"
-                "缺失的路会自动跳过")
-        for slot, stream in enumerate(selections):
-            if stream is None:
-                continue
-            current = self._current_streams[slot]
-            if (current is None or current.get("id") != stream.get("id")
-                    or self._stream_threads[slot] is None):
+            url = f"{base_url}/stream.html?src={path}&mode=webrtc"
+            transport_label = "WebRTC"
+        return {
+            **source,
+            "host_label": endpoint["host"],
+            "host": endpoint["host"],
+            "port": endpoint["port"],
+            "transport": transport,
+            "transport_label": transport_label,
+            "id": f"{authority}/{path}?mode={transport}",
+            "url": url,
+        }
+
+    def connect_selected_streams(self):
+        try:
+            endpoint = self._parse_endpoint(self.endpoint_edit.text())
+        except ValueError as exc:
+            self.address_status_label.setText(str(exc))
+            self.address_status_label.setStyleSheet(
+                "font-size: 11px; color: #ff8a80; padding: 5px;")
+            return
+
+        self._active_endpoint = endpoint
+        self._endpoint_dirty = False
+        self.address_status_label.setText(
+            f"已应用地址 {endpoint['authority']}；正在连接两个画面")
+        self.address_status_label.setStyleSheet(
+            "font-size: 11px; color: #9aa7ad; padding: 5px;")
+        for slot in range(2):
+            stream = self._stream_for_slot(slot, endpoint)
+            if stream is not None:
                 self.start_stream(stream, slot)
 
     def _on_source_selected(self, slot, index):
         if index < 0 or slot >= len(self._source_selects):
             return
-        stream = self._source_selects[slot].itemData(index)
+        self._update_record_stream_label(slot)
+        if self._endpoint_dirty:
+            self.address_status_label.setText(
+                "地址已修改；点击“连接/应用地址”后，新选择才会连接")
+            return
+        if self._active_endpoint is None:
+            return
+        stream = self._stream_for_slot(slot, self._active_endpoint)
         if stream:
             self.start_stream(stream, slot)
 
@@ -827,6 +844,20 @@ class ImageViewerWidget(QWidget):
         self._video_status[slot].setText(
             f"正在连接 {self._stream_item_text(stream)}...")
 
+        if stream.get("transport") in ("webrtc", "mse", "auto"):
+            web_view = self._video_webviews[slot]
+            if web_view is None:
+                self._video_stacks[slot].setCurrentWidget(self._video_labels[slot])
+                self._video_labels[slot].setText(
+                    "此环境缺少 QtWebEngine，无法播放网页视频")
+                self._video_status[slot].setText(
+                    "安装 python3-pyqt5.qtwebengine 后重启 GUI")
+                return
+            self._video_stacks[slot].setCurrentWidget(web_view)
+            web_view.setUrl(QUrl(stream["url"]))
+            return
+
+        self._video_stacks[slot].setCurrentWidget(self._video_labels[slot])
         reader = MjpegStreamThread(stream["url"], self)
         self._stream_threads[slot] = reader
         reader.frame_received.connect(
@@ -844,6 +875,22 @@ class ImageViewerWidget(QWidget):
             self._stream_threads[current_slot] = None
             if reader is not None:
                 reader.stop()
+            if current_slot < len(self._video_webviews):
+                web_view = self._video_webviews[current_slot]
+                if web_view is not None:
+                    web_view.stop()
+                    web_view.setUrl(QUrl("about:blank"))
+
+    def _on_web_view_loaded(self, slot, ok):
+        stream = self._current_streams[slot]
+        if stream is None or stream.get("transport") not in ("webrtc", "mse", "auto"):
+            return
+        if ok:
+            self._video_status[slot].setText(
+                f"{self._stream_item_text(stream)} | 播放页面已载入")
+        else:
+            self._video_status[slot].setText(
+                f"视频页面载入失败：{stream['url']}")
 
     def _on_stream_error(self, slot, error):
         stream = self._current_streams[slot]
@@ -852,14 +899,14 @@ class ImageViewerWidget(QWidget):
         self._video_status[slot].setText(
             f"图像流连接失败：{stream['url']} | {error}")
         self._video_labels[slot].setPixmap(QPixmap())
-        self._video_labels[slot].setText("图像流连接失败，稍后将自动重探")
+        self._video_labels[slot].setText("图像流连接失败；检查地址后点击连接重试")
 
     def _on_stream_finished(self, slot, reader):
         if self._stream_threads[slot] is not reader:
             return
         self._stream_threads[slot] = None
         if self._current_streams[slot] is not None and self._frame_counts[slot]:
-            self._video_status[slot].setText("图像流已断开，等待自动重连...")
+            self._video_status[slot].setText("图像流已断开；点击连接/应用地址重试")
 
     def update_image(self, slot, jpeg_data):
         image = QImage()
@@ -872,7 +919,7 @@ class ImageViewerWidget(QWidget):
         stream_label = self._stream_item_text(self._current_streams[slot])
         self._video_status[slot].setText(
             f"{stream_label} | {image.width()}x{image.height()} | "
-            f"MJPEG 帧 {self._frame_counts[slot]}")
+            f"JPEG 帧 {self._frame_counts[slot]}")
 
     def _display_pixmap(self, slot=None):
         slots = range(2) if slot is None else (slot,)
@@ -889,7 +936,7 @@ class ImageViewerWidget(QWidget):
     def toggle_fullscreen(self):
         is_visible = self.sidebar_widget.isVisible()
         self.sidebar_widget.setVisible(not is_visible)
-        self.scan_status_label.setVisible(not is_visible)
+        self.address_status_label.setVisible(not is_visible)
 
         if is_visible:
             self.main_window().setWindowTitle("图像监控（双击画面恢复）")
@@ -965,13 +1012,8 @@ class ImageViewerWidget(QWidget):
         self._display_pixmap()
 
     def close(self):
-        self.scan_timer.stop()
         self.record_timer.stop()
         self.stop_recording()
-        if self._probe_thread is not None:
-            self._probe_thread.stop()
-            self._probe_thread.wait(2500)
-            self._probe_thread = None
         self._stop_stream()
 
 
@@ -986,7 +1028,7 @@ class ImageViewerApp(QMainWindow):
         self.resize(1120, 720)
         self.setStyleSheet("QMainWindow { background-color: #121212; }")
 
-        self.widget = ImageViewerWidget(self.node)
+        self.widget = ImageViewerWidget(self.node, auto_connect=not bool(initial_url))
         self.setCentralWidget(self.widget)
 
         self.floating_hbt = FloatingHeartbeatPanel(self.node, self)
@@ -1001,7 +1043,7 @@ class ImageViewerApp(QMainWindow):
                 "port": "",
                 "camera": "网络",
                 "mode": "stream",
-                "mode_label": "MJPEG",
+                "mode_label": "自定义 MJPEG",
                 "transport": "custom",
                 "transport_label": "自定义",
                 "path": initial_url,
@@ -1034,10 +1076,10 @@ class ImageViewerApp(QMainWindow):
 
 
 def main(args=None):
-    parser = argparse.ArgumentParser(description="网络 MJPEG 图像查看 GUI")
+    parser = argparse.ArgumentParser(description="网络视频图像查看 GUI")
     parser.add_argument(
         "--url", type=str, default=None,
-        help="可选：直接连接一个 MJPEG URL；不指定时自动探测两个默认地址")
+        help="可选：直接连接兼容的 MJPEG URL；默认连接 go2rtc H.264 流")
     parser.add_argument("--fullscreen", action="store_true", help="启动时全屏")
 
     parsed_args, unknown = parser.parse_known_args(args=args)

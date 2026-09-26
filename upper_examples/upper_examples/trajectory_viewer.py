@@ -2,16 +2,27 @@
 # -*- coding: utf-8 -*-
 """RViz-like 3D trajectory and pose monitor for the ZIT6 console.
 
-The firmware already publishes the complete world-frame pose on
-``/zit6/state/pos`` as ``[x, y, z, roll, pitch, yaw]``.  This module keeps the
-visualisation dependency-free: the 3D scene is projected and drawn with Qt,
-so the console does not require pyqtgraph or Python OpenGL bindings.
+The viewer prefers canonical estimated odometry, then falls back to the
+canonical or legacy ZIT6 pose arrays.  The 3D scene is projected and drawn with
+Qt, so the console does not require pyqtgraph or Python OpenGL bindings.
 """
 
 import math
 
 from std_msgs.msg import Float32MultiArray
 from zit6_interfaces.msg import ZitStatus
+from uv_msgs.msg import PoseInfo
+from .topic_compat import create_priority_subscriptions
+
+POSE_SOURCES = (
+    (PoseInfo, '/auv/state/odom'),
+    (Float32MultiArray, '/auv/hardware/zit6/state/position'),
+    (Float32MultiArray, '/zit6/state/pos'),
+)
+STATUS_SOURCES = (
+    (ZitStatus, '/auv/hardware/zit6/state/status'),
+    (ZitStatus, '/zit6/state/status'),
+)
 
 try:
     from PyQt5.QtCore import Qt, pyqtSignal, QPoint
@@ -375,7 +386,7 @@ class TrajectoryViewerWidget(QWidget):
         title.setStyleSheet("font-size: 16px; font-weight: bold; color: #00e5ff;")
         toolbar.addWidget(title)
         toolbar.addStretch()
-        self.source_label = QLabel("数据源: /zit6/state/pos · 等待数据")
+        self.source_label = QLabel("数据源: 等待 /auv/state/odom 或 ZIT6 位姿")
         self.source_label.setStyleSheet("color: #90a4ae; font-size: 11px;")
         toolbar.addWidget(self.source_label)
         layout.addLayout(toolbar)
@@ -464,26 +475,36 @@ class TrajectoryViewerWidget(QWidget):
         """)
 
     def _create_subscriptions(self):
-        self.pos_sub = self.node.create_subscription(
-            Float32MultiArray, "/zit6/state/pos", self._on_pose_thread, 10)
-        self.status_sub = self.node.create_subscription(
-            ZitStatus, "/zit6/state/status", self._on_status_thread, 10)
+        self.pos_subs = create_priority_subscriptions(
+            self.node, POSE_SOURCES, self._on_pose_source)
+        self.status_subs = create_priority_subscriptions(
+            self.node, STATUS_SOURCES, self._on_status_source)
 
-    def _on_pose_thread(self, msg):
-        pose = _finite_pose(msg.data)
+    def _on_pose_source(self, msg, topic):
+        if isinstance(msg, PoseInfo):
+            values = (
+                msg.robot_x, msg.robot_y, msg.robot_z,
+                math.radians(msg.robot_roll),
+                math.radians(msg.robot_pitch),
+                math.radians(msg.robot_yaw),
+            )
+        else:
+            values = msg.data
+        pose = _finite_pose(values)
         if pose is not None:
-            self.pose_signal.emit(pose)
+            self.pose_signal.emit((pose, topic))
 
-    def _on_status_thread(self, msg):
-        self.status_signal.emit(msg)
+    def _on_status_source(self, msg, topic):
+        self.status_signal.emit((msg, topic))
 
-    def _on_pose_main_thread(self, pose):
+    def _on_pose_main_thread(self, update):
+        pose, topic = update
         self.last_pose = pose
         if self.paused:
             return
         self.canvas.set_pose(pose)
         self.source_label.setText(
-            f"数据源: /zit6/state/pos · {len(self.canvas.points)} 点")
+            f"数据源: {topic} · {len(self.canvas.points)} 点")
         keys = ("x", "y", "z", "roll", "pitch", "yaw")
         for key, value in zip(keys, pose):
             self.pose_labels[key].setText(f"{value:+.4f}")
@@ -491,7 +512,8 @@ class TrajectoryViewerWidget(QWidget):
         self.euler_deg_label.setText(
             "R/P/Y: " + " / ".join(f"{value:+.2f}" for value in degrees) + " °")
 
-    def _on_status_main_thread(self, msg):
+    def _on_status_main_thread(self, update):
+        msg, _topic = update
         self.armed_label.setText("已解锁 🟢" if msg.is_armed else "已锁定 🔴")
         self.nav_label.setText("就绪 🟢" if msg.navigation_ready else "未就绪 🔴")
         levels = {0: "NONE", 1: "POSITION", 2: "VELOCITY", 3: "FORCE"}
@@ -502,6 +524,6 @@ class TrajectoryViewerWidget(QWidget):
         self.pause_button.setText("继续显示" if self.paused else "暂停显示")
 
     def closeEvent(self, event):
-        self.node.destroy_subscription(self.pos_sub)
-        self.node.destroy_subscription(self.status_sub)
+        for subscription in (*self.pos_subs, *self.status_subs):
+            self.node.destroy_subscription(subscription)
         super().closeEvent(event)
