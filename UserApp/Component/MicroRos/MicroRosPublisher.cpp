@@ -1,4 +1,5 @@
 #include "MicroRosPublisher.hpp"
+#include "ChassisManager.hpp"
 #include "FreeRTOS.h"
 #include "MotionContext.hpp"
 #include "RosLogger.hpp"
@@ -230,7 +231,13 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
       status_msg_.forces[i] = forces[i];
     status_msg_.cycle_time_ms = cycle_time;
     status_msg_.battery_voltage = 0.0f;
-    status_msg_.error_flags = 0;
+    const auto sensors =
+        auv::system::system_context.sensor_reception_status_.get();
+    status_msg_.error_flags =
+        (sensors.ins_data_timeout || sensors.depth_data_timeout)
+            ? (zit6_interfaces__msg__ZitStatus__ERROR_SENSOR_FAIL |
+               zit6_interfaces__msg__ZitStatus__ERROR_COMM_TIMEOUT)
+            : 0U;
     status_msg_.control_overrun_count = overrun_count;
     status_msg_.thrust_tx_fail_count = thrust_tx_fail_count;
     (void)exec_time;

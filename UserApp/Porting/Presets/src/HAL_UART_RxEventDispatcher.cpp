@@ -1,4 +1,5 @@
 #include "Self_CalcBoard_Porting.hpp"
+#include "DepthCalcBoard_Porting.hpp"
 #include "USBL_Porting.hpp"
 
 extern "C" void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart,
@@ -9,4 +10,5 @@ extern "C" void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart,
 
 extern "C" void UserApp_UART4_ErrorHook(UART_HandleTypeDef *huart) {
   auv::porting::Self_CalcBoard_Porting::handleHalError(huart);
+  auv::porting::DepthCalcBoard_Porting::handleHalError(huart);
 }

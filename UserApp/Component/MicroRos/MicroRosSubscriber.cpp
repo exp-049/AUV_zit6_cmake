@@ -1,5 +1,8 @@
 #include "MicroRosSubscriber.hpp"
+#include "ChassisManager.hpp"
 #include "FreeRTOS.h"
+#include "INS_Driver.hpp"
+#include "MotionController_Driver.hpp"
 #include "MotionContext.hpp"
 #include "RosLogger.hpp"
 #include "Pushrod_Driver.hpp"

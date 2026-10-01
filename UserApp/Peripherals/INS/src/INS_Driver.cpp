@@ -224,7 +224,22 @@ void INS_Driver::init() {
   rx_total_bytes_ = 0;
   valid_frames_ = 0;
   invalid_frames_ = 0;
+  last_update_ms_ = HAL_GetTick();
   resetPosition();
+}
+
+bool INS_Driver::serviceRxRecovery(uint32_t no_frame_timeout_ms) {
+  if (ops_.serviceRxRecovery == nullptr) {
+    return false;
+  }
+  const bool no_valid_frame_timeout =
+      HAL_GetTick() - last_update_ms_ >= no_frame_timeout_ms;
+  const bool recovered = ops_.serviceRxRecovery(
+      ops_.ctx, no_valid_frame_timeout);
+  if (recovered) {
+    protocol_parser_.reset();
+  }
+  return recovered;
 }
 
 bool INS_Driver::sendCommand(uint8_t cmd_id, uint8_t value) {
@@ -331,6 +346,13 @@ void INS_Driver::getDiagnostics(InsPortDiagnostics &out) const {
     out.dma_remaining = port.dma_remaining;
     out.dma_enabled = port.dma_enabled;
     out.uart_isr = port.uart_isr;
+    out.uart_error_count = port.uart_error_count;
+    out.last_uart_error = port.last_uart_error;
+    out.rx_start_status = port.rx_start_status;
+    out.rx_recovery_attempts = port.rx_recovery_attempts;
+    out.rx_recovery_successes = port.rx_recovery_successes;
+    out.rx_recovery_failures = port.rx_recovery_failures;
+    out.rx_recovery_pending = port.rx_recovery_pending;
     std::memcpy(out.rx_preview, port.rx_preview, sizeof(out.rx_preview));
   }
 }

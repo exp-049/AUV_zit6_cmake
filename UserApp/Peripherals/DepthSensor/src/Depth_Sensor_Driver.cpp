@@ -64,6 +64,11 @@ int Depth_Sensor_Driver::Read() {
   return 1;
 }
 
+bool Depth_Sensor_Driver::serviceRxRecovery(bool no_valid_frame_timeout) {
+  return backend_ != nullptr &&
+         backend_->serviceRxRecovery(no_valid_frame_timeout);
+}
+
 void Depth_Sensor_Driver::Depth(float *p) {
   if (p == nullptr) {
     return;

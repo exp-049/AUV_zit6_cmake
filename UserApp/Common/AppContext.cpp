@@ -20,6 +20,9 @@
 // --- 全局 Porting 实例（硬件适配） ---
 static auv::porting::INS_Porting g_ins_port(&AUV_UART_INS, &AUV_UART_INS, ins_rx_buffer,
                                             512);
+extern "C" void UserApp_USART1_ErrorHook(UART_HandleTypeDef *uart) {
+  g_ins_port.onHalError(uart);
+}
 static auv::porting::MotionController_Porting g_motor_port(&AUV_UART_MOTOR);
 static auv::porting::USBL_Porting g_usbl_port(
     &AUV_UART_USBL, auv::porting::usbl_rx_buffer,
@@ -34,6 +37,7 @@ auv::peripheral::INS_Driver ins_driver(auv::peripheral::InsPortOps{
     .read = &auv::porting::INS_Porting::readPort,
     .transmit = &auv::porting::INS_Porting::transmitPort,
     .getDiagnostics = &auv::porting::INS_Porting::diagnosticsPort,
+    .serviceRxRecovery = &auv::porting::INS_Porting::serviceRxRecoveryPort,
 });
 auv::peripheral::MotionController_Driver
     motor_driver(auv::peripheral::MotorPortOps{

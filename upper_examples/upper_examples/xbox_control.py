@@ -33,12 +33,12 @@ except ImportError as exc:
 try:
     from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                                  QPushButton, QLabel, QComboBox, QCheckBox, QDoubleSpinBox, QGroupBox, QGridLayout)
-    from PyQt5.QtCore import Qt, QTimer
+    from PyQt5.QtCore import QEvent, Qt, QTimer
     from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QFont
 except ImportError:
     from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                                    QPushButton, QLabel, QComboBox, QCheckBox, QDoubleSpinBox, QGroupBox, QGridLayout)
-    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtCore import QEvent, Qt, QTimer
     from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QFont
 
 
@@ -250,6 +250,9 @@ class XboxControlWidget(QWidget):
         self.joystick = None
         self.joystick_connected = False
         self.control_active = False
+        self.keyboard_control_active = False
+        self._keyboard_keys = set()
+        self._keyboard_axes = [0.0] * 6
         
         # 内部底层映射的摇杆原始/目标物理轴值 [Surge,Sway,Heave,Roll,Pitch,Yaw]
         self.axes = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -284,6 +287,9 @@ class XboxControlWidget(QWidget):
                 
         self.init_style()
         self.init_ui()
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
         self.check_joystick_connection()
         # 无论启动时是否插入手柄都启动读取线程，线程会持续扫描热插拔。
         if self._pygame_initialized:
@@ -380,13 +386,17 @@ class XboxControlWidget(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(10)
         
-        title = QLabel("Xbox 手柄控制台")
+        title = QLabel("手柄 / 键盘控制台")
         title.setStyleSheet("font-size: 16px; font-weight: bold; color: #00e5ff;")
         left_layout.addWidget(title)
         
         self.joy_status_label = QLabel("正在检测手柄连接...")
         self.joy_status_label.setStyleSheet("font-size: 13px; color: #888888;")
         left_layout.addWidget(self.joy_status_label)
+
+        self.keyboard_status_label = QLabel("键盘映射: WASD=左摇杆，方向键=右摇杆")
+        self.keyboard_status_label.setStyleSheet("font-size: 12px; color: #888888;")
+        left_layout.addWidget(self.keyboard_status_label)
         
         self.joy_active_label = QLabel("控制状态: 未启用")
         self.joy_active_label.setStyleSheet("font-size: 13px; font-weight: bold; color: #ff9800;")
@@ -543,6 +553,25 @@ class XboxControlWidget(QWidget):
             }
         """)
         left_layout.addWidget(self.btn_joy_toggle)
+
+        self.btn_keyboard_toggle = QPushButton("启用键盘控制")
+        self.btn_keyboard_toggle.setCheckable(True)
+        self.btn_keyboard_toggle.clicked.connect(self.on_keyboard_toggle_clicked)
+        self.btn_keyboard_toggle.setStyleSheet("""
+            QPushButton {
+                background-color: #37474f;
+                color: white;
+                font-weight: bold;
+                padding: 12px;
+                border: none;
+                border-radius: 6px;
+                margin-top: 5px;
+            }
+            QPushButton:hover {
+                background-color: #455a64;
+            }
+        """)
+        left_layout.addWidget(self.btn_keyboard_toggle)
         left_layout.addStretch()
         
         main_layout.addWidget(left_widget, stretch=4)
@@ -554,7 +583,7 @@ class XboxControlWidget(QWidget):
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(0, 0, 0, 0)
         
-        model_lbl = QLabel("手柄实时动态回显模型 (Gamepad Model)")
+        model_lbl = QLabel("摇杆实时动态回显 (WASD / 方向键可模拟摇杆)")
         model_lbl.setStyleSheet("font-size: 11px; color: #555555; font-weight: bold; margin-bottom: 5px;")
         right_layout.addWidget(model_lbl)
         
@@ -835,59 +864,175 @@ class XboxControlWidget(QWidget):
                 
                 a_state = self.btn_states['A']
                 if a_state and not self.last_a_state:
-                    self.control_active = not self.control_active
-                    if not self.control_active:
-                        self.send_stop_command()
+                    if not self.keyboard_control_active:
+                        self.control_active = not self.control_active
+                        if not self.control_active:
+                            self.send_stop_command()
                 self.last_a_state = a_state
             except Exception as exc:
                 self._disconnect_joystick(f"读取失败: {exc}")
             self._stop_event.wait(0.02)
 
+    def eventFilter(self, watched, event):
+        """Capture movement keys only while keyboard control is enabled."""
+        if event.type() == QEvent.ApplicationDeactivate:
+            if self.keyboard_control_active:
+                self._set_keyboard_control_active(False)
+            return False
+
+        if (not self.keyboard_control_active or not self.isVisible() or
+                event.type() not in (QEvent.KeyPress, QEvent.KeyRelease)):
+            return super().eventFilter(watched, event)
+
+        key = event.key()
+        movement_keys = {
+            Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D,
+            Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right,
+        }
+        if key not in movement_keys:
+            return super().eventFilter(watched, event)
+        if event.isAutoRepeat():
+            return True
+
+        if event.type() == QEvent.KeyPress:
+            self._keyboard_keys.add(key)
+        else:
+            self._keyboard_keys.discard(key)
+        self._update_keyboard_axes()
+        return True
+
+    def _update_keyboard_axes(self):
+        """Map WASD and arrow keys to normalized two-axis stick values."""
+        keys = self._keyboard_keys
+
+        def axis(positive, negative):
+            return float(positive in keys) - float(negative in keys)
+
+        surge = axis(Qt.Key_W, Qt.Key_S)
+        sway = axis(Qt.Key_D, Qt.Key_A)
+        heave = axis(Qt.Key_Down, Qt.Key_Up)
+        yaw = axis(Qt.Key_Right, Qt.Key_Left)
+        diagonal_scale = 0.70710678
+        if surge and sway:
+            surge *= diagonal_scale
+            sway *= diagonal_scale
+        if heave and yaw:
+            heave *= diagonal_scale
+            yaw *= diagonal_scale
+
+        self._keyboard_axes = [surge, sway, heave, 0.0, 0.0, yaw]
+
+    def _set_keyboard_control_active(self, active):
+        active = bool(active)
+        if active == self.keyboard_control_active:
+            return
+
+        was_gamepad_active = self.control_active
+        self.keyboard_control_active = active
+        self._keyboard_keys.clear()
+        self._update_keyboard_axes()
+
+        if active:
+            self.control_active = False
+            self.btn_joy_toggle.setChecked(False)
+            if was_gamepad_active:
+                self.send_stop_command()
+            self.btn_keyboard_toggle.setChecked(True)
+            self.btn_keyboard_toggle.setText("禁用键盘控制")
+            self.btn_keyboard_toggle.setStyleSheet(
+                "background-color: #d84315; color: white;")
+            self.keyboard_status_label.setText(
+                "键盘控制: 已启用 (WASD 左摇杆 / 方向键 右摇杆)")
+            self.keyboard_status_label.setStyleSheet(
+                "font-size: 12px; color: #4caf50; font-weight: bold;")
+        else:
+            self.btn_keyboard_toggle.setChecked(False)
+            self.btn_keyboard_toggle.setText("启用键盘控制 (WASD / 方向键)")
+            self.btn_keyboard_toggle.setStyleSheet(
+                "background-color: #37474f; color: white;")
+            self.keyboard_status_label.setText(
+                "键盘控制: 已关闭 (WASD 左摇杆 / 方向键 右摇杆)")
+            self.keyboard_status_label.setStyleSheet(
+                "font-size: 12px; color: #888888;")
+            self.send_stop_command()
+
+    def on_keyboard_toggle_clicked(self, checked):
+        self._set_keyboard_control_active(checked)
+
     def on_joy_toggle_clicked(self, checked):
+        if checked and self.keyboard_control_active:
+            self._set_keyboard_control_active(False)
         self.control_active = checked
         if not self.control_active:
             self.send_stop_command()
 
     def update_gui_joystick(self):
         self.check_joystick_connection()
-        
-        if not self.joystick_connected:
+
+        if self.joystick_connected:
+            self.btn_joy_toggle.setEnabled(True)
+            self.joy_status_label.setText(f"已连接: {self.joystick_name}")
+            self.joy_status_label.setStyleSheet(
+                "color: #00e5ff; font-weight: bold;")
+        else:
             diagnostic = self._joystick_diagnostic or "正在扫描..."
             self.joy_status_label.setText(f"未连接手柄：{diagnostic}")
             self.joy_status_label.setStyleSheet("color: #ff5722;")
-            self.joy_active_label.setText("控制状态: 未就绪")
-            self.joy_active_label.setStyleSheet("color: #888888;")
             self.btn_joy_toggle.setChecked(False)
             self.btn_joy_toggle.setEnabled(False)
             self.btn_joy_toggle.setText("启用手柄控制")
-            self.btn_joy_toggle.setStyleSheet("background-color: #37474f; color: white;")
-            
-            # 手柄模型更新为离线状态
-            self.visualizer.update_state([0.0]*6, {'A': False, 'B': False, 'X': False, 'Y': False, 'LB': False, 'RB': False, 'back': False, 'start': False}, (0,0), False)
-            return
+            self.btn_joy_toggle.setStyleSheet(
+                "background-color: #37474f; color: white;")
 
-        self.btn_joy_toggle.setEnabled(True)
-        self.joy_status_label.setText(f"已连接: {self.joystick_name}")
-        self.joy_status_label.setStyleSheet("color: #00e5ff; font-weight: bold;")
-        
+        self.btn_joy_toggle.setChecked(self.control_active)
         if self.control_active:
-            self.joy_active_label.setText("控制状态: 已启用 (ACTIVE)")
-            self.joy_active_label.setStyleSheet("color: #4caf50; font-weight: bold;")
-            self.btn_joy_toggle.setChecked(True)
             self.btn_joy_toggle.setText("禁用手柄控制 (A键)")
-            self.btn_joy_toggle.setStyleSheet("background-color: #d84315; color: white;")
-        else:
-            self.joy_active_label.setText("控制状态: 未启用 (STANDBY)")
-            self.joy_active_label.setStyleSheet("color: #ff9800; font-weight: bold;")
-            self.btn_joy_toggle.setChecked(False)
+            self.btn_joy_toggle.setStyleSheet(
+                "background-color: #d84315; color: white;")
+        elif self.joystick_connected:
             self.btn_joy_toggle.setText("启用手柄控制 (A键)")
-            self.btn_joy_toggle.setStyleSheet("background-color: #00838f; color: white;")
-            
-        # 实时同步数据到右侧手柄绘图模型 (模型本身基于手柄的实际物理状态回显，
-        # 我们用 combo box 选择的轴对应数值传给 visualizer 渲染以反映实际映射到的物理操作)
-        # 即：左摇杆表示 Surge/Sway；右摇杆回显 Heave/Yaw
-        # 这里直接传入 axes 供回显，这会让摇杆模型在视觉上准确反应输出强度。
-        self.visualizer.update_state(self.axes, self.btn_states, self.hat_state, True)
+            self.btn_joy_toggle.setStyleSheet(
+                "background-color: #00838f; color: white;")
+
+        self.btn_keyboard_toggle.setChecked(self.keyboard_control_active)
+        if self.keyboard_control_active:
+            self.joy_active_label.setText("控制状态: 键盘已启用 (ACTIVE)")
+            self.joy_active_label.setStyleSheet(
+                "color: #4caf50; font-weight: bold;")
+            self.btn_keyboard_toggle.setText("禁用键盘控制")
+            self.btn_keyboard_toggle.setStyleSheet(
+                "background-color: #d84315; color: white;")
+            self.keyboard_status_label.setText(
+                "键盘控制: 已启用 (WASD 左摇杆 / 方向键 右摇杆)")
+            self.keyboard_status_label.setStyleSheet(
+                "font-size: 12px; color: #4caf50; font-weight: bold;")
+        else:
+            if self.control_active:
+                self.joy_active_label.setText("控制状态: 手柄已启用 (ACTIVE)")
+                self.joy_active_label.setStyleSheet(
+                    "color: #4caf50; font-weight: bold;")
+            elif self.joystick_connected:
+                self.joy_active_label.setText(
+                    "控制状态: 未启用 (STANDBY)")
+                self.joy_active_label.setStyleSheet(
+                    "color: #ff9800; font-weight: bold;")
+            else:
+                self.joy_active_label.setText("控制状态: 未启用")
+                self.joy_active_label.setStyleSheet("color: #888888;")
+
+            self.btn_keyboard_toggle.setText("启用键盘控制 (WASD / 方向键)")
+            self.btn_keyboard_toggle.setStyleSheet(
+                "background-color: #37474f; color: white;")
+            self.keyboard_status_label.setText(
+                "键盘控制: 已关闭 (WASD 左摇杆 / 方向键 右摇杆)")
+            self.keyboard_status_label.setStyleSheet(
+                "font-size: 12px; color: #888888;")
+
+        display_axes = (
+            self._keyboard_axes if self.keyboard_control_active else self.axes)
+        self.visualizer.update_state(
+            display_axes, self.btn_states, self.hat_state,
+            self.joystick_connected or self.keyboard_control_active)
 
     def send_stop_command(self):
         try:
@@ -904,9 +1049,11 @@ class XboxControlWidget(QWidget):
             pass
 
     def ros_control_timer_callback(self):
-        if not self.control_active:
+        if not (self.control_active or self.keyboard_control_active):
             return
         msg = ZitSetpoint()
+        axes = (
+            self._keyboard_axes if self.keyboard_control_active else self.axes)
 
         # 从界面获取通用死区配置
         s_dz = self.spin_surge_dz.value()
@@ -921,27 +1068,38 @@ class XboxControlWidget(QWidget):
             msg.control_key = 0x30
             msg.type_mask = 0
             # 机体系增量：surge→x, sway→y, heave→z, yaw→yaw（回中为 0）
-            msg.x = self.apply_deadzone(self.axes[0], s_dz) * max_lin
-            msg.y = self.apply_deadzone(self.axes[1], g_dz) * max_lin
-            msg.z = self.apply_deadzone(self.axes[2], g_dz) * max_lin
+            msg.x = self.apply_deadzone(axes[0], s_dz) * max_lin
+            msg.y = self.apply_deadzone(axes[1], g_dz) * max_lin
+            msg.z = self.apply_deadzone(axes[2], g_dz) * max_lin
             msg.roll = 0.0  # 兼容字段；固件控制路径旁路
             msg.pitch = 0.0  # 兼容字段；固件控制路径旁路
-            msg.yaw = self.apply_deadzone(self.axes[5], g_dz) * max_yaw
+            msg.yaw = self.apply_deadzone(axes[5], g_dz) * max_yaw
             self.setpoint_pub.publish(msg)
             return
 
         msg.control_key = 50
         msg.type_mask = 0
-        msg.x = self.apply_deadzone(self.axes[0], s_dz)
-        msg.y = self.apply_deadzone(self.axes[1], g_dz)
-        msg.z = self.apply_deadzone(self.axes[2], g_dz)
+        msg.x = self.apply_deadzone(axes[0], s_dz)
+        msg.y = self.apply_deadzone(axes[1], g_dz)
+        msg.z = self.apply_deadzone(axes[2], g_dz)
         msg.roll = 0.0  # 兼容字段；固件控制路径旁路
         msg.pitch = 0.0  # 兼容字段；固件控制路径旁路
-        msg.yaw = self.apply_deadzone(self.axes[5], g_dz)
+        msg.yaw = self.apply_deadzone(axes[5], g_dz)
         self.setpoint_pub.publish(msg)
+
+    def hideEvent(self, event):
+        if self.keyboard_control_active:
+            self._set_keyboard_control_active(False)
+        super().hideEvent(event)
 
     def close(self):
         self.control_active = False
+        self.keyboard_control_active = False
+        self._keyboard_keys.clear()
+        self._update_keyboard_axes()
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
         self.send_stop_command()
         self._stop_event.set()
         if self.input_thread and self.input_thread.is_alive():
@@ -961,7 +1119,7 @@ class XboxControlApp(QMainWindow):
         super().__init__()
         self.node = node
         self.spinner = spinner
-        self.setWindowTitle("Xbox 手柄遥控器")
+        self.setWindowTitle("手柄 / 键盘遥控器")
         self.resize(800, 420)
         self.setStyleSheet("QMainWindow { background-color: #121212; }")
         

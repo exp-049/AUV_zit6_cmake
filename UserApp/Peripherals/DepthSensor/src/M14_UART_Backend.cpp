@@ -57,10 +57,17 @@ M14_UART_Backend::M14_UART_Backend(UartPortOps ops) : ops_(ops) {
 bool M14_UART_Backend::init() {
   line_buffer_[0] = '\0';
   line_length_ = 0U;
+  line_overflow_ = false;
   frame_ready_ = false;
   connected_ = false;
   depth_ = 0.0f;
   temperature_ = 0.0f;
+  rx_byte_count_ = 0U;
+  valid_frame_count_ = 0U;
+  parser_error_count_ = 0U;
+  last_frame_length_ = 0U;
+  rx_preview_next_ = 0U;
+  rx_preview_count_ = 0U;
 
   const bool ready = ops_.poll != nullptr && ops_.startRx != nullptr;
   ROS_LOG_DEBUG("[M14] init: transport=%d", ready);
@@ -94,16 +101,49 @@ void M14_UART_Backend::start() {
   ROS_LOG_DEBUG("[M14] start RX: %d", ok);
 }
 
+bool M14_UART_Backend::serviceRxRecovery(bool no_valid_frame_timeout) {
+  if (ops_.serviceRxRecovery == nullptr) {
+    return false;
+  }
+  const bool recovered =
+      ops_.serviceRxRecovery(ops_.ctx, no_valid_frame_timeout);
+  if (recovered) {
+    // Do not join text received before and after a UART/DMA restart into one
+    // protocol frame. Preserve the last valid sample while dropping only the
+    // partial line.
+    line_length_ = 0U;
+    line_buffer_[0] = '\0';
+    line_overflow_ = false;
+  }
+  return recovered;
+}
+
 void M14_UART_Backend::onRxByte(uint8_t byte) {
+  ++rx_byte_count_;
+  rx_preview_[rx_preview_next_] = byte;
+  rx_preview_next_ = static_cast<uint8_t>((rx_preview_next_ + 1U) % 16U);
+  if (rx_preview_count_ < 16U) {
+    ++rx_preview_count_;
+  }
+
   if (byte == '\r' || byte == '\n') {
-    if (line_length_ != 0U) {
+    if (!line_overflow_ && line_length_ != 0U) {
       finishLine();
     }
+    line_length_ = 0U;
+    line_overflow_ = false;
     return;
   }
 
+  if (line_overflow_) {
+    return;
+  }
   if (line_length_ >= kLineBufferSize - 1U) {
+    ++parser_error_count_;
+    last_frame_length_ = static_cast<uint8_t>(line_length_);
     line_length_ = 0U;
+    line_overflow_ = true;
+    return;
   }
   line_buffer_[line_length_++] = static_cast<char>(byte);
   line_buffer_[line_length_] = '\0';
@@ -111,6 +151,7 @@ void M14_UART_Backend::onRxByte(uint8_t byte) {
 
 bool M14_UART_Backend::finishLine() {
   line_buffer_[line_length_] = '\0';
+  last_frame_length_ = static_cast<uint8_t>(line_length_);
 
   float temperature = 0.0f;
   float depth = 0.0f;
@@ -118,6 +159,7 @@ bool M14_UART_Backend::finishLine() {
   line_length_ = 0U;
   line_buffer_[0] = '\0';
   if (!valid) {
+    ++parser_error_count_;
     return false;
   }
 
@@ -125,7 +167,27 @@ bool M14_UART_Backend::finishLine() {
   depth_ = depth;
   connected_ = true;
   frame_ready_ = true;
+  ++valid_frame_count_;
   return true;
+}
+
+void M14_UART_Backend::getDiagnostics(DepthDiagnostics &out) const {
+  out = {};
+  if (ops_.getDiagnostics != nullptr) {
+    ops_.getDiagnostics(ops_.ctx, out);
+  }
+  out.connected = connected_;
+  out.rx_byte_count = rx_byte_count_;
+  out.valid_frame_count = valid_frame_count_;
+  out.data_frame_count = valid_frame_count_;
+  out.parser_error_count = parser_error_count_;
+  out.last_frame_length = last_frame_length_;
+  out.rx_preview_count = rx_preview_count_;
+  for (uint8_t i = 0U; i < rx_preview_count_; ++i) {
+    const uint8_t index = static_cast<uint8_t>(
+        (rx_preview_next_ + 16U - rx_preview_count_ + i) % 16U);
+    out.rx_preview[i] = rx_preview_[index];
+  }
 }
 
 bool M14_UART_Backend::sendCommand(const char *command) {

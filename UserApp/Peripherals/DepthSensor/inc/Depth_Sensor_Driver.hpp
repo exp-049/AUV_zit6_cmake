@@ -18,8 +18,24 @@ struct DepthDiagnostics {
   uint32_t rx_error_count = 0U;
   uint32_t last_rx_error = 0U;
   uint32_t last_rx_recovery_reason = 0U;
+  uint32_t rx_recovery_attempts = 0U;
+  uint32_t rx_recovery_successes = 0U;
+  uint32_t rx_recovery_failures = 0U;
+  bool rx_recovery_pending = false;
   uint32_t rx_event_count = 0U;
   uint32_t dma_write_pos = 0U;
+  // Optional UART transport snapshot; start status uses HAL_StatusTypeDef
+  // values, with -1 meaning that reception has not been started.
+  bool has_uart_diagnostics = false;
+  bool rx_dma_active = false;
+  int32_t rx_start_status = -1;
+  int32_t rx_abort_status = -1;
+  int32_t rx_dma_deinit_status = -1;
+  int32_t rx_dma_init_status = -1;
+  int32_t rx_hal_start_status = -1;
+  uint32_t dma_hal_state = 0U;
+  uint32_t dma_hal_error = 0U;
+  uint32_t uart_hal_rx_state = 0U;
   // Protocol-layer counters. They remain zero for backends that do not
   // expose a byte-stream parser.
   uint32_t rx_byte_count = 0U;
@@ -57,6 +73,10 @@ struct DepthBackend {
   virtual bool isConnected() const = 0;
   virtual float getDepth() const = 0;
   virtual float getTemperature() const = 0;
+  virtual bool serviceRxRecovery(bool no_valid_frame_timeout) {
+    (void)no_valid_frame_timeout;
+    return false;
+  }
 
   virtual void getDiagnostics(DepthDiagnostics &out) const {
     out = {};
@@ -76,6 +96,7 @@ public:
   void Init(void);
   void start();
   int Read();
+  bool serviceRxRecovery(bool no_valid_frame_timeout);
 
   void Depth(float *p);
   float getMS5837Z();

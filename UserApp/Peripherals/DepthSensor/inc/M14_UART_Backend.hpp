@@ -26,6 +26,8 @@ public:
   bool isConnected() const override { return connected_; }
   float getDepth() const override { return depth_; }
   float getTemperature() const override { return temperature_; }
+  bool serviceRxRecovery(bool no_valid_frame_timeout) override;
+  void getDiagnostics(DepthDiagnostics &out) const override;
 
   /** Feed one byte from the UART DMA consumer. */
   void onRxByte(uint8_t byte) override;
@@ -48,10 +50,18 @@ private:
   UartPortOps ops_;
   char line_buffer_[kLineBufferSize] = {};
   uint16_t line_length_ = 0U;
+  bool line_overflow_ = false;
   bool frame_ready_ = false;
   bool connected_ = false;
   float depth_ = 0.0f;
   float temperature_ = 0.0f;
+  uint32_t rx_byte_count_ = 0U;
+  uint32_t valid_frame_count_ = 0U;
+  uint32_t parser_error_count_ = 0U;
+  uint8_t last_frame_length_ = 0U;
+  uint8_t rx_preview_[16] = {};
+  uint8_t rx_preview_next_ = 0U;
+  uint8_t rx_preview_count_ = 0U;
   DepthDataReadyCallback cb_{nullptr, nullptr};
 };
 

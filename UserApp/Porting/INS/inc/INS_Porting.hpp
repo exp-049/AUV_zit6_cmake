@@ -33,10 +33,13 @@ public:
   static bool transmitPort(void *ctx, const uint8_t *data, uint16_t len);
   static void diagnosticsPort(
       void *ctx, auv::peripheral::InsPortDiagnostics *out);
+  static bool serviceRxRecoveryPort(void *ctx, bool no_valid_frame_timeout);
 
   bool init();
   uint16_t read(uint8_t *buf, uint16_t max_len);
   bool transmit(const uint8_t *data, uint16_t len);
+  void onHalError(UART_HandleTypeDef *uart);
+  bool serviceRxRecovery(bool no_valid_frame_timeout);
   void diagnostics(auv::peripheral::InsPortDiagnostics *out) const;
 
   /** @brief 检查是否在超时内收到过新数据 */
@@ -49,6 +52,9 @@ public:
   void onRxCompleted();
 
 private:
+  bool startReceive();
+  bool isReceiveActive() const;
+
   UART_HandleTypeDef *rx_uart_;
   UART_HandleTypeDef *tx_uart_;
   uint8_t *rx_buf_;
@@ -63,6 +69,20 @@ private:
   volatile uint32_t tx_failures_ = 0;
   volatile uint16_t tx_last_size_ = 0;
   volatile uint8_t tx_last_status_ = 0;
+  volatile int32_t rx_start_status_ = -1;
+  volatile uint32_t uart_error_count_ = 0;
+  volatile uint32_t last_uart_error_ = 0;
+  volatile int32_t rx_abort_status_ = -1;
+  volatile int32_t rx_dma_deinit_status_ = -1;
+  volatile int32_t rx_dma_init_status_ = -1;
+  volatile int32_t rx_hal_start_status_ = -1;
+  volatile uint32_t rx_recovery_attempts_ = 0;
+  volatile uint32_t rx_recovery_successes_ = 0;
+  volatile uint32_t rx_recovery_failures_ = 0;
+  volatile bool rx_recovery_pending_ = false;
+  uint32_t consecutive_recovery_failures_ = 0;
+  uint32_t last_recovery_attempt_ms_ = 0;
+  bool has_recovery_attempted_ = false;
 };
 
 } // namespace porting

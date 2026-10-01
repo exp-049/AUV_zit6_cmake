@@ -4,6 +4,7 @@
 #include "../Common/AppContext.hpp"
 #include "../Common/MotionContext.hpp"
 #include "USBL_Driver.hpp"
+#include "SensorDataMonitor.hpp"
 #include <cstdint>
 
 class ControlTask {
@@ -23,10 +24,16 @@ private:
   /** SITL 模式下无新数据时保持的上次有效导航状态 */
   auv::motion::NavState last_sitl_state_{};
   auv::peripheral::UsblState usbl_state_{};
+  auv::component::SensorDataMonitor ins_data_monitor_;
+  auv::component::SensorDataMonitor depth_data_monitor_;
 
   void init();
   void updateNavigation();
   void computeAndPublish();
+  bool monitorSensorReception(uint32_t now_ms, bool ins_frame_ready,
+                              int depth_frame_ready, float z);
+  void logInsDiagnostics();
+  void logDepthDiagnostics(int frame_ready, float z);
 };
 
 #endif // __CONTROL_TASK_HPP

@@ -326,3 +326,46 @@ target_link_libraries(test_m14_backend
 gtest_discover_tests(test_m14_backend
     DISCOVERY_MODE PRE_TEST
 )
+
+add_executable(test_depth_uart_porting
+    test_depth_uart_porting.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Porting/DepthSensor/src/DepthCalcBoard_Porting.cpp
+)
+target_include_directories(test_depth_uart_porting PRIVATE
+    ${STUB_DIR}/depth_uart
+    ${STUB_DIR}
+    ${PERIPHERAL_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Porting/DepthSensor/inc
+)
+target_link_libraries(test_depth_uart_porting GTest::gtest_main)
+gtest_discover_tests(test_depth_uart_porting
+    DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 10
+)
+
+add_executable(test_sensor_data_monitor test_sensor_data_monitor.cpp)
+target_include_directories(test_sensor_data_monitor PRIVATE
+    ${COMPONENT_DIR}/Safety
+)
+target_link_libraries(test_sensor_data_monitor GTest::gtest_main)
+gtest_discover_tests(test_sensor_data_monitor DISCOVERY_MODE PRE_TEST)
+
+add_executable(test_ins_uart_recovery
+    test_ins_uart_recovery.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Porting/INS/src/INS_Porting.cpp
+)
+target_include_directories(test_ins_uart_recovery PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/INS/inc
+    ${STUB_DIR}/ins_uart
+    ${STUB_DIR}
+    ${ALGO_DIR}
+    ${EIGEN_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Common
+    ${PERIPHERAL_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Porting/INS/inc
+)
+target_link_libraries(test_ins_uart_recovery GTest::gtest_main)
+gtest_discover_tests(test_ins_uart_recovery
+    DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 10
+)

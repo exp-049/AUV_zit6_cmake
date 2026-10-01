@@ -36,6 +36,11 @@ struct ArmState {
   uint32_t start_ms = 0;
 };
 
+struct SensorReceptionStatus {
+  bool ins_data_timeout = false;
+  bool depth_data_timeout = false;
+};
+
 /**
  * @class SystemContext
  * @brief 系统/状态机上下文（安全解锁状态、心跳监测、规划器控制标志等）
@@ -44,6 +49,7 @@ class SystemContext {
 public:
   LockedField<ArmState> arm_state_{};
   LockedField<NavStatus> nav_status_{};
+  LockedField<SensorReceptionStatus> sensor_reception_status_{};
 
   // 规划器启用与状态变量
   bool is_planner_active = false;

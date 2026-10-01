@@ -23,6 +23,7 @@ struct InsPortOps {
   uint16_t (*read)(void *ctx, uint8_t *buf, uint16_t max_len);
   bool (*transmit)(void *ctx, const uint8_t *data, uint16_t len);
   void (*getDiagnostics)(void *ctx, struct InsPortDiagnostics *out);
+  bool (*serviceRxRecovery)(void *ctx, bool no_valid_frame_timeout);
 };
 
 /** @brief INS UART/DMA 快照，供调试输出使用。 */
@@ -35,6 +36,20 @@ struct InsPortDiagnostics {
   uint16_t dma_remaining = 0;
   bool dma_enabled = false;
   uint32_t uart_isr = 0;
+  uint32_t uart_error_count = 0;
+  uint32_t last_uart_error = 0;
+  int32_t rx_start_status = -1;
+  int32_t rx_abort_status = -1;
+  int32_t rx_dma_deinit_status = -1;
+  int32_t rx_dma_init_status = -1;
+  int32_t rx_hal_start_status = -1;
+  uint32_t dma_hal_state = 0U;
+  uint32_t dma_hal_error = 0U;
+  uint32_t uart_hal_rx_state = 0U;
+  uint32_t rx_recovery_attempts = 0;
+  uint32_t rx_recovery_successes = 0;
+  uint32_t rx_recovery_failures = 0;
+  bool rx_recovery_pending = false;
   uint8_t rx_preview[4] = {};
   uint32_t tx_calls = 0;
   uint32_t tx_attempts = 0;
@@ -57,6 +72,7 @@ public:
 
   void init();
   bool update(auv::motion::NavState &state);
+  bool serviceRxRecovery(uint32_t no_frame_timeout_ms);
   auv::motion::NavState getNavState() const { return state_; }
   float getManometerZ() const { return manometer_z_; }
   bool isDataFresh() const;

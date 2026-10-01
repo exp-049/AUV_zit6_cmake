@@ -704,9 +704,13 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 
 /* USER CODE BEGIN 1 */
 extern uint8_t dma_buffer[];
+extern void UserApp_USART1_ErrorHook(UART_HandleTypeDef *huart);
 extern void UserApp_UART4_ErrorHook(UART_HandleTypeDef *huart);
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
+  if (huart->Instance == USART1) {
+      UserApp_USART1_ErrorHook(huart);
+  }
   if (huart->Instance == UART4) {
       UserApp_UART4_ErrorHook(huart);
   }

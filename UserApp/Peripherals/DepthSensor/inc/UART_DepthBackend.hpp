@@ -18,6 +18,10 @@ struct UartPortOps {
   void (*poll)(void *ctx);
   /** 启动 DMA 接收 */
   bool (*startRx)(void *ctx);
+  /** Optional hardware snapshot, independent of protocol parsing. */
+  void (*getDiagnostics)(void *ctx, DepthDiagnostics &out) = nullptr;
+  /** Optional task-context UART/DMA recovery hook. */
+  bool (*serviceRxRecovery)(void *ctx, bool no_valid_frame_timeout) = nullptr;
 };
 
 /** Common byte sink used by text-protocol UART depth backends. */

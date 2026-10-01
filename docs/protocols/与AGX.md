@@ -215,7 +215,9 @@ uint32 error_flags
 说明：
 - `forces` 当前是 6 元素：`[Fx, Fy, Fz, Mroll, Mpitch, Myaw]`
 - `battery_voltage` 当前代码固定填 `0.0f`
-- `error_flags` 当前代码固定填 `0`
+- `error_flags` 在实机惯导或深度计有效帧超时时置位
+  `ERROR_SENSOR_FAIL | ERROR_COMM_TIMEOUT`（值为 `10`），两者均恢复后清零。
+  该报警仅报告状态，不触发安全停机。
 - `arm_mode` 实际写入的是 `last_heartbeat_data`
 
 ### 3.5 `/zit6/state/zithbt`

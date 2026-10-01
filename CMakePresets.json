@@ -30,6 +30,13 @@
             }
         },
         {
+            "name": "Release-M14Depth-GpioPushrod",
+            "inherits": "Release",
+            "cacheVariables": {
+                "AUV_HARDWARE_PRESET": "7"
+            }
+        },
+        {
             "name": "MS5837_CAL_DEBUG",
             "inherits": "default",
             "cacheVariables": {
@@ -132,6 +139,10 @@
         {
             "name": "Release",
             "configurePreset": "Release"
+        },
+        {
+            "name": "Release-M14Depth-GpioPushrod",
+            "configurePreset": "Release-M14Depth-GpioPushrod"
         },
         {
             "name": "MS5837_CAL_DEBUG",

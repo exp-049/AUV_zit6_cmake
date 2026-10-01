@@ -181,6 +181,9 @@ struct SelectedDrivers {
             .transmit = &DepthCalcBoard_Porting::transmitPort,
             .poll = &DepthCalcBoard_Porting::pollPort,
             .startRx = &DepthCalcBoard_Porting::startRxPort,
+            .getDiagnostics = &DepthCalcBoard_Porting::getDiagnosticsPort,
+            .serviceRxRecovery =
+                &DepthCalcBoard_Porting::serviceRxRecoveryPort,
         }),
         depth(&depth_backend),
         pushrod_backend(auv::peripheral::PushrodGpioPortOps{
@@ -203,6 +206,9 @@ struct SelectedDrivers {
             .transmit = &DepthCalcBoard_Porting::transmitPort,
             .poll = &DepthCalcBoard_Porting::pollPort,
             .startRx = &DepthCalcBoard_Porting::startRxPort,
+            .getDiagnostics = &DepthCalcBoard_Porting::getDiagnosticsPort,
+            .serviceRxRecovery =
+                &DepthCalcBoard_Porting::serviceRxRecoveryPort,
         }),
         depth(&depth_backend),
         pushrod(&unsupported_pushrod) {

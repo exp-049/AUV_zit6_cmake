@@ -28,6 +28,74 @@ void INS_Porting::diagnosticsPort(
     void *ctx, auv::peripheral::InsPortDiagnostics *out) {
   static_cast<INS_Porting *>(ctx)->diagnostics(out);
 }
+bool INS_Porting::serviceRxRecoveryPort(void *ctx,
+                                        bool no_valid_frame_timeout) {
+  return static_cast<INS_Porting *>(ctx)->serviceRxRecovery(
+      no_valid_frame_timeout);
+}
+
+bool INS_Porting::isReceiveActive() const {
+  if (rx_uart_ == nullptr || rx_uart_->Instance == nullptr ||
+      rx_uart_->hdmarx == nullptr || rx_uart_->hdmarx->Instance == nullptr) {
+    return false;
+  }
+  const auto *stream = reinterpret_cast<const DMA_Stream_TypeDef *>(
+      rx_uart_->hdmarx->Instance);
+  return rx_uart_->RxState == HAL_UART_STATE_BUSY_RX &&
+         (rx_uart_->Instance->CR3 & USART_CR3_DMAR) != 0U &&
+         (stream->CR & DMA_SxCR_EN) != 0U;
+}
+
+bool INS_Porting::startReceive() {
+  if (rx_uart_ == nullptr || rx_uart_->Instance == nullptr ||
+      rx_uart_->hdmarx == nullptr || rx_uart_->hdmarx->Instance == nullptr ||
+      rx_buf_ == nullptr || rx_buf_size_ == 0U) {
+    return false;
+  }
+
+  // Reconcile HAL/DMA state after an error abort before starting a new ring.
+  const HAL_StatusTypeDef abort_status = HAL_UART_AbortReceive(rx_uart_);
+  rx_abort_status_ = static_cast<int32_t>(abort_status);
+  if (abort_status != HAL_OK) {
+    rx_start_status_ = rx_abort_status_;
+    return false;
+  }
+
+  // HAL_UART_AbortReceive only aborts DMA when UART DMAR is still set. A
+  // blocking UART error may already have cleared DMAR while leaving the DMA
+  // handle BUSY/ERROR, causing the next HAL_UART_Receive_DMA to fail. Reset
+  // and reinitialize the stream unconditionally before restarting the ring.
+  const HAL_StatusTypeDef dma_deinit_status = HAL_DMA_DeInit(rx_uart_->hdmarx);
+  rx_dma_deinit_status_ = static_cast<int32_t>(dma_deinit_status);
+  if (dma_deinit_status != HAL_OK) {
+    rx_start_status_ = rx_dma_deinit_status_;
+    return false;
+  }
+  const HAL_StatusTypeDef dma_init_status = HAL_DMA_Init(rx_uart_->hdmarx);
+  rx_dma_init_status_ = static_cast<int32_t>(dma_init_status);
+  if (dma_init_status != HAL_OK) {
+    rx_start_status_ = rx_dma_init_status_;
+    return false;
+  }
+
+  rx_read_idx_ = 0U;
+  std::memset(rx_buf_, 0, rx_buf_size_);
+  const HAL_StatusTypeDef start_status =
+      HAL_UART_Receive_DMA(rx_uart_, rx_buf_, rx_buf_size_);
+  rx_hal_start_status_ = static_cast<int32_t>(start_status);
+  rx_start_status_ = static_cast<int32_t>(start_status);
+  if (start_status != HAL_OK || !isReceiveActive()) {
+    if (start_status == HAL_OK) {
+      rx_start_status_ = static_cast<int32_t>(HAL_ERROR);
+      (void)HAL_UART_AbortReceive(rx_uart_);
+    }
+    return false;
+  }
+
+  // The ring is polled using NDTR; half/full interrupts are not needed.
+  __HAL_DMA_DISABLE_IT(rx_uart_->hdmarx, DMA_IT_HT | DMA_IT_TC);
+  return true;
+}
 
 bool INS_Porting::init() {
   if (rx_uart_ == nullptr || rx_uart_->hdmarx == nullptr || rx_buf_ == nullptr ||
@@ -35,8 +103,15 @@ bool INS_Porting::init() {
     return false;
   }
 
+  uart_error_count_ = 0U;
+  last_uart_error_ = 0U;
+  rx_recovery_attempts_ = 0U;
+  rx_recovery_successes_ = 0U;
+  rx_recovery_failures_ = 0U;
+  rx_recovery_pending_ = false;
+  consecutive_recovery_failures_ = 0U;
+  has_recovery_attempted_ = false;
   for (int i = 0; i < 5; i++) {
-    rx_read_idx_ = 0;
     read_events_ = 0;
     total_bytes_ = 0;
     last_rx_tick_ = 0;
@@ -46,16 +121,72 @@ bool INS_Porting::init() {
     tx_failures_ = 0;
     tx_last_size_ = 0;
     tx_last_status_ = 0;
-    std::memset(rx_buf_, 0, rx_buf_size_);
-    if (HAL_UART_Receive_DMA(rx_uart_, rx_buf_, rx_buf_size_) == HAL_OK) {
-      // INS uses a circular DMA ring and polls the producer position.  Half
-      // and full transfer callbacks are unnecessary and would only add
-      // interrupt load.
-      __HAL_DMA_DISABLE_IT(rx_uart_->hdmarx, DMA_IT_HT | DMA_IT_TC);
+    if (startReceive()) {
       return true;
     }
     HAL_Delay(10);
   }
+  return false;
+}
+
+void INS_Porting::onHalError(UART_HandleTypeDef *uart) {
+  if (uart == nullptr || uart != rx_uart_) {
+    return;
+  }
+  ++uart_error_count_;
+  last_uart_error_ = uart->ErrorCode;
+  rx_recovery_pending_ = true;
+}
+
+bool INS_Porting::serviceRxRecovery(bool no_valid_frame_timeout) {
+  if (rx_uart_ == nullptr || rx_uart_->Instance == nullptr ||
+      rx_uart_->hdmarx == nullptr || rx_uart_->hdmarx->Instance == nullptr ||
+      rx_buf_ == nullptr || rx_buf_size_ == 0U) {
+    return false;
+  }
+
+  const bool error_pending = rx_recovery_pending_;
+  if (isReceiveActive() && !error_pending && !no_valid_frame_timeout) {
+    // A brief gap is harmless while the circular receive path remains active.
+    return false;
+  }
+  if (!error_pending && !no_valid_frame_timeout) {
+    return false;
+  }
+
+  static constexpr uint32_t kRetryDelaysMs[] = {
+      100U, 250U, 500U, 1000U, 2000U};
+  uint32_t retry_delay_ms = 0U;
+  if (has_recovery_attempted_) {
+    if (consecutive_recovery_failures_ == 0U) {
+      retry_delay_ms = no_valid_frame_timeout ? 5000U : kRetryDelaysMs[0];
+    } else if (consecutive_recovery_failures_ <=
+               sizeof(kRetryDelaysMs) / sizeof(kRetryDelaysMs[0])) {
+      retry_delay_ms = kRetryDelaysMs[consecutive_recovery_failures_ - 1U];
+    } else {
+      retry_delay_ms = 5000U;
+    }
+  }
+  const uint32_t now_ms = HAL_GetTick();
+  if (has_recovery_attempted_ &&
+      now_ms - last_recovery_attempt_ms_ < retry_delay_ms) {
+    return false;
+  }
+
+  // Clear before calling HAL so a new IRQ during recovery remains pending.
+  rx_recovery_pending_ = false;
+  has_recovery_attempted_ = true;
+  last_recovery_attempt_ms_ = now_ms;
+  ++rx_recovery_attempts_;
+  if (startReceive()) {
+    consecutive_recovery_failures_ = 0U;
+    ++rx_recovery_successes_;
+    return true;
+  }
+
+  ++consecutive_recovery_failures_;
+  ++rx_recovery_failures_;
+  rx_recovery_pending_ = true;
   return false;
 }
 
@@ -136,10 +267,22 @@ void INS_Porting::diagnostics(
   out->tx_failures = tx_failures_;
   out->tx_last_size = tx_last_size_;
   out->tx_last_status = tx_last_status_;
+  out->uart_error_count = uart_error_count_;
+  out->last_uart_error = last_uart_error_;
+  out->rx_start_status = rx_start_status_;
+  out->rx_abort_status = rx_abort_status_;
+  out->rx_dma_deinit_status = rx_dma_deinit_status_;
+  out->rx_dma_init_status = rx_dma_init_status_;
+  out->rx_hal_start_status = rx_hal_start_status_;
+  out->rx_recovery_attempts = rx_recovery_attempts_;
+  out->rx_recovery_successes = rx_recovery_successes_;
+  out->rx_recovery_failures = rx_recovery_failures_;
+  out->rx_recovery_pending = rx_recovery_pending_;
   out->tx_uart_ready = tx_uart_ != nullptr &&
                        tx_uart_->gState == HAL_UART_STATE_READY;
-  if (rx_uart_ == nullptr || rx_uart_->hdmarx == nullptr || rx_buf_ == nullptr ||
-      rx_buf_size_ == 0) {
+  if (rx_uart_ == nullptr || rx_uart_->Instance == nullptr ||
+      rx_uart_->hdmarx == nullptr || rx_uart_->hdmarx->Instance == nullptr ||
+      rx_buf_ == nullptr || rx_buf_size_ == 0) {
     return;
   }
 
@@ -148,9 +291,10 @@ void INS_Porting::diagnostics(
   if (remaining <= rx_buf_size_) {
     out->write_pos = static_cast<uint16_t>(rx_buf_size_ - remaining);
   }
-  const auto *stream = reinterpret_cast<const DMA_Stream_TypeDef *>(
-      rx_uart_->hdmarx->Instance);
-  out->dma_enabled = (stream->CR & DMA_SxCR_EN) != 0U;
+  out->dma_enabled = isReceiveActive();
+  out->dma_hal_state = static_cast<uint32_t>(rx_uart_->hdmarx->State);
+  out->dma_hal_error = rx_uart_->hdmarx->ErrorCode;
+  out->uart_hal_rx_state = static_cast<uint32_t>(rx_uart_->RxState);
   out->uart_isr = rx_uart_->Instance->ISR;
   std::memcpy(out->rx_preview, rx_buf_, sizeof(out->rx_preview));
 }

@@ -9,15 +9,8 @@ namespace porting {
 
 /**
  * @class DepthCalcBoard_Porting
- * @brief 深度解算板 UART 硬件适配层（DMA 双缓冲）
- *
- * 封装 UART5 的 HAL 操作：
- * - UartPortOps::transmit → HAL_UART_Transmit
- * - DMA 双缓冲接收 → 中断只切缓冲 → 调用方解析
- *
- * 双缓冲：
- *   1. DMA 填充 buf_a → TC 中断 → 切到 buf_b，标记 buf_a 就绪
- *   2. 调用方调 poll() → 获取就绪缓冲 → 推字节到 Backend::onRxByte()
+ * @brief Text-protocol depth UART adapter using a polled circular DMA buffer.
+ * The selected preset supplies the UART handle (currently UART4).
  */
 class DepthCalcBoard_Porting {
 public:
@@ -35,9 +28,16 @@ public:
 
   /** @brief 供 UartPortOps::startRx 使用的静态包装 */
   static bool startRxPort(void *ctx);
+  static void getDiagnosticsPort(void *ctx,
+                                 auv::peripheral::DepthDiagnostics &out);
+  static bool serviceRxRecoveryPort(void *ctx,
+                                   bool no_valid_frame_timeout);
+  static void handleHalError(UART_HandleTypeDef *huart);
+  void getDiagnostics(auv::peripheral::DepthDiagnostics &out) const;
 
   /** @brief 启动 DMA 接收（填充 buf_a） */
   bool startRx();
+  bool serviceRxRecovery(bool no_valid_frame_timeout);
 
   /** @brief 获取 UART 句柄 */
   UART_HandleTypeDef *getUart() const { return huart_; }
@@ -58,8 +58,8 @@ public:
   static constexpr uint16_t kBufSize = 256;
 
 private:
-  /** @brief 启动/重启 DMA 接收 */
-  void startDma(uint8_t *buf);
+  bool startReceive();
+  bool isReceiveActive() const;
 
   UART_HandleTypeDef *huart_;
   auv::peripheral::DepthUartRxSink *backend_;
@@ -70,6 +70,21 @@ private:
 
   uint8_t *active_buf_ = nullptr;  // DMA 当前填充的缓冲
   uint16_t dma_pos_ = 0;           // 当前缓冲中已处理的字节位置（poll 中更新）
+  int32_t rx_start_status_ = -1;
+  volatile uint32_t uart_error_count_ = 0U;
+  volatile uint32_t last_uart_error_ = 0U;
+  volatile int32_t rx_abort_status_ = -1;
+  volatile int32_t rx_dma_deinit_status_ = -1;
+  volatile int32_t rx_dma_init_status_ = -1;
+  volatile int32_t rx_hal_start_status_ = -1;
+  volatile uint32_t rx_recovery_attempts_ = 0U;
+  volatile uint32_t rx_recovery_successes_ = 0U;
+  volatile uint32_t rx_recovery_failures_ = 0U;
+  volatile uint32_t last_rx_recovery_reason_ = 0U;
+  volatile bool rx_recovery_pending_ = false;
+  uint32_t consecutive_recovery_failures_ = 0U;
+  uint32_t last_recovery_attempt_ms_ = 0U;
+  bool has_recovery_attempted_ = false;
 };
 
 } // namespace porting
