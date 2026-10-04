@@ -9,11 +9,11 @@ namespace peripheral {
 
 MotionController_Driver::MotionController_Driver(MotorPortOps ops,
                                                  ThrustPacket *ext_pkt)
-    : ops_(ops), thrust_pkt_ptr_(ext_pkt ? ext_pkt
-                                         : static_cast<ThrustPacket *>(
-                                               ops_.getTxPacket(ops_.ctx))),
-      internal_pkt_{}, handshake_rx_state_(0U), handshake_rx_status_(0U),
-      handshake_response_pending_(false) {
+    : ops_(ops),
+      thrust_pkt_ptr_(ext_pkt ? ext_pkt
+                              : static_cast<ThrustPacket *>(
+                                    ops_.getTxPacket(ops_.ctx))),
+      internal_pkt_{} {
   if (!thrust_pkt_ptr_)
     thrust_pkt_ptr_ = &internal_pkt_;
   initPacket(thrust_pkt_ptr_, 0x01);
@@ -71,11 +71,32 @@ bool MotionController_Driver::setThrustMatrix(uint8_t mode, float A_1,
   return transmitDMA(reinterpret_cast<uint8_t *>(&pkt), sizeof(MatrixPacket));
 }
 
-bool MotionController_Driver::setServoAngle(float angle) {
+bool MotionController_Driver::setServoAngle(int32_t servo_id, float angle) {
   static ServoPacket pkt;
-  initPacket(&pkt, 0x02);
+  if (servo_id != 1 && servo_id != 2)
+    return false;
+
+  initPacket(&pkt, servo_id == 1 ? 0x02 : 0x04);
   pkt.angle = angle;
-  return transmitDMA(reinterpret_cast<uint8_t *>(&pkt), sizeof(ServoPacket));
+  const bool sent =
+      transmitDMA(reinterpret_cast<uint8_t *>(&pkt), sizeof(ServoPacket));
+  if (sent) {
+    taskENTER_CRITICAL();
+    if (servo_id == 1)
+      servo1_angle_ = angle;
+    else
+      servo2_angle_ = angle;
+    taskEXIT_CRITICAL();
+  }
+  return sent;
+}
+
+void MotionController_Driver::getServoAngles(float &servo1_angle,
+                                              float &servo2_angle) const {
+  taskENTER_CRITICAL();
+  servo1_angle = servo1_angle_;
+  servo2_angle = servo2_angle_;
+  taskEXIT_CRITICAL();
 }
 
 bool MotionController_Driver::setLightState(uint8_t state) {
@@ -83,56 +104,6 @@ bool MotionController_Driver::setLightState(uint8_t state) {
   initPacket(&pkt, 0x03);
   pkt.state = state;
   return transmitDMA(reinterpret_cast<uint8_t *>(&pkt), sizeof(LightPacket));
-}
-
-bool MotionController_Driver::sendHandshake() {
-  static HandshakePacket pkt;
-  initPacket(&pkt, 0x04);
-  return transmitDMA(reinterpret_cast<uint8_t *>(&pkt), sizeof(pkt));
-}
-
-void MotionController_Driver::onRxByte(uint8_t byte) {
-  switch (handshake_rx_state_) {
-  case 0U:
-    handshake_rx_state_ = byte == 0xFAU ? 1U : 0U;
-    break;
-  case 1U:
-    if (byte == 0xAFU) {
-      handshake_rx_state_ = 2U;
-    } else {
-      handshake_rx_state_ = byte == 0xFAU ? 1U : 0U;
-    }
-    break;
-  case 2U:
-    handshake_rx_state_ = byte == 0x04U ? 3U : (byte == 0xFAU ? 1U : 0U);
-    break;
-  case 3U:
-    handshake_rx_status_ = byte;
-    handshake_rx_state_ = 4U;
-    break;
-  case 4U:
-    handshake_rx_state_ = byte == 0xFBU ? 5U : (byte == 0xFAU ? 1U : 0U);
-    break;
-  case 5U:
-    if (byte == 0xBFU) {
-      handshake_response_pending_ = true;
-    }
-    handshake_rx_state_ = byte == 0xFAU ? 1U : 0U;
-    break;
-  default:
-    handshake_rx_state_ = 0U;
-    break;
-  }
-}
-
-bool MotionController_Driver::takeHandshakeResponse(uint8_t &status) {
-  if (!handshake_response_pending_) {
-    return false;
-  }
-
-  status = handshake_rx_status_;
-  handshake_response_pending_ = false;
-  return true;
 }
 
 bool MotionController_Driver::sendThrustPacketDMA() {

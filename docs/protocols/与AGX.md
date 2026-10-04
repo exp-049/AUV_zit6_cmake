@@ -141,15 +141,24 @@ uint32 seq
 
 ### 2.4 `/zit6/cmd/servo`
 
-- 类型：`std_msgs/msg/Float32`
-- 含义：舵机角度，单位 rad
+- 类型：`zit6_interfaces/msg/ZitServo`
+- 字段：`int32 servo_id`（1 或 2），`float32 angle`（弧度 rad）
+- 映射：1 对应 MotionController 命令 `0x02`，2 对应 `0x04`
 
-### 2.5 `/zit6/cmd/light`
+### 2.5 `/zit6/state/servo`
+
+- 类型：`zit6_interfaces/msg/ZitServoState`
+- 频率：5 Hz
+- 字段：`float32 servo1_angle`、`float32 servo2_angle`（弧度 rad）
+- 含义：最近被本地 UART DMA 接受的目标角；MotionController 当前没有舵机角度回读，
+  也不提供下位机执行确认。
+
+### 2.6 `/zit6/cmd/light`
 
 - 类型：`std_msgs/msg/UInt8`
 - 含义：灯光状态字节，具体颜色含义由下位机解释
 
-### 2.6 `/zit6/cmd/pushrod`
+### 2.7 `/zit6/cmd/pushrod`
 
 - 类型：`zit6_interfaces/msg/ZitPushrod`
 - 用途：向深度计解算板下发一个推杆任务

@@ -5,8 +5,6 @@
 #include "SEGGER_RTT.h"
 #include "cmsis_os2.h"
 #include "iwdg.h"
-#include "main.h"
-#include "usart.h"
 
 #include <cctype>
 #include <cmath>
@@ -19,7 +17,6 @@ namespace {
 
 constexpr std::size_t kLineCapacity = 128U;
 constexpr std::size_t kReadCapacity = 32U;
-uint8_t g_motion_rx_byte = 0U;
 
 struct MotionState {
   float x = 0.0F;
@@ -64,18 +61,10 @@ void printState(const MotionState &state) {
 void printHelp() {
   SEGGER_RTT_WriteString(
       0,
-      "Commands (finish with Enter): H, X/R/D/Y[-1..1], S[-180..180], "
+      "Commands (finish with Enter): X/R/D/Y[-1..1], S1/S2 <angle>, "
       "L[0..3], STOP, HELP\r\n");
   SEGGER_RTT_WriteString(
       0, "X=Fx forward/back, R=Fy right/left, D=Fz down/up, Y=Fyaw\r\n");
-}
-
-void printHandshakeResponse(auv::peripheral::MotionController_Driver &driver) {
-  uint8_t status = 0U;
-  while (driver.takeHandshakeResponse(status)) {
-    SEGGER_RTT_printf(0, "RX HANDSHAKE: FA AF 04 %02X FB BF -> %s\r\n",
-                      status, status == 0x01U ? "OK" : "ERR status");
-  }
 }
 
 char *trim(char *text) {
@@ -147,13 +136,6 @@ void processCommand(char *raw_line, MotionState &state,
     return;
   }
 
-  if (std::strcmp(line, "H") == 0) {
-    const bool sent = driver.sendHandshake();
-    SEGGER_RTT_printf(0, "TX HANDSHAKE: FA AF 04 FB BF -> %s\r\n",
-                      sent ? "DMA OK" : "ERR local TX");
-    return;
-  }
-
   const char command = static_cast<char>(
       std::toupper(static_cast<unsigned char>(line[0])));
   const char *argument = line + 1;
@@ -190,15 +172,22 @@ void processCommand(char *raw_line, MotionState &state,
   }
 
   if (command == 'S') {
+    char *id_end = nullptr;
+    const long servo_id = std::strtol(argument, &id_end, 10);
     float angle = 0.0F;
-    if (!parseFloat(argument, angle) || angle < -180.0F || angle > 180.0F) {
+    while (id_end != argument &&
+           std::isspace(static_cast<unsigned char>(*id_end))) {
+      ++id_end;
+    }
+    if (id_end == argument || (servo_id != 1L && servo_id != 2L) ||
+        !parseFloat(id_end, angle) || angle < -180.0F || angle > 180.0F) {
       SEGGER_RTT_WriteString(0,
-                             "ERR expected servo angle in [-180,180] deg\r\n");
+                             "ERR expected S1/S2 <angle> in [-180,180] deg\r\n");
       return;
     }
 
-    const bool sent = driver.setServoAngle(angle);
-    SEGGER_RTT_printf(0, "%s S=", sent ? "OK" : "ERR tx");
+    const bool sent = driver.setServoAngle(static_cast<int32_t>(servo_id), angle);
+    SEGGER_RTT_printf(0, "%s S%ld=", sent ? "OK" : "ERR tx", servo_id);
     printFixed(angle, 1U);
     SEGGER_RTT_WriteString(0, " deg\r\n");
     return;
@@ -222,18 +211,6 @@ void processCommand(char *raw_line, MotionState &state,
 
 } // namespace
 
-extern "C" void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-  if (huart != &huart6) {
-    return;
-  }
-
-  auto *driver = auv::system::g_app_ctx.motor_driver;
-  if (driver != nullptr) {
-    driver->onRxByte(g_motion_rx_byte);
-  }
-  (void)HAL_UART_Receive_IT(&huart6, &g_motion_rx_byte, 1U);
-}
-
 extern "C" void UserApp_MotionDebugTask(void *argument) {
   (void)argument;
 
@@ -252,10 +229,6 @@ extern "C" void UserApp_MotionDebugTask(void *argument) {
     osThreadExit();
   }
 
-  if (HAL_UART_Receive_IT(&huart6, &g_motion_rx_byte, 1U) != HAL_OK) {
-    SEGGER_RTT_WriteString(0, "ERR UART6 RX start failed\r\n");
-  }
-
   SEGGER_RTT_WriteString(0, "rtt_motion_debug ready\r\n");
   printHelp();
 
@@ -266,7 +239,6 @@ extern "C" void UserApp_MotionDebugTask(void *argument) {
   bool line_overflow = false;
 
   for (;;) {
-    printHandshakeResponse(*driver);
     const unsigned received = SEGGER_RTT_Read(0, read_buffer, sizeof(read_buffer));
     for (unsigned i = 0U; i < received; ++i) {
       const char ch = read_buffer[i];
@@ -291,8 +263,6 @@ extern "C" void UserApp_MotionDebugTask(void *argument) {
         }
       }
     }
-
-    printHandshakeResponse(*driver);
 
     HAL_IWDG_Refresh(&hiwdg1);
     osDelay(1U);

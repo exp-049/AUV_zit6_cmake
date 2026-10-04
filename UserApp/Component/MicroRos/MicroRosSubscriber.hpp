@@ -8,11 +8,11 @@
 #include <rclc/rclc.h>
 #include <stdint.h>
 
-#include <std_msgs/msg/float32.h>
 #include <std_msgs/msg/float32_multi_array.h>
 #include <std_msgs/msg/u_int32.h>
 #include <std_msgs/msg/u_int8.h>
 #include <zit6_interfaces/msg/zit_pushrod.h>
+#include <zit6_interfaces/msg/zit_servo.h>
 #include <zit6_interfaces/msg/zit_setpoint.h>
 
 /**
@@ -23,7 +23,7 @@
  * - /zit6/cmd/setpoint — 控制设定点
  * - /zit6/cmd/agxhbt   — 上位机心跳（解锁）
  * - /zit6/cmd/ins      — 惯导指令
- * - /zit6/cmd/servo    — 舵机角度
+ * - /zit6/cmd/servo    — 舵机编号与角度（servo_id: 1/2，angle: rad）
  * - /zit6/cmd/light    — LED 灯控
  * - /zit6/cmd/pushrod  — 推杆任务（speed: -1.0～1.0，duration_ms: > 0）
  * - /zit6/sim/nav      — SITL 仿真导航状态（12 floats: 6 pos + 6 vel）
@@ -78,7 +78,7 @@ private:
   zit6_interfaces__msg__ZitSetpoint setpoint_msg_;
   std_msgs__msg__UInt32 arm_msg_;
   std_msgs__msg__UInt8 ins_cmd_msg_;
-  std_msgs__msg__Float32 servo_msg_;
+  zit6_interfaces__msg__ZitServo servo_msg_;
   std_msgs__msg__UInt8 led_msg_;
   std_msgs__msg__Float32MultiArray sim_nav_msg_;
   zit6_interfaces__msg__ZitPushrod pushrod_msg_;

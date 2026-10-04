@@ -124,7 +124,7 @@ FA AF 0x07 mode index pwm0 pwm1 pwm2 pwm3 thrust0 thrust1 thrust2 thrust3 FB BF
 
 ---
 
-## 5. 0x02 舵机命令
+## 5. 0x02/0x04 舵机命令
 
 对应结构体：`ServoPacket`
 
@@ -137,15 +137,18 @@ struct __attribute__((packed)) ServoPacket {
 };
 ```
 
-帧格式：
+舵机 1 使用 `0x02`，舵机 2 使用 `0x04`。帧格式：
 
 ```text
-FA AF 0x02 angle FB BF
+FA AF 0x02/0x04 angle FB BF
 ```
 
 说明：
-- `angle` 单位为弧度（rad）
-- 由 `/zit6/cmd/servo` 订阅回调调用 `setServoAngle()` 发送
+- `angle` 单位为弧度（rad），帧中按 float32 原样发送
+- `/zit6/cmd/servo` 的 `servo_id` 为 1/2，分别映射到底层命令 `0x02/0x04`
+- `/zit6/state/servo` 每秒发布 5 次，包含最近被本地 UART DMA 接受的两路目标角。
+  当前 MotionController 协议没有舵机位置回读，因此这不是物理位置测量值，
+  也不代表下位机已确认执行。
 
 ---
 
@@ -181,7 +184,8 @@ FA AF 0x03 state FB BF
 ```cpp
 void publishThrust(float fx, float fy, float fz, float fyaw, float fp = 0, float fr = 0);
 void setThrustCurve(uint8_t mode, uint8_t index, const float pwm[4], const float thrust[4]);
-void setServoAngle(float angle);
+bool setServoAngle(int32_t servo_id, float angle);
+void getServoAngles(float &servo1_angle, float &servo2_angle) const;
 void setLightState(uint8_t state);
 ```
 
@@ -196,3 +200,4 @@ void setLightState(uint8_t state);
 3. 明确当前实现没有 CRC 字段。
 4. 明确推力通道已是 6 float，而不是只有 4 float。
 5. 明确 `Fx/Fy/Fz/Fyaw/Fpitch/Froll` 在驱动内存在坐标重排与符号映射。
+6. `0x04` 已用于舵机 2，不再作为旧版 handshake 命令。

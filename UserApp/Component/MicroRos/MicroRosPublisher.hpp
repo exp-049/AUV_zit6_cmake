@@ -9,6 +9,7 @@
 #include <rcl_interfaces/msg/log.h>
 #include <std_msgs/msg/float32_multi_array.h>
 #include <std_msgs/msg/u_int32.h>
+#include <zit6_interfaces/msg/zit_servo_state.h>
 #include <zit6_interfaces/msg/zit_status.h>
 #include <zit6_interfaces/msg/zit_usbl.h>
 
@@ -23,6 +24,7 @@
  * - /zit6/state/zithbt (1Hz) — 节点心跳
  * - /zit6/state/status (10Hz) — 核心状态汇总
  * - /zit6/state/USBL (事件驱动) — USBL 有效帧
+ * - /zit6/state/servo (5Hz) — 最近被本地 UART DMA 接受的两路舵机目标角（rad）
  * - /zit6/log (事件驱动) — ROS2 日志
  */
 class MicroRosPublisher {
@@ -58,6 +60,7 @@ private:
   rcl_publisher_t zithbt_pub_{};
   rcl_publisher_t status_pub_{};
   rcl_publisher_t usbl_pub_{};
+  rcl_publisher_t servo_pub_{};
   rcl_publisher_t log_pub_{};
 
   bool pos_pub_initialized_ = false;
@@ -66,6 +69,7 @@ private:
   bool zithbt_pub_initialized_ = false;
   bool status_pub_initialized_ = false;
   bool usbl_pub_initialized_ = false;
+  bool servo_pub_initialized_ = false;
   bool log_pub_initialized_ = false;
 
   // --- 消息缓冲区（栈分配，生命周期与类绑定） ---
@@ -73,6 +77,7 @@ private:
   std_msgs__msg__UInt32 node_heartbeat_msg_;
   zit6_interfaces__msg__ZitStatus status_msg_;
   zit6_interfaces__msg__ZitUsbl usbl_msg_;
+  zit6_interfaces__msg__ZitServoState servo_state_msg_;
   rcl_interfaces__msg__Log log_msg_;
 
   // --- 原始数据缓冲区（协议为 6 元素 [X,Y,Z,Roll,Pitch,Yaw]） ---
@@ -89,6 +94,7 @@ private:
   uint32_t last_thr_pub_tick_ = 0;
   uint32_t last_pos_pub_tick_ = 0;
   uint32_t last_status_pub_tick_ = 0;
+  uint32_t last_servo_pub_tick_ = 0;
 };
 
 #endif // __MICROROS_PUBLISHER_HPP

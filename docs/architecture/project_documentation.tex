@@ -409,7 +409,8 @@ Bit 5 (0x20) & 增量模式 \\
     \item \texttt{/zit6/cmd/setpoint} — 6-DOF 控制设定点（ZitSetpoint）；Roll/Pitch 字段仅作兼容/观测载荷，始终旁路
     \item \texttt{/zit6/cmd/agxhbt} — 上位机心跳（UInt32，用于 ARM）
     \item \texttt{/zit6/cmd/ins} — 惯导指令（UInt8）
-    \item \texttt{/zit6/cmd/servo} — 舵机角度（Float32）
+    \item \texttt{/zit6/cmd/servo} — 舵机编号与角度（ZitServo）
+    \item \texttt{/zit6/state/servo} — 两路舵机目标角（ZitServoState，5 Hz）
     \item \texttt{/zit6/cmd/light} — LED 灯控（UInt8）
     \item \texttt{/zit6/sim/nav} — SITL 仿真导航（Float32MultiArray[12]）
 \end{itemize}

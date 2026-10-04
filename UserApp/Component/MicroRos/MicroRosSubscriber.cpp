@@ -39,7 +39,7 @@ bool MicroRosSubscriber::init(rcl_node_t *node, rclc_executor_t *executor) {
   std_msgs__msg__UInt32__init(&arm_msg_);
   std_msgs__msg__UInt8__init(&ins_cmd_msg_);
   std_msgs__msg__UInt8__init(&led_msg_);
-  std_msgs__msg__Float32__init(&servo_msg_);
+  zit6_interfaces__msg__ZitServo__init(&servo_msg_);
   zit6_interfaces__msg__ZitSetpoint__init(&setpoint_msg_);
   zit6_interfaces__msg__ZitPushrod__init(&pushrod_msg_);
 
@@ -70,7 +70,8 @@ bool MicroRosSubscriber::init(rcl_node_t *node, rclc_executor_t *executor) {
   led_sub_initialized_ = true;
 
   rc = rclc_subscription_init_default(
-      &servo_sub_, node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
+      &servo_sub_, node,
+      ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitServo),
       "/zit6/cmd/servo");
   if (!ok("/zit6/cmd/servo init", rc))
     return false;
@@ -308,9 +309,23 @@ void MicroRosSubscriber::onInsCommand(const void *msgin) {
 }
 
 void MicroRosSubscriber::onServoCmd(const void *msgin) {
-  const auto *msg = (const std_msgs__msg__Float32 *)msgin;
-  ctx_->motor_driver->setServoAngle(msg->data);
-  ROS_LOG_INFO("Servo Cmd: angle=%.2f", msg->data);
+  const auto *msg = static_cast<const zit6_interfaces__msg__ZitServo *>(msgin);
+  if (msg == nullptr || (msg->servo_id != 1 && msg->servo_id != 2) ||
+      !std::isfinite(msg->angle)) {
+    ROS_LOG_WARN("Servo Cmd: rejected invalid id/angle (id=%ld angle=%.3f)",
+                 msg == nullptr ? -1L : static_cast<long>(msg->servo_id),
+                 msg == nullptr ? 0.0 : static_cast<double>(msg->angle));
+    return;
+  }
+  if (ctx_ == nullptr || ctx_->motor_driver == nullptr) {
+    ROS_LOG_ERROR("Servo Cmd: motor driver unavailable");
+    return;
+  }
+
+  const bool sent = ctx_->motor_driver->setServoAngle(msg->servo_id, msg->angle);
+  ROS_LOG_INFO("Servo Cmd: id=%ld angle=%.3f rad tx=%s",
+               static_cast<long>(msg->servo_id), static_cast<double>(msg->angle),
+               sent ? "ok" : "failed");
 }
 
 void MicroRosSubscriber::onLedCmd(const void *msgin) {

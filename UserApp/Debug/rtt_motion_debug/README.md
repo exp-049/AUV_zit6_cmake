@@ -4,19 +4,8 @@
 micro-ROS、ControlTask 和 MonitorTask。RTT Down Buffer 0 接收命令，命令以
 回车或换行结束；每条非空命令都会从 RTT Up Buffer 0 返回 `RX: ... -> OK/ERR`。
 
-`H` 是大写 handshake 调试命令。ZIT 发送：
-
-```text
-FA AF 04 FB BF
-```
-
-VIT6 收到后回复：
-
-```text
-FA AF 04 01 FB BF
-```
-
-RTT 会分别打印 `TX HANDSHAKE` 和 `RX HANDSHAKE`；其中 `0x01` 表示 VIT6 已就绪。
+舵机命令需要显式指定通道：`S1 <角度>` 控制通道 1，`S2 <角度>` 控制通道 2。
+`0x04` 已分配给第二路舵机，因此 RTT 工具不再发送旧握手帧。
 
 ## RTT 主机工具
 
@@ -43,11 +32,11 @@ RTT 会分别打印 `TX HANDSHAKE` 和 `RX HANDSHAKE`；其中 `0x01` 表示 VIT
 ```text
 X0.2       # Fx：向前 20%
 X-0.2      # Fx：向后 20%
-H          # 主动发起一次 ZIT-VIT6 handshake
 R0.2       # Fy：向右 20%
 D-0.2      # Fz：向上/反向 20%，具体正方向由动力板坐标定义
 Y0.2       # Fyaw：yaw 正向 20%
-S-90       # 舵机角度 -90 度
+S1 -90     # 舵机 1 角度 -90 度
+S2 45      # 舵机 2 角度 45 度
 L2         # 灯状态 2
 STOP       # X/R/D/Y 全部清零并发送
 ```

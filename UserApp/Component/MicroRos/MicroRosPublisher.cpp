@@ -2,6 +2,7 @@
 #include "ChassisManager.hpp"
 #include "FreeRTOS.h"
 #include "MotionContext.hpp"
+#include "MotionController_Driver.hpp"
 #include "RosLogger.hpp"
 #include "SystemContext.hpp"
 #include "USBL_Driver.hpp"
@@ -17,6 +18,7 @@ bool MicroRosPublisher::init(rcl_node_t *node) {
   zithbt_pub_initialized_ = false;
   status_pub_initialized_ = false;
   usbl_pub_initialized_ = false;
+  servo_pub_initialized_ = false;
   log_pub_initialized_ = false;
 
   // 初始化零初始化消息
@@ -38,6 +40,7 @@ bool MicroRosPublisher::init(rcl_node_t *node) {
   std_msgs__msg__UInt32__init(&node_heartbeat_msg_);
   zit6_interfaces__msg__ZitStatus__init(&status_msg_);
   zit6_interfaces__msg__ZitUsbl__init(&usbl_msg_);
+  zit6_interfaces__msg__ZitServoState__init(&servo_state_msg_);
 
   rcl_interfaces__msg__Log__init(&log_msg_);
   log_msg_.msg.data = log_msg_buf_;
@@ -100,6 +103,12 @@ bool MicroRosPublisher::init(rcl_node_t *node) {
           "/zit6/state/USBL")))
     return false;
   usbl_pub_initialized_ = true;
+  if (!ok("/zit6/state/servo init", rclc_publisher_init_default(
+          &servo_pub_, node,
+          ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitServoState),
+          "/zit6/state/servo")))
+    return false;
+  servo_pub_initialized_ = true;
   if (!ok("/zit6/log init", rclc_publisher_init_default(
           &log_pub_, node,
           ROSIDL_GET_MSG_TYPE_SUPPORT(rcl_interfaces, msg, Log), "/zit6/log")))
@@ -244,6 +253,17 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
 
     rcl_publish(&status_pub_, &status_msg_, NULL);
   }
+
+  // 8. 舵机目标角状态（5Hz）。MotionController 当前不提供位置回读，
+  // 因此这里发布最近一次被本地 UART DMA 接受的命令角度。
+  if (now_ms - last_servo_pub_tick_ >= 200) {
+    last_servo_pub_tick_ = now_ms;
+    if (ctx_ != nullptr && ctx_->motor_driver != nullptr) {
+      ctx_->motor_driver->getServoAngles(servo_state_msg_.servo1_angle,
+                                         servo_state_msg_.servo2_angle);
+    }
+    (void)rcl_publish(&servo_pub_, &servo_state_msg_, NULL);
+  }
 }
 
 void MicroRosPublisher::cleanup(rcl_node_t *node) {
@@ -259,6 +279,8 @@ void MicroRosPublisher::cleanup(rcl_node_t *node) {
     rcl_publisher_fini(&status_pub_, node);
   if (usbl_pub_initialized_)
     rcl_publisher_fini(&usbl_pub_, node);
+  if (servo_pub_initialized_)
+    rcl_publisher_fini(&servo_pub_, node);
   if (log_pub_initialized_)
     rcl_publisher_fini(&log_pub_, node);
 
@@ -268,6 +290,7 @@ void MicroRosPublisher::cleanup(rcl_node_t *node) {
   zithbt_pub_initialized_ = false;
   status_pub_initialized_ = false;
   usbl_pub_initialized_ = false;
+  servo_pub_initialized_ = false;
   log_pub_initialized_ = false;
 
   // 重置节流定时器
@@ -276,4 +299,5 @@ void MicroRosPublisher::cleanup(rcl_node_t *node) {
   last_thr_pub_tick_ = 0;
   last_pos_pub_tick_ = 0;
   last_status_pub_tick_ = 0;
+  last_servo_pub_tick_ = 0;
 }

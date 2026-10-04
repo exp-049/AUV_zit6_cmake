@@ -369,3 +369,14 @@ gtest_discover_tests(test_ins_uart_recovery
     DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 10
 )
+
+add_executable(test_motion_controller_servo
+    test_motion_controller_servo.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/MotionController/src/MotionController_Driver.cpp
+)
+target_include_directories(test_motion_controller_servo PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Peripherals/MotionController/inc
+    ${STUB_DIR}
+)
+target_link_libraries(test_motion_controller_servo GTest::gtest_main)
+gtest_discover_tests(test_motion_controller_servo DISCOVERY_MODE PRE_TEST)
