@@ -75,8 +75,8 @@ AUV ZIT6 是一款基于 STM32H7 系列微控制器的自主水下航行器（Au
     \begin{itemize}
         \item USART2 — micro-ROS（DDS 协议，与上位机通信）
         \item UART6 — VIT6 下位机（推进器控制板）
-        \item UART7 — NAV-300 惯导
-        \item USART1 — USBL 超短基线定位系统
+        \item USART1（PB14/PB15，115200/8N1）— NAV-300 惯导
+        \item USART3 — USBL 超短基线定位系统
         \item I2C1/2 — MS5837 深度传感器
     \end{itemize}
     \item \textbf{传感器}：NAV-300 惯导（INS）、MS5837 压力传感器、DVL 多普勒测速仪
@@ -183,7 +183,8 @@ PWM 输出使能 & 推力 $[-1.0, 1.0]$ 映射为 $[-1000, 1000]$ \\
 
 \begin{itemize}
     \item \texttt{InsPortOps} 结构体封装 \texttt{init/read/transmit} 三个函数指针
-    \item 字节流解析，帧长 133-256 字节
+    \item 字节流解析，接收 133 字节定长帧，帧头为 \texttt{FA AF}、帧尾为 \texttt{FB BF}
+    \item 当前 XOR 结果不参与帧通过/拒收判断；帧结构满足长度、帧头和帧尾条件时交给解码器
     \item 输出 \texttt{MotionContext::NavState}（6-DOF 位姿 + 6-DOF 速度）
     \item 支持命令：DVL 开关、重启、位置重置、经纬度装订
 \end{itemize}
@@ -206,7 +207,7 @@ struct ThrustPacket {
 
 \subsection{USBL\_Driver（超短基线定位）}
 
-通过 USART1 + DMA 接收 USBL 数据：
+通过 USART3 + DMA 接收 USBL 数据：
 \begin{itemize}
     \item 帧头 \texttt{EB BE}，帧尾 \texttt{ED DE}
     \item 133 字节定长帧，异或校验
@@ -250,7 +251,7 @@ struct MotorPortOps {
 \subsection{Porting 实现}
 
 \begin{itemize}
-    \item \textbf{INS\_Porting}：UART7 DMA 实现 INS\_Driver 的 InsPortOps
+    \item \textbf{INS\_Porting}：USART1 DMA 实现 INS\_Driver 的 InsPortOps
     \item \textbf{MotionController\_Porting}：UART6 DMA 实现 MotionController\_Driver 的 MotorPortOps
     \item \textbf{Depth\_Sensor\_Porting}：统一选择并组装深度后端
     \item \textbf{Pushrod\_Porting}：自研解算板 UART4 DMA 和推杆/深度共享链路

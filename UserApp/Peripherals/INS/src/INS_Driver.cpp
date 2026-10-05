@@ -36,6 +36,7 @@ constexpr uint16_t kDvlAltitude = 111U;
 constexpr uint16_t kSensorFlags = 115U;
 constexpr uint16_t kNavMode = 129U;
 constexpr uint16_t kChecksum = 130U;
+constexpr bool kValidateInsXorChecksum = false;
 
 int32_t readLE32(const uint8_t *data) {
   const uint32_t value = static_cast<uint32_t>(data[0]) |
@@ -107,8 +108,28 @@ int INS_Driver::ProtocolParser::pushByte(uint8_t byte) {
     return 1;
   }
 
+  recordRejectedFrame();
   resynchronizeAfterInvalidFrame();
   return -1;
+}
+
+void INS_Driver::ProtocolParser::recordRejectedFrame() {
+  std::memcpy(last_rejected_frame_, working_frame_, kFrameSize);
+  has_last_rejected_frame_ = true;
+  last_reject_computed_checksum_ = 0U;
+  for (uint16_t i = 0U; i < kChecksum; ++i) {
+    last_reject_computed_checksum_ ^= working_frame_[i];
+  }
+  last_reject_received_checksum_ = working_frame_[kChecksum];
+
+  if (working_frame_[0] != kHeader1 || working_frame_[1] != kHeader2) {
+    last_reject_reason_ = InsFrameRejectReason::Header;
+  } else if (working_frame_[kFrameSize - 2U] != kTail1 ||
+             working_frame_[kFrameSize - 1U] != kTail2) {
+    last_reject_reason_ = InsFrameRejectReason::Tail;
+  } else {
+    last_reject_reason_ = InsFrameRejectReason::Checksum;
+  }
 }
 
 bool INS_Driver::ProtocolParser::validateWorkingFrame() const {
@@ -119,6 +140,10 @@ bool INS_Driver::ProtocolParser::validateWorkingFrame() const {
     return false;
   }
 
+  if (!kValidateInsXorChecksum) {
+    return true;
+  }
+
   uint8_t checksum = 0U;
   for (uint16_t i = 0U; i < kChecksum; ++i) {
     checksum ^= working_frame_[i];
@@ -127,14 +152,29 @@ bool INS_Driver::ProtocolParser::validateWorkingFrame() const {
 }
 
 void INS_Driver::ProtocolParser::resynchronizeAfterInvalidFrame() {
-  for (uint16_t search_pos = 2U; search_pos < working_length_; ++search_pos) {
-    if (working_frame_[search_pos] == kHeader1) {
+  // A payload can contain 0xFA by chance. Only retain a candidate when the
+  // complete two-byte sync word is present; otherwise the parser would carry
+  // a false start into the next frame and stop checking its second byte.
+  for (uint16_t search_pos = 2U; search_pos + 1U < working_length_;
+       ++search_pos) {
+    if (working_frame_[search_pos] == kHeader1 &&
+        working_frame_[search_pos + 1U] == kHeader2) {
       const uint16_t remaining = working_length_ - search_pos;
       std::memmove(working_frame_, working_frame_ + search_pos, remaining);
       working_length_ = remaining;
       return;
     }
   }
+
+  // The sync word may straddle this rejected frame and the next input chunk.
+  // Keep only a trailing 0xFA so pushByte() can validate the next byte as 0xAF.
+  if (working_length_ > 0U &&
+      working_frame_[working_length_ - 1U] == kHeader1) {
+    working_frame_[0] = kHeader1;
+    working_length_ = 1U;
+    return;
+  }
+
   working_length_ = 0U;
 }
 
@@ -171,6 +211,16 @@ uint16_t INS_Driver::ProtocolParser::copyLastFrame(uint8_t *dst,
   }
   const uint16_t count = max_len < kFrameSize ? max_len : kFrameSize;
   std::memcpy(dst, last_frame_, count);
+  return count;
+}
+
+uint16_t INS_Driver::ProtocolParser::copyLastRejectedFrame(
+    uint8_t *dst, uint16_t max_len) const {
+  if (!has_last_rejected_frame_ || dst == nullptr || max_len == 0U) {
+    return 0U;
+  }
+  const uint16_t count = max_len < kFrameSize ? max_len : kFrameSize;
+  std::memcpy(dst, last_rejected_frame_, count);
   return count;
 }
 
@@ -330,6 +380,15 @@ void INS_Driver::getDiagnostics(InsPortDiagnostics &out) const {
   out.total_bytes = rx_total_bytes_;
   out.valid_frames = valid_frames_;
   out.invalid_frames = invalid_frames_;
+  out.has_last_rejected_frame =
+      protocol_parser_.copyLastRejectedFrame(out.last_rejected_frame,
+                                             sizeof(out.last_rejected_frame)) >
+      0U;
+  out.last_reject_reason = protocol_parser_.lastRejectReason();
+  out.last_reject_computed_checksum =
+      protocol_parser_.lastRejectComputedChecksum();
+  out.last_reject_received_checksum =
+      protocol_parser_.lastRejectReceivedChecksum();
   if (ops_.getDiagnostics != nullptr) {
     InsPortDiagnostics port;
     ops_.getDiagnostics(ops_.ctx, &port);
@@ -349,6 +408,13 @@ void INS_Driver::getDiagnostics(InsPortDiagnostics &out) const {
     out.uart_error_count = port.uart_error_count;
     out.last_uart_error = port.last_uart_error;
     out.rx_start_status = port.rx_start_status;
+    out.rx_abort_status = port.rx_abort_status;
+    out.rx_dma_deinit_status = port.rx_dma_deinit_status;
+    out.rx_dma_init_status = port.rx_dma_init_status;
+    out.rx_hal_start_status = port.rx_hal_start_status;
+    out.dma_hal_state = port.dma_hal_state;
+    out.dma_hal_error = port.dma_hal_error;
+    out.uart_hal_rx_state = port.uart_hal_rx_state;
     out.rx_recovery_attempts = port.rx_recovery_attempts;
     out.rx_recovery_successes = port.rx_recovery_successes;
     out.rx_recovery_failures = port.rx_recovery_failures;

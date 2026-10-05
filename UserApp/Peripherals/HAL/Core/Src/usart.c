@@ -93,7 +93,7 @@ void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 256000;
+  huart1.Init.BaudRate = 115200;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -726,7 +726,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   }
   
   /* 如果是 DMA 接收模式，出错后可能需要重启接收 */
-  if (huart->Instance == UART7 || huart->Instance == USART2) {
+  if (huart->Instance == USART2) {
       // 简单重启 DMA 接收
       HAL_UART_Receive_DMA(huart, (uint8_t*)huart->pRxBuffPtr, huart->RxXferSize);
   }

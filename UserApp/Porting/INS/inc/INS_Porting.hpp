@@ -63,6 +63,7 @@ private:
   volatile uint32_t last_rx_tick_ = 0;
   volatile uint32_t read_events_ = 0;
   volatile uint32_t total_bytes_ = 0;
+  volatile bool has_rx_bytes_ = false;
   volatile uint32_t tx_calls_ = 0;
   volatile uint32_t tx_attempts_ = 0;
   volatile uint32_t tx_successes_ = 0;

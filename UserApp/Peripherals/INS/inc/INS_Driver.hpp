@@ -26,12 +26,24 @@ struct InsPortOps {
   bool (*serviceRxRecovery)(void *ctx, bool no_valid_frame_timeout);
 };
 
+enum class InsFrameRejectReason : uint8_t {
+  None = 0U,
+  Header = 1U,
+  Tail = 2U,
+  Checksum = 3U,
+};
+
 /** @brief INS UART/DMA 快照，供调试输出使用。 */
 struct InsPortDiagnostics {
   uint32_t read_events = 0;
   uint32_t total_bytes = 0;
   uint32_t valid_frames = 0;
   uint32_t invalid_frames = 0;
+  bool has_last_rejected_frame = false;
+  InsFrameRejectReason last_reject_reason = InsFrameRejectReason::None;
+  uint8_t last_reject_computed_checksum = 0U;
+  uint8_t last_reject_received_checksum = 0U;
+  uint8_t last_rejected_frame[133] = {};
   uint16_t write_pos = 0;
   uint16_t dma_remaining = 0;
   bool dma_enabled = false;
@@ -121,6 +133,16 @@ private:
     int pushByte(uint8_t byte);
     bool decode(ProtocolPacket &packet) const;
     uint16_t copyLastFrame(uint8_t *dst, uint16_t max_len) const;
+    uint16_t copyLastRejectedFrame(uint8_t *dst, uint16_t max_len) const;
+    InsFrameRejectReason lastRejectReason() const {
+      return last_reject_reason_;
+    }
+    uint8_t lastRejectComputedChecksum() const {
+      return last_reject_computed_checksum_;
+    }
+    uint8_t lastRejectReceivedChecksum() const {
+      return last_reject_received_checksum_;
+    }
 
     static uint16_t encodeCommand(uint8_t command_id, const uint8_t *data,
                                   uint8_t data_len, uint8_t *output,
@@ -130,14 +152,20 @@ private:
 
   private:
     bool validateWorkingFrame() const;
+    void recordRejectedFrame();
     void resynchronizeAfterInvalidFrame();
 
     static constexpr uint16_t kFrameSize = 133U;
     static constexpr uint16_t kMaxFrameSize = 256U;
     __attribute__((aligned(4))) uint8_t working_frame_[kMaxFrameSize] = {};
     uint8_t last_frame_[kFrameSize] = {};
+    uint8_t last_rejected_frame_[kFrameSize] = {};
     uint16_t working_length_ = 0U;
     bool has_last_frame_ = false;
+    bool has_last_rejected_frame_ = false;
+    InsFrameRejectReason last_reject_reason_ = InsFrameRejectReason::None;
+    uint8_t last_reject_computed_checksum_ = 0U;
+    uint8_t last_reject_received_checksum_ = 0U;
   };
 
   InsPortOps ops_;

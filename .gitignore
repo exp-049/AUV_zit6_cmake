@@ -56,6 +56,29 @@ UserApp/Thirdparty/micro_ros_stm32cubemx_utils/microros_static_library_ide/libra
 **/.pytest_cache/
 *.pyc
 
+# ---- 文档 LaTeX 构建产物 ----
+# 保留 docs 下的 PDF 和 TeX 源文件，只忽略编译过程中生成的辅助文件。
+docs/**/*.aux
+docs/**/*.bbl
+docs/**/*.bcf
+docs/**/*.blg
+docs/**/*.fdb_latexmk
+docs/**/*.fls
+docs/**/*.idx
+docs/**/*.ilg
+docs/**/*.ind
+docs/**/*.lof
+docs/**/*.log
+docs/**/*.lot
+docs/**/*.nav
+docs/**/*.out
+docs/**/*.run.xml
+docs/**/*.snm
+docs/**/*.synctex*
+docs/**/*.toc
+docs/**/*.vrb
+docs/**/*.xdv
+
 # ---- CubeMX 生成的可选文件 ----
 *.bak
 *~

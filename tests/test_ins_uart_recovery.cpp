@@ -113,6 +113,61 @@ TEST_F(InsUartRecoveryTest, StartsAndVerifiesCircularReceive) {
   EXPECT_EQ(diagnostics.rx_start_status, HAL_OK);
 }
 
+TEST_F(InsUartRecoveryTest, DoesNotReadConsumedBytesAgainAtZeroNdtr) {
+  ASSERT_TRUE(port.init());
+  for (uint16_t i = 0U; i < sizeof(buffer); ++i) {
+    buffer[i] = static_cast<uint8_t>(i);
+  }
+  uint8_t output[256]{};
+
+  stream.NDTR = 256U;
+  ASSERT_EQ(port.read(output, sizeof(output)), 256U);
+  stream.NDTR = 0U;
+  ASSERT_EQ(port.read(output, sizeof(output)), 256U);
+
+  // No further DMA progress after the consumer reaches ring position zero.
+  EXPECT_EQ(port.read(output, sizeof(output)), 0U);
+  stream.NDTR = sizeof(buffer); // The circular counter reloads to the same pos.
+  EXPECT_EQ(port.read(output, sizeof(output)), 0U);
+
+  auv::peripheral::InsPortDiagnostics diagnostics;
+  port.diagnostics(&diagnostics);
+  EXPECT_EQ(diagnostics.total_bytes, sizeof(buffer));
+  EXPECT_EQ(diagnostics.read_events, 2U);
+}
+
+TEST_F(InsUartRecoveryTest, ReadsInStreamOrderAcrossRingWrap) {
+  ASSERT_TRUE(port.init());
+  for (uint16_t i = 0U; i < sizeof(buffer); ++i) {
+    buffer[i] = static_cast<uint8_t>(i);
+  }
+  uint8_t output[512]{};
+  stream.NDTR = 12U; // Producer at 500; consume everything up to it.
+  ASSERT_EQ(port.read(output, sizeof(output)), 500U);
+
+  for (uint16_t i = 0U; i < 10U; ++i) {
+    buffer[i] = static_cast<uint8_t>(0xA0U + i);
+  }
+  stream.NDTR = 502U; // Producer has wrapped to position 10.
+  ASSERT_EQ(port.read(output, sizeof(output)), 22U);
+  for (uint16_t i = 0U; i < 12U; ++i) {
+    EXPECT_EQ(output[i], static_cast<uint8_t>(500U + i));
+  }
+  for (uint16_t i = 0U; i < 10U; ++i) {
+    EXPECT_EQ(output[12U + i], static_cast<uint8_t>(0xA0U + i));
+  }
+  EXPECT_EQ(port.read(output, sizeof(output)), 0U);
+}
+
+TEST_F(InsUartRecoveryTest, ReportsZeroNdtrAsRingPositionZero) {
+  ASSERT_TRUE(port.init());
+  stream.NDTR = 0U;
+  auv::peripheral::InsPortDiagnostics diagnostics;
+  port.diagnostics(&diagnostics);
+  EXPECT_EQ(diagnostics.write_pos, 0U);
+  EXPECT_EQ(diagnostics.dma_remaining, 0U);
+}
+
 TEST_F(InsUartRecoveryTest, KeepsHealthyDmaRunningDuringBriefSignalGap) {
   ASSERT_TRUE(port.init());
   EXPECT_FALSE(port.serviceRxRecovery(false));

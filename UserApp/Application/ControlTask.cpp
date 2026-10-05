@@ -156,10 +156,6 @@ void ControlTask::updateNavigation() {
   } else {
     state = ctx_->ins_driver->getNavState();
     const bool ins_frame_ready = ctx_->ins_driver->update(state);
-    if (ctx_->ins_driver->serviceRxRecovery(
-            auv::config::sys_config.system.soft_watchdog.timeout_ms)) {
-      ROS_LOG_WARN("INS UART1 RX DMA rearmed after receive fault");
-    }
     // 轮询 DMA 环形缓冲并解包最新 USBL 帧。数据暂不参与融合，供后续
     // 数据源选择/融合模块通过 AppContext::usbl_driver 读取。
     if (ctx_->usbl_driver->update(usbl_state_)) {
@@ -266,7 +262,7 @@ void ControlTask::logInsDiagnostics() {
                (unsigned long)diagnostics.valid_frames,
                (unsigned long)diagnostics.invalid_frames,
                (unsigned long)diagnostics.read_events);
-  ROS_LOG_WARN("INS UART1: pos=%u ndtr=%u dma=%d isr=0x%lx raw=%02X%02X%02X%02X",
+  ROS_LOG_WARN("INS USART1: pos=%u ndtr=%u dma=%d isr=0x%lx raw=%02X%02X%02X%02X",
                (unsigned int)diagnostics.write_pos,
                (unsigned int)diagnostics.dma_remaining,
                diagnostics.dma_enabled ? 1 : 0,
@@ -293,6 +289,48 @@ void ControlTask::logInsDiagnostics() {
       (unsigned long)diagnostics.dma_hal_state,
       (unsigned long)diagnostics.dma_hal_error,
       (unsigned long)diagnostics.uart_hal_rx_state);
+
+  if (diagnostics.has_last_rejected_frame) {
+    const char *reason = "unknown";
+    switch (diagnostics.last_reject_reason) {
+    case auv::peripheral::InsFrameRejectReason::Header:
+      reason = "header";
+      break;
+    case auv::peripheral::InsFrameRejectReason::Tail:
+      reason = "tail";
+      break;
+    case auv::peripheral::InsFrameRejectReason::Checksum:
+      reason = "checksum";
+      break;
+    case auv::peripheral::InsFrameRejectReason::None:
+    default:
+      break;
+    }
+    ROS_LOG_WARN("INS rejected frame: reason=%s xor=%02X/%02X tail=%02X%02X",
+                 reason,
+                 (unsigned int)diagnostics.last_reject_computed_checksum,
+                 (unsigned int)diagnostics.last_reject_received_checksum,
+                 (unsigned int)diagnostics.last_rejected_frame[131],
+                 (unsigned int)diagnostics.last_rejected_frame[132]);
+
+    static constexpr char kHex[] = "0123456789ABCDEF";
+    char raw_hex[81] = {};
+    for (uint16_t start = 0U; start < sizeof(diagnostics.last_rejected_frame);
+         start = static_cast<uint16_t>(start + 40U)) {
+      const uint16_t remaining = static_cast<uint16_t>(
+          sizeof(diagnostics.last_rejected_frame) - start);
+      const uint16_t count = remaining < 40U ? remaining : 40U;
+      for (uint16_t i = 0U; i < count; ++i) {
+        const uint8_t byte = diagnostics.last_rejected_frame[start + i];
+        raw_hex[i * 2U] = kHex[(byte >> 4U) & 0x0FU];
+        raw_hex[i * 2U + 1U] = kHex[byte & 0x0FU];
+      }
+      raw_hex[count * 2U] = '\0';
+      ROS_LOG_WARN("INS reject raw[%03u..%03u]=%s",
+                   (unsigned int)start,
+                   (unsigned int)(start + count - 1U), raw_hex);
+    }
+  }
 }
 
 void ControlTask::logDepthDiagnostics(int frame_ready, float z) {

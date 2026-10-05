@@ -109,6 +109,7 @@ bool INS_Porting::init() {
   rx_recovery_successes_ = 0U;
   rx_recovery_failures_ = 0U;
   rx_recovery_pending_ = false;
+  has_rx_bytes_ = false;
   consecutive_recovery_failures_ = 0U;
   has_recovery_attempted_ = false;
   for (int i = 0; i < 5; i++) {
@@ -146,11 +147,13 @@ bool INS_Porting::serviceRxRecovery(bool no_valid_frame_timeout) {
   }
 
   const bool error_pending = rx_recovery_pending_;
-  if (isReceiveActive() && !error_pending && !no_valid_frame_timeout) {
-    // A brief gap is harmless while the circular receive path remains active.
-    return false;
-  }
-  if (!error_pending && !no_valid_frame_timeout) {
+  const uint32_t now_ms = HAL_GetTick();
+  static constexpr uint32_t kNoRxProgressTimeoutMs = 1000U;
+  const bool no_rx_progress =
+      !has_rx_bytes_ || now_ms - last_rx_tick_ >= kNoRxProgressTimeoutMs;
+  if (!error_pending && (!no_valid_frame_timeout || !no_rx_progress)) {
+    // A parser timeout alone is not evidence that DMA stopped. Keep a healthy
+    // stream running; rearm only after UART error or prolonged byte silence.
     return false;
   }
 
@@ -167,7 +170,6 @@ bool INS_Porting::serviceRxRecovery(bool no_valid_frame_timeout) {
       retry_delay_ms = 5000U;
     }
   }
-  const uint32_t now_ms = HAL_GetTick();
   if (has_recovery_attempted_ &&
       now_ms - last_recovery_attempt_ms_ < retry_delay_ms) {
     return false;
@@ -200,8 +202,11 @@ uint16_t INS_Porting::read(uint8_t *buf, uint16_t max_len) {
   if (remaining > rx_buf_size_) {
     return 0;
   }
-  const uint16_t write_idx =
-      static_cast<uint16_t>(rx_buf_size_ - remaining);
+  // NDTR can briefly be zero before the circular counter reloads. Both zero
+  // and rx_buf_size_ denote ring position zero, never a separate position at
+  // rx_buf_size_ that could make consumed data appear available again.
+  const uint16_t write_idx = static_cast<uint16_t>(
+      (rx_buf_size_ - remaining) % rx_buf_size_);
   const uint16_t avail = (write_idx >= rx_read_idx_)
                              ? static_cast<uint16_t>(write_idx - rx_read_idx_)
                              : static_cast<uint16_t>(rx_buf_size_ -
@@ -217,6 +222,7 @@ uint16_t INS_Porting::read(uint8_t *buf, uint16_t max_len) {
   ++read_events_;
   total_bytes_ += to_read;
   last_rx_tick_ = HAL_GetTick();
+  has_rx_bytes_ = true;
   return to_read;
 }
 
@@ -252,6 +258,7 @@ void INS_Porting::onRxCompleted() {
   // 保留此接口供需要中断驱动的板级代码使用；当前 INS 采用 DMA 计数器
   // 轮询，避免依赖全局字节回调。
   last_rx_tick_ = HAL_GetTick();
+  has_rx_bytes_ = true;
 }
 
 void INS_Porting::diagnostics(
@@ -289,14 +296,22 @@ void INS_Porting::diagnostics(
   const uint16_t remaining = __HAL_DMA_GET_COUNTER(rx_uart_->hdmarx);
   out->dma_remaining = remaining;
   if (remaining <= rx_buf_size_) {
-    out->write_pos = static_cast<uint16_t>(rx_buf_size_ - remaining);
+    out->write_pos = static_cast<uint16_t>(
+        (rx_buf_size_ - remaining) % rx_buf_size_);
   }
   out->dma_enabled = isReceiveActive();
   out->dma_hal_state = static_cast<uint32_t>(rx_uart_->hdmarx->State);
   out->dma_hal_error = rx_uart_->hdmarx->ErrorCode;
   out->uart_hal_rx_state = static_cast<uint32_t>(rx_uart_->RxState);
   out->uart_isr = rx_uart_->Instance->ISR;
-  std::memcpy(out->rx_preview, rx_buf_, sizeof(out->rx_preview));
+  const uint16_t preview_size =
+      static_cast<uint16_t>(sizeof(out->rx_preview));
+  for (uint16_t i = 0U; i < preview_size; ++i) {
+    const uint16_t distance = static_cast<uint16_t>(preview_size - i);
+    const uint16_t index = static_cast<uint16_t>(
+        (out->write_pos + rx_buf_size_ - distance) % rx_buf_size_);
+    out->rx_preview[i] = rx_buf_[index];
+  }
 }
 
 } // namespace porting
