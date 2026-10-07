@@ -2,7 +2,6 @@
 #define __MOTION_CONTEXT_HPP
 
 // LockedField.hpp 提供 FreeRTOS.h/task.h;queue.h 提供 task.h。此处不再重复包含。
-// RosLogger.hpp 仅在 MotionContext.cpp 的 setHomeOffset 中用到，移入 .cpp。
 #include "LockedField.hpp"
 #include "MathUtils.hpp"
 #include "USBL_Driver.hpp"
@@ -42,6 +41,27 @@ struct NavState {
                                     0.0f, 0.0f}; ///< NED: [x, y, z, φ, θ, ψ]
   std::array<float, 6> vel_body = {0.0f, 0.0f, 0.0f, 0.0f,
                                    0.0f, 0.0f}; ///< FRD: [u, v, w, p, q, r]
+};
+
+struct NavSnapshot {
+  NavState raw_nav{};
+  uint32_t nav_timestamp_ms = 0;
+  bool nav_valid = false;
+  bool have_sample = false;
+};
+
+struct OdomSnapshot {
+  NavState nav_state{};
+  uint32_t nav_timestamp_ms = 0;
+  bool nav_valid = false;
+  bool origin_initialized = false;
+  uint32_t origin_generation = 0;
+};
+
+struct OriginCommit {
+  std::array<float, 6> origin_nav{};
+  uint32_t nav_timestamp_ms = 0;
+  uint32_t origin_generation = 0;
 };
 
 /**
@@ -116,8 +136,20 @@ public:
 
   LockedField<HomeOffset> home_offset_{};
 
+  // Raw input, derived odom and version are committed under ONE critical section.
+  LockedField<NavSnapshot> raw_nav_snapshot_{};
+  LockedField<OdomSnapshot> odom_snapshot_{};
+  void updateNavigationSnapshot(const NavState &raw, uint32_t sample_ms,
+                                bool valid);
+  OdomSnapshot getOdomSnapshot() const { return odom_snapshot_.get(); }
+  bool trySetOrigin(uint32_t now_ms, uint32_t max_age_ms, OriginCommit &commit);
+
   void setHomeOffset(const auv::algorithm::math::Vector6f &offset);
   void clearHomeOffset();
+
+private:
+  // Caller holds the critical section. No logging, I/O or allocation inside it.
+  void updateOdomLocked();
 };
 
 extern MotionContext motion_context;

@@ -23,6 +23,10 @@ private:
 
   /** SITL 模式下无新数据时保持的上次有效导航状态 */
   auv::motion::NavState last_sitl_state_{};
+  uint32_t last_nav_sample_ms_ = 0;
+  uint32_t last_depth_sample_ms_ = 0;
+  bool have_nav_sample_ = false;
+  bool have_depth_sample_ = false;
   auv::peripheral::UsblState usbl_state_{};
   auv::component::SensorDataMonitor ins_data_monitor_;
   auv::component::SensorDataMonitor depth_data_monitor_;

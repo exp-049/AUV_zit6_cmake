@@ -1,0 +1,8 @@
+# Empty request: capture the current valid raw navigation sample while disarmed.
+---
+bool success
+string<=64 message
+# Applied raw nav origin [x,y,z,0,0,yaw], metres and radians.
+float32[6] origin_nav
+uint32 nav_timestamp_ms
+uint32 origin_generation

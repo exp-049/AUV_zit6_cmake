@@ -5,6 +5,9 @@
 #include "MotionController_Driver.hpp"
 #include "RosLogger.hpp"
 #include "SystemConfig.hpp"
+#include "SystemContext.hpp"
+#include "MotionContext.hpp"
+#include "main.h"
 #include <cstring>
 #include <rcl/error_handling.h>
 #include <rcl/rcl.h>
@@ -25,6 +28,7 @@ bool MicroRosService::init(rcl_node_t *node, rclc_executor_t *executor) {
   instance_ = this;
   update_params_srv_initialized_ = false;
   get_params_srv_initialized_ = false;
+  set_origin_srv_initialized_ = false;
 
   // ---------- update_params 服务 ----------
   {
@@ -110,6 +114,32 @@ bool MicroRosService::init(rcl_node_t *node, rclc_executor_t *executor) {
     }
   }
 
+  // Fixed response storage: no dynamic allocation during setorigin callbacks.
+  {
+    rcl_ret_t rc = rclc_service_init_default(
+        &set_origin_srv_, node,
+        ROSIDL_GET_SRV_TYPE_SUPPORT(zit6_interfaces, srv, SetOrigin),
+        "/zit6/cmd/setorigin");
+    if (rc != RCL_RET_OK) {
+      ROS_LOG_ERROR("micro-ROS setorigin init failed, rc=%d", static_cast<int>(rc));
+      rcl_reset_error();
+      return false;
+    }
+    set_origin_srv_initialized_ = true;
+    zit6_interfaces__srv__SetOrigin_Request__init(&set_origin_req_);
+    set_origin_res_ = {};
+    set_origin_res_.message.data = set_origin_message_;
+    set_origin_res_.message.capacity = sizeof(set_origin_message_);
+    rc = rclc_executor_add_service_with_request_id(
+        executor, &set_origin_srv_, &set_origin_req_, &set_origin_res_,
+        &MicroRosService::setOriginCb);
+    if (rc != RCL_RET_OK) {
+      ROS_LOG_ERROR("micro-ROS setorigin executor failed, rc=%d", static_cast<int>(rc));
+      rcl_reset_error();
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -169,8 +199,13 @@ void MicroRosService::cleanup(rcl_node_t *node) {
     rcl_service_fini(&update_params_srv_, node);
   if (get_params_srv_initialized_)
     rcl_service_fini(&get_params_srv_, node);
+  if (set_origin_srv_initialized_)
+    rcl_service_fini(&set_origin_srv_, node);
   update_params_srv_initialized_ = false;
   get_params_srv_initialized_ = false;
+  set_origin_srv_initialized_ = false;
+  set_origin_res_ = {};
+  set_origin_message_[0] = '\0';
   if (instance_ == this)
     instance_ = nullptr;
 }
@@ -234,4 +269,46 @@ void MicroRosService::onGetParams(const void *reqin, rmw_request_id_t *req_id,
   rosidl_runtime_c__String__assign(&res->config_json, json_res);
   rosidl_runtime_c__String__assign(&res->message, "ok");
   ROS_LOG_INFO("Params queried: count=%d", (int)count);
+}
+
+void MicroRosService::onSetOrigin(const void *req, rmw_request_id_t *req_id,
+                                 void *resin) {
+  (void)req;
+  (void)req_id;
+  auto *res = static_cast<zit6_interfaces__srv__SetOrigin_Response *>(resin);
+  if (!res)
+    return;
+  auv::motion::OriginCommit commit{};
+  const char *message = "navigation invalid or stale";
+  bool success = false;
+  taskENTER_CRITICAL();
+  if (auv::system::system_context.arm_state_.unsafe().is_armed) {
+    message = "setorigin requires disarmed state";
+  } else {
+    success = auv::motion::motion_context.trySetOrigin(HAL_GetTick(), 200U, commit);
+    if (success) {
+      message = "ok";
+      // A new origin requires a NEW heartbeat qualification. Previously
+      // accumulated heartbeats cannot ARM before the host confirms this odom.
+      auv::system::system_context.resetArmingQualification();
+    }
+  }
+  taskEXIT_CRITICAL();
+  res->success = success;
+  for (size_t i = 0; i < 6; ++i)
+    res->origin_nav[i] = commit.origin_nav[i];
+  res->nav_timestamp_ms = commit.nav_timestamp_ms;
+  res->origin_generation = commit.origin_generation;
+  std::strncpy(res->message.data, message, res->message.capacity - 1);
+  res->message.data[res->message.capacity - 1] = '\0';
+  res->message.size = std::strlen(res->message.data);
+  if (success) {
+    ROS_LOG_INFO("Origin set: gen=%lu nav_ms=%lu xyz=%.2f/%.2f/%.2f yaw=%.3f",
+                 (unsigned long)commit.origin_generation,
+                 (unsigned long)commit.nav_timestamp_ms,
+                 commit.origin_nav[0], commit.origin_nav[1], commit.origin_nav[2],
+                 commit.origin_nav[5]);
+  } else {
+    ROS_LOG_WARN("Origin rejected: %s", message);
+  }
 }

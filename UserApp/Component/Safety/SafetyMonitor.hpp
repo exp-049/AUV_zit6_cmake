@@ -13,11 +13,10 @@ namespace component {
  *
  * 职责：
  * - 心跳超时检测 → 自动上锁 (Disarm)
- * - 心跳计数达标 + 导航就绪 → 自动解锁 (Arm)
+ * - 显式原点已设置 + 心跳计数/持续时间达标 + 导航就绪 → 解锁 (Arm)
  * - 状态事件日志
  *
- * 与原 ControlTask::handleArmState() 行为完全一致，
- * 只是抽离为独立模块，便于测试和职责分离。
+ * ARM/DISARM 不修改本次上电的 odom 原点。
  */
 class SafetyMonitor {
 public:
@@ -33,7 +32,7 @@ private:
   auv::system::AppContext *ctx_;
 
   // ---------- 时间常量 ----------
-  // 上位机心跳按 2Hz（500ms 周期）发送，允许漏掉一拍，避免调度抖动误上锁。
+  // BasicMotion 默认 15Hz；保持现有 1 秒超时机制（兼容 2Hz 心跳）。
   static constexpr uint32_t kArmedHeartbeatTimeoutMs = 1000;
   static constexpr uint32_t kDisarmedHeartbeatTimeoutMs = 1000;
   static constexpr uint32_t kArmMinDurationMs = 1000;
@@ -46,7 +45,7 @@ private:
   // ---------- 内部逻辑 ----------
   bool isArmingConditionsMet(uint32_t now_ms, uint32_t arm_start_ms,
                              uint32_t hbt_count) const;
-  void executeArm();
+  void executeArm(uint32_t now_ms);
   void forceDisarmWithNeutralLevel(const char *reason);
   void setControlLevelNone();
 };

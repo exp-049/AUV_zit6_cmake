@@ -57,6 +57,11 @@ public:
 
   // 校验导航数据是否有效
   bool getNavigationValid() const;
+  // setorigin requires fresh ARM qualification without altering heartbeat age/mode.
+  void resetArmingQualification();
+  // Clear only if the monitor's snapshot is still current, preserving a heartbeat
+  // that arrived after its decision was made.
+  bool resetArmingQualificationIfUnchanged(const ArmState &expected);
 };
 
 extern SystemContext system_context;

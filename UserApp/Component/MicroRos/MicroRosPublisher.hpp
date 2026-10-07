@@ -11,6 +11,7 @@
 #include <std_msgs/msg/u_int32.h>
 #include <zit6_interfaces/msg/zit_servo_state.h>
 #include <zit6_interfaces/msg/zit_status.h>
+#include <zit6_interfaces/msg/zit_odom.h>
 #include <zit6_interfaces/msg/zit_usbl.h>
 
 /**
@@ -18,6 +19,7 @@
  * @brief 高频状态发布模块
  *
  * 负责发布：
+ * - /zit6/state/odom (30Hz) — 带初始化标志及版本的原子 odom 快照
  * - /zit6/state/pos (30Hz) — 世界系位姿 [x,y,z,roll,pitch,yaw]
  * - /zit6/state/vel (50Hz) — 机体系速度 [u,v,w,p,q,r]
  * - /zit6/state/thr (30Hz) — 机体系推力/力矩 [Fx,Fy,Fz,Mroll,Mpitch,Myaw]
@@ -54,6 +56,7 @@ private:
   auv::system::AppContext *ctx_;
 
   // --- 发布器句柄 ---
+  rcl_publisher_t odom_pub_{};
   rcl_publisher_t pos_pub_{};
   rcl_publisher_t vel_pub_{};
   rcl_publisher_t thr_pub_{};
@@ -63,6 +66,7 @@ private:
   rcl_publisher_t servo_pub_{};
   rcl_publisher_t log_pub_{};
 
+  bool odom_pub_initialized_ = false;
   bool pos_pub_initialized_ = false;
   bool vel_pub_initialized_ = false;
   bool thr_pub_initialized_ = false;
@@ -76,6 +80,7 @@ private:
   std_msgs__msg__Float32MultiArray pos_fb_msg_, vel_fb_msg_, thr_fb_msg_;
   std_msgs__msg__UInt32 node_heartbeat_msg_;
   zit6_interfaces__msg__ZitStatus status_msg_;
+  zit6_interfaces__msg__ZitOdom odom_msg_{};
   zit6_interfaces__msg__ZitUsbl usbl_msg_;
   zit6_interfaces__msg__ZitServoState servo_state_msg_;
   rcl_interfaces__msg__Log log_msg_;

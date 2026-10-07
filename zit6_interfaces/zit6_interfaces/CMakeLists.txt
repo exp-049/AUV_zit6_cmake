@@ -17,8 +17,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ZitUsbl.msg"
   "msg/ZitServo.msg"
   "msg/ZitServoState.msg"
+  "msg/ZitOdom.msg"
   "srv/UpdateParams.srv"
   "srv/GetParams.srv"
+  "srv/SetOrigin.srv"
 )
 
 ament_package()

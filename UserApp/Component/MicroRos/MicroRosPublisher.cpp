@@ -12,6 +12,7 @@
 #include <rcl/rcl.h>
 
 bool MicroRosPublisher::init(rcl_node_t *node) {
+  odom_pub_initialized_ = false;
   pos_pub_initialized_ = false;
   vel_pub_initialized_ = false;
   thr_pub_initialized_ = false;
@@ -39,6 +40,7 @@ bool MicroRosPublisher::init(rcl_node_t *node) {
 
   std_msgs__msg__UInt32__init(&node_heartbeat_msg_);
   zit6_interfaces__msg__ZitStatus__init(&status_msg_);
+  zit6_interfaces__msg__ZitOdom__init(&odom_msg_);
   zit6_interfaces__msg__ZitUsbl__init(&usbl_msg_);
   zit6_interfaces__msg__ZitServoState__init(&servo_state_msg_);
 
@@ -67,6 +69,12 @@ bool MicroRosPublisher::init(rcl_node_t *node) {
     return false;
   };
 
+  if (!ok("/zit6/state/odom init", rclc_publisher_init_default(
+          &odom_pub_, node,
+          ROSIDL_GET_MSG_TYPE_SUPPORT(zit6_interfaces, msg, ZitOdom),
+          "/zit6/state/odom")))
+    return false;
+  odom_pub_initialized_ = true;
   if (!ok("/zit6/state/pos init", rclc_publisher_init_default(
           &pos_pub_, node,
           ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
@@ -206,7 +214,18 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
   // 6. 位置反馈（~30Hz）
   if (now_ms - last_pos_pub_tick_ >= 33) {
     last_pos_pub_tick_ = now_ms;
-    auto nav = auv::motion::motion_context.nav_state_.get();
+    const auto snapshot = auv::motion::motion_context.getOdomSnapshot();
+    auto nav = snapshot.nav_state;
+    for (size_t i = 0; i < 6; ++i) {
+      odom_msg_.pose_odom[i] = nav.pos_world[i];
+      odom_msg_.twist_body[i] = nav.vel_body[i];
+    }
+    odom_msg_.nav_timestamp_ms = snapshot.nav_timestamp_ms;
+    odom_msg_.nav_valid = snapshot.nav_valid &&
+        now_ms - snapshot.nav_timestamp_ms <= 200U;
+    odom_msg_.origin_initialized = snapshot.origin_initialized;
+    odom_msg_.origin_generation = snapshot.origin_generation;
+    (void)rcl_publish(&odom_pub_, &odom_msg_, NULL);
     pos_buf_[0] = nav.pos_world[0];
     pos_buf_[1] = nav.pos_world[1];
     pos_buf_[2] = nav.pos_world[2];
@@ -267,6 +286,8 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
 }
 
 void MicroRosPublisher::cleanup(rcl_node_t *node) {
+  if (odom_pub_initialized_)
+    rcl_publisher_fini(&odom_pub_, node);
   if (pos_pub_initialized_)
     rcl_publisher_fini(&pos_pub_, node);
   if (vel_pub_initialized_)
@@ -284,6 +305,7 @@ void MicroRosPublisher::cleanup(rcl_node_t *node) {
   if (log_pub_initialized_)
     rcl_publisher_fini(&log_pub_, node);
 
+  odom_pub_initialized_ = false;
   pos_pub_initialized_ = false;
   vel_pub_initialized_ = false;
   thr_pub_initialized_ = false;

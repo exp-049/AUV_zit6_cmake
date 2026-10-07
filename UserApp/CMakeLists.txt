@@ -204,52 +204,52 @@ set(MICROROS_LIBRARY
     "${CMAKE_CURRENT_SOURCE_DIR}/${MICROROS_LIBRARY_FOLDER}/libmicroros/libmicroros.a")
 set(MICROROS_GENERATOR_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/${MICROROS_LIBRARY_FOLDER}/library_generation")
-set(MICROROS_EXTRA_PACKAGES_DIR "${MICROROS_GENERATOR_DIR}/extra_packages")
+set(MICROROS_CACHE_HELPER "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/ensure_microros_library.py")
+set(MICROROS_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/Config/microros_config.meta")
+set(MICROROS_CACHE_STAMP
+    "${CMAKE_CURRENT_SOURCE_DIR}/${MICROROS_LIBRARY_FOLDER}/libmicroros/.generation-cache.json")
 set(MICROROS_EXTRA_REPOS_TEMPLATE
     "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/micro_ros_stm32cubemx_utils/microros_static_library/library_generation/extra_packages/extra_packages.repos")
 
 find_program(DOCKER_EXECUTABLE docker)
-if(NOT EXISTS "${MICROROS_LIBRARY}" AND NOT DOCKER_EXECUTABLE)
-    message(FATAL_ERROR
-        "micro-ROS library is missing and Docker was not found. "
-        "Install Docker or generate ${MICROROS_LIBRARY} manually.")
+find_program(PYTHON3_EXECUTABLE python3 REQUIRED)
+set(MICROROS_DOCKER_ARGS)
+if(DOCKER_EXECUTABLE)
+    list(APPEND MICROROS_DOCKER_ARGS --docker "${DOCKER_EXECUTABLE}")
 endif()
 
 file(GLOB_RECURSE MICRO_ROS_INTERFACE_FILES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/../zit6_interfaces/*")
+    "${CMAKE_CURRENT_SOURCE_DIR}/../zit6_interfaces/*.msg"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../zit6_interfaces/*.srv"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../zit6_interfaces/*.action"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../zit6_interfaces/CMakeLists.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../zit6_interfaces/package.xml")
+list(FILTER MICRO_ROS_INTERFACE_FILES EXCLUDE
+    REGEX "/(build|install|log|\\.git|__pycache__|\\.pytest_cache)/")
 
 add_custom_command(
-    OUTPUT "${MICROROS_LIBRARY}"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${MICROROS_EXTRA_PACKAGES_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E rm -rf "${MICROROS_EXTRA_PACKAGES_DIR}/zit6_interfaces"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/../zit6_interfaces"
-            "${MICROROS_EXTRA_PACKAGES_DIR}/zit6_interfaces"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${MICROROS_EXTRA_REPOS_TEMPLATE}"
-            "${MICROROS_EXTRA_PACKAGES_DIR}/extra_packages.repos"
-    COMMAND "${DOCKER_EXECUTABLE}" pull microros/micro_ros_static_library_builder:humble
-    COMMAND "${DOCKER_EXECUTABLE}" run --rm --network host
-            -v "${CMAKE_CURRENT_SOURCE_DIR}:/project"
-            --env MICROROS_LIBRARY_FOLDER=${MICROROS_LIBRARY_FOLDER}
-            --env http_proxy=http://127.0.0.1:7897
-            --env https_proxy=http://127.0.0.1:7897
-            --env all_proxy=socks5://127.0.0.1:7897
-            microros/micro_ros_static_library_builder:humble
+    OUTPUT "${MICROROS_LIBRARY}" "${MICROROS_CACHE_STAMP}"
+    COMMAND "${PYTHON3_EXECUTABLE}" "${MICROROS_CACHE_HELPER}"
+            --project-root "${CMAKE_CURRENT_SOURCE_DIR}/.."
+            ${MICROROS_DOCKER_ARGS}
     DEPENDS
+        "${MICROROS_CACHE_HELPER}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/merge_microros_config.py"
+        "${MICROROS_CONFIG}"
         "${MICROROS_GENERATOR_DIR}/library_generation.sh"
         "${MICROROS_GENERATOR_DIR}/colcon.meta"
         "${MICROROS_GENERATOR_DIR}/colcon-embeddedrtps.meta"
         "${MICROROS_GENERATOR_DIR}/toolchain.cmake"
+        "${MICROROS_GENERATOR_DIR}/extract_flags.py"
         "${MICROROS_EXTRA_REPOS_TEMPLATE}"
         ${MICRO_ROS_INTERFACE_FILES}
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMENT "Generating micro-ROS static library via Docker"
+    COMMENT "Checking micro-ROS fingerprints and generating only when required"
     USES_TERMINAL
     VERBATIM
 )
 
-add_custom_target(microros_build DEPENDS "${MICROROS_LIBRARY}")
+add_custom_target(microros_build DEPENDS "${MICROROS_LIBRARY}" "${MICROROS_CACHE_STAMP}")
 add_dependencies(${CMAKE_PROJECT_NAME} microros_build)
 
 # Add linked libraries

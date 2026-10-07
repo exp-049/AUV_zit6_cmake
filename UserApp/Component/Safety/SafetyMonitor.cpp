@@ -6,6 +6,7 @@
 #include "SystemContext.hpp"
 #include "ChassisManager.hpp"
 #include "task.h"
+#include "main.h"
 
 namespace auv {
 namespace component {
@@ -15,6 +16,9 @@ namespace component {
 // ============================================================================
 
 void SafetyMonitor::check(uint32_t now_ms) {
+  // Use the live tick: the monitor task can run late behind higher priority
+  // work, and a caller's captured tick may no longer describe a fresh lease.
+  now_ms = HAL_GetTick();
   // 1. 原子读取系统上下文快照
   auto a = auv::system::system_context.arm_state_.get();
 
@@ -31,33 +35,35 @@ void SafetyMonitor::check(uint32_t now_ms) {
     setControlLevelNone();
   }
 
+  // Expired heartbeats cannot trigger a new ARM even if count/duration qualify.
+  if (now_ms - a.last_heartbeat_ms > kDisarmedHeartbeatTimeoutMs) {
+    auv::system::system_context.resetArmingQualificationIfUnchanged(a);
+    return;
+  }
+
   // 分支 C：检查解锁条件是否满足
   if (isArmingConditionsMet(now_ms, a.start_ms, a.heartbeat_count)) {
-    bool sim_mode = auv::config::sys_config.simulation.hitl_enabled ||
-                    auv::config::sys_config.simulation.sitl_enabled;
-    bool nav_ok = auv::system::system_context.getNavigationValid() || sim_mode;
-    bool can_arm_flag = (a.last_heartbeat_data == kRemoteModeHeartbeatData) ||
-                        (a.last_heartbeat_data == 1 && nav_ok);
+    const bool origin_ok =
+        auv::motion::motion_context.getOdomSnapshot().origin_initialized;
+    const bool nav_ok = auv::system::system_context.getNavigationValid();
+    bool can_arm_flag = origin_ok &&
+        ((a.last_heartbeat_data == kRemoteModeHeartbeatData) ||
+         (a.last_heartbeat_data == 1 && nav_ok));
 
     if (can_arm_flag) {
-      executeArm();
+      executeArm(now_ms);
     } else {
-      if (a.last_heartbeat_data == 1 && !nav_ok) {
+      if (!origin_ok || (a.last_heartbeat_data == 1 && !nav_ok)) {
         if (now_ms - last_warn_denied_ms_ > 2000) {
           last_warn_denied_ms_ = now_ms;
-          ROS_LOG_WARN("Arm denied - Navigation NOT valid");
+          ROS_LOG_WARN("Arm denied - origin not set or navigation invalid");
         }
       }
-      a.heartbeat_count = 0;
-      auv::system::system_context.arm_state_.set(a);
+      auv::system::system_context.resetArmingQualificationIfUnchanged(a);
     }
   }
 
-  // 分支 D：长时间未收到心跳 → 清零计数
-  if (now_ms - a.last_heartbeat_ms > kDisarmedHeartbeatTimeoutMs) {
-    a.heartbeat_count = 0;
-    auv::system::system_context.arm_state_.set(a);
-  }
+
 }
 
 bool SafetyMonitor::isArmingConditionsMet(uint32_t now_ms,
@@ -71,29 +77,26 @@ bool SafetyMonitor::isArmingConditionsMet(uint32_t now_ms,
 // 执行解锁
 // ============================================================================
 
-void SafetyMonitor::executeArm() {
-  auto nav_state = auv::motion::motion_context.nav_state_.get();
-
+void SafetyMonitor::executeArm(uint32_t now_ms) {
   taskENTER_CRITICAL();
-
-  {
-    auv::algorithm::math::Vector6f home_offset;
-    home_offset << nav_state.pos_world[0], // X
-        nav_state.pos_world[1],            // Y
-        nav_state.pos_world[2],            // Z
-        0.0f,                              // Roll 强制为 0
-        0.0f,                              // Pitch 强制为 0
-        nav_state.pos_world[5];            // Yaw 正常记录
-    auv::motion::motion_context.setHomeOffset(home_offset);
+  // Revalidate the latest qualification under the SAME lock as setorigin.
+  // A service may have reset the counters after check() read its initial copy.
+  auto &a = auv::system::system_context.arm_state_.unsafe();
+  const bool mode_ok = a.last_heartbeat_data == kRemoteModeHeartbeatData ||
+      (a.last_heartbeat_data == 1 &&
+       auv::system::system_context.getNavigationValid());
+  const uint32_t current_ms = HAL_GetTick();
+  if (!auv::motion::motion_context.getOdomSnapshot().origin_initialized ||
+      !mode_ok ||
+      !isArmingConditionsMet(current_ms, a.start_ms, a.heartbeat_count) ||
+      current_ms - a.last_heartbeat_ms > kDisarmedHeartbeatTimeoutMs) {
+    taskEXIT_CRITICAL();
+    return;
   }
 
   auv::motion::motion_context.current_setpoint_.set(
       auv::motion::TargetSetpoint{});
-  {
-    auto a = auv::system::system_context.arm_state_.get();
-    a.is_armed = true;
-    auv::system::system_context.arm_state_.set(a);
-  }
+  a.is_armed = true;
 
   taskEXIT_CRITICAL();
 
@@ -105,13 +108,20 @@ void SafetyMonitor::executeArm() {
 // ============================================================================
 
 void SafetyMonitor::forceDisarmWithNeutralLevel(const char *reason) {
-  {
-    auto a = auv::system::system_context.arm_state_.get();
+  bool disarmed = false;
+  taskENTER_CRITICAL();
+  auto &a = auv::system::system_context.arm_state_.unsafe();
+  if (a.is_armed &&
+      HAL_GetTick() - a.last_heartbeat_ms > kArmedHeartbeatTimeoutMs) {
     a.is_armed = false;
     a.heartbeat_count = 0;
-    auv::system::system_context.arm_state_.set(a);
+    a.start_ms = 0;
+    disarmed = true;
   }
-  auv::motion::motion_context.clearHomeOffset();
+  taskEXIT_CRITICAL();
+  if (!disarmed)
+    return;
+  // Disarming retains this boot's origin and generation.
 
   setControlLevelNone();
 

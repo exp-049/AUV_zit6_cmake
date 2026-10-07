@@ -235,9 +235,7 @@ void MicroRosSubscriber::onSetpoint(const void *msgin) {
   uint32_t mask = msg->type_mask;
   float val[6] = {msg->x, msg->y, msg->z, msg->roll, msg->pitch, msg->yaw};
 
-  bool sim_mode = auv::config::sys_config.simulation.hitl_enabled ||
-                  auv::config::sys_config.simulation.sitl_enabled;
-  bool nav_valid = auv::system::system_context.getNavigationValid() || sim_mode;
+  bool nav_valid = auv::system::system_context.getNavigationValid();
   if ((new_level == auv::motion::ControlLevel::POSITION ||
        new_level == auv::motion::ControlLevel::VELOCITY) &&
       !nav_valid)
@@ -336,8 +334,12 @@ void MicroRosSubscriber::onLedCmd(const void *msgin) {
 
 void MicroRosSubscriber::onSimNav(const void *msgin) {
   const auto *msg = (const std_msgs__msg__Float32MultiArray *)msgin;
-  if (msg->data.size < 12)
+  if (msg->data.size < 12 ||
+      auv::motion::motion_context.sitl_nav_queue == nullptr)
     return;
+  for (size_t i = 0; i < 12; ++i)
+    if (!std::isfinite(msg->data.data[i]))
+      return;
   auv::motion::NavState state;
   for (int i = 0; i < 6; ++i) {
     state.pos_world[i] = msg->data.data[i];

@@ -9,6 +9,7 @@
 
 #include <zit6_interfaces/srv/get_params.h>
 #include <zit6_interfaces/srv/update_params.h>
+#include <zit6_interfaces/srv/set_origin.h>
 
 /**
  * @class MicroRosService
@@ -17,6 +18,7 @@
  * 提供服务：
  * - /zit6/update_params — 参数更新（JSON + 路径/值数组）
  * - /zit6/get_params    — 参数查询
+ * - /zit6/cmd/setorigin — 上锁时显式提交 nav → odom 原点
  */
 class MicroRosService {
 public:
@@ -40,14 +42,19 @@ private:
   // ---------- 服务句柄 ----------
   rcl_service_t update_params_srv_{};
   rcl_service_t get_params_srv_{};
+  rcl_service_t set_origin_srv_{};
   bool update_params_srv_initialized_ = false;
   bool get_params_srv_initialized_ = false;
+  bool set_origin_srv_initialized_ = false;
 
   // ---------- 请求/响应消息 ----------
   zit6_interfaces__srv__UpdateParams_Request update_req_{};
   zit6_interfaces__srv__UpdateParams_Response update_res_{};
   zit6_interfaces__srv__GetParams_Request get_req_{};
   zit6_interfaces__srv__GetParams_Response get_res_{};
+  zit6_interfaces__srv__SetOrigin_Request set_origin_req_{};
+  zit6_interfaces__srv__SetOrigin_Response set_origin_res_{};
+  char set_origin_message_[65] = {};
 
   auv::system::AppContext *ctx_;
 
@@ -57,6 +64,7 @@ private:
   // ---------- 回调处理函数 ----------
   void onUpdateParams(const void *req, rmw_request_id_t *req_id, void *res);
   void onGetParams(const void *req, rmw_request_id_t *req_id, void *res);
+  void onSetOrigin(const void *req, rmw_request_id_t *req_id, void *res);
 
   // ---------- 静态回调封装 ----------
   static void updateParamsCb(const void *req, rmw_request_id_t *req_id,
@@ -68,6 +76,10 @@ private:
                           void *res) {
     if (instance_)
       instance_->onGetParams(req, req_id, res);
+  }
+  static void setOriginCb(const void *req, rmw_request_id_t *req_id, void *res) {
+    if (instance_)
+      instance_->onSetOrigin(req, req_id, res);
   }
 };
 

@@ -233,6 +233,7 @@ gtest_discover_tests(test_config_service
 # ============================================================================
 
 set(CONFIG_FULL_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Common/MotionContext.cpp
     ${COMPONENT_DIR}/ConfigService/ConfigService.cpp
     ${COMPONENT_DIR}/Safety/SoftWatchdog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Common/SystemContext.cpp

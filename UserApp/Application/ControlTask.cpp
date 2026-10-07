@@ -104,6 +104,8 @@ void ControlTask::init() {
 
 void ControlTask::updateNavigation() {
   auv::motion::NavState state;
+  const uint32_t now_ms = HAL_GetTick();
+  bool nav_valid = false;
 
   bool simulated = auv::config::sys_config.simulation.sitl_enabled;
 #if AUV_SIMULATION_ENABLE
@@ -126,10 +128,13 @@ void ControlTask::updateNavigation() {
       state.pos_world[i] = p[i];
       state.vel_body[i] = v[i];
     }
+    have_nav_sample_ = true;
+    last_nav_sample_ms_ = now_ms;
+    nav_valid = true;
     {
       auto ns = auv::system::system_context.nav_status_.get();
       ns.imu_state = 4;
-      ns.timestamp = HAL_GetTick();
+      ns.timestamp = last_nav_sample_ms_;
       auv::system::system_context.nav_status_.set(ns);
     }
   } else
@@ -142,20 +147,30 @@ void ControlTask::updateNavigation() {
                            0) == pdTRUE) {
         last_sitl_state_ = state;
         got_new = true;
+        have_nav_sample_ = true;
+        last_nav_sample_ms_ = now_ms;
       }
       if (!got_new) {
         state = last_sitl_state_;
       }
     }
+    nav_valid = have_nav_sample_ && now_ms - last_nav_sample_ms_ <= 200U;
     {
       auto ns = auv::system::system_context.nav_status_.get();
-      ns.imu_state = 4;
-      ns.timestamp = HAL_GetTick();
+      ns.imu_state = nav_valid ? 4 : 0;
+      ns.timestamp = last_nav_sample_ms_;
       auv::system::system_context.nav_status_.set(ns);
     }
   } else {
     state = ctx_->ins_driver->getNavState();
     const bool ins_frame_ready = ctx_->ins_driver->update(state);
+    if (ins_frame_ready) {
+      have_nav_sample_ = true;
+      last_nav_sample_ms_ = now_ms;
+    }
+    const auto ns = auv::system::system_context.nav_status_.get();
+    nav_valid = have_nav_sample_ && (ns.imu_state == 3 || ns.imu_state == 4) &&
+                now_ms - last_nav_sample_ms_ <= 200U;
     // 轮询 DMA 环形缓冲并解包最新 USBL 帧。数据暂不参与融合，供后续
     // 数据源选择/融合模块通过 AppContext::usbl_driver 读取。
     if (ctx_->usbl_driver->update(usbl_state_)) {
@@ -179,9 +194,15 @@ void ControlTask::updateNavigation() {
     // the hardware preset determines the actual external sensor (e.g. M14).
     const int depth_frame_ready = ctx_->depth_sensor->Read();
     const float depth_z = ctx_->depth_sensor->getMS5837Z();
+    if (depth_frame_ready && std::isfinite(depth_z)) {
+      have_depth_sample_ = true;
+      last_depth_sample_ms_ = now_ms;
+    }
     if (auv::config::sys_config.system.sensors.z_data_source ==
         auv::config::ZDataSource::USE_MS5837_Z) {
       state.pos_world[2] = depth_z;
+      nav_valid = nav_valid && have_depth_sample_ &&
+                  now_ms - last_depth_sample_ms_ <= 200U;
     }
 
     const uint32_t sensor_now_ms = HAL_GetTick();
@@ -200,27 +221,10 @@ void ControlTask::updateNavigation() {
 #endif
   }
 
-  // 2. 应用解锁原点平移与旋转变换
-  auto home = auv::motion::motion_context.home_offset_.get();
-  bool use_offset = home.active;
-  const auto &offset = home.offset;
-
-  if (use_offset) {
-    float diff[6];
-    for (int i = 0; i < 6; i++)
-      diff[i] = state.pos_world[i] - offset[i];
-
-    auv::algorithm::math::applyRotationToBody(diff, state.pos_world.data(),
-                                              offset[3], offset[4], offset[5]);
-
-    for (int i = 3; i < 6; i++) {
-      state.pos_world[i] =
-          auv::motion::MotionContext::wrapAngle(state.pos_world[i]);
-    }
-  }
-
-  // 3. 写入 MotionContext
-  auv::motion::motion_context.nav_state_.set(state);
+  // The context owns raw-nav -> odom and atomically publishes its version.
+  // Reusing a cached sample never refreshes its acquisition timestamp.
+  auv::motion::motion_context.updateNavigationSnapshot(
+      state, last_nav_sample_ms_, nav_valid);
 }
 
 bool ControlTask::monitorSensorReception(uint32_t now_ms,
