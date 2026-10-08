@@ -135,8 +135,10 @@ static bool dispatchUpdate(const char *path, const char *value, bool &updated) {
       case ParamType::ENUM_Z: {
         char lower[32];
         toLowerCopy(value, lower, sizeof(lower));
-        if (strstr(lower, "ms5837"))
-          *(ZDataSource *)p.ptr = ZDataSource::USE_MS5837_Z;
+        if (strstr(lower, "fused"))
+          *(ZDataSource *)p.ptr = ZDataSource::USE_FUSED_Z;
+        else if (strstr(lower, "m14") || strstr(lower, "ms5837"))
+          *(ZDataSource *)p.ptr = ZDataSource::USE_M14_Z;
         else if (strstr(lower, "manometer") || strstr(lower, "pressure"))
           *(ZDataSource *)p.ptr = ZDataSource::USE_INS_PRESSURE_Z;
         else
@@ -252,8 +254,12 @@ const char *ConfigService::getParamsJson(const char **req_paths,
         jw.pair(p.path, (const char *)p.ptr);
         break;
       case ParamType::ENUM_Z:
-        if (*(ZDataSource *)p.ptr == ZDataSource::USE_MS5837_Z) {
-          jw.pair(p.path, "use_ms5837_z");
+        if (*(ZDataSource *)p.ptr == ZDataSource::USE_FUSED_Z) {
+          jw.pair(p.path, "use_fused_z");
+        } else if (*(ZDataSource *)p.ptr == ZDataSource::USE_M14_Z) {
+          jw.pair(p.path, strcmp(p.path, "system.z_data_sourse") == 0
+                               ? "use_ms5837_z"
+                               : "use_m14_z");
         } else if (*(ZDataSource *)p.ptr == ZDataSource::USE_INS_PRESSURE_Z) {
           jw.pair(p.path, "use_ins_pressure_z");
         } else {

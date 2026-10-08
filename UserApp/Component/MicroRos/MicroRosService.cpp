@@ -279,7 +279,7 @@ void MicroRosService::onSetOrigin(const void *req, rmw_request_id_t *req_id,
   if (!res)
     return;
   auv::motion::OriginCommit commit{};
-  const char *message = "navigation invalid or stale";
+  const char *message = "navigation or absolute depth invalid/stale";
   bool success = false;
   taskENTER_CRITICAL();
   if (auv::system::system_context.arm_state_.unsafe().is_armed) {

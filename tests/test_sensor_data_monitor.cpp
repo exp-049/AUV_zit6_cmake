@@ -31,14 +31,14 @@ TEST(SensorDataMonitorTest, LimitsRepeatedAlarmsAndReportsRecoveryOnce) {
   monitor.reset(0U);
   EXPECT_TRUE(monitor.update(3000U, false, 3000U).alarm_due);
   EXPECT_FALSE(monitor.update(3010U, false, 3000U).alarm_due);
-  EXPECT_FALSE(monitor.update(7999U, false, 3000U).alarm_due);
-  EXPECT_TRUE(monitor.update(8000U, false, 3000U).alarm_due);
-  const auto recovered = monitor.update(8100U, true, 3000U);
+  EXPECT_FALSE(monitor.update(12999U, false, 3000U).alarm_due);
+  EXPECT_TRUE(monitor.update(13000U, false, 3000U).alarm_due);
+  const auto recovered = monitor.update(13100U, true, 3000U);
   EXPECT_TRUE(recovered.recovered);
   EXPECT_FALSE(recovered.timed_out);
   EXPECT_FALSE(recovered.alarm_due);
-  EXPECT_FALSE(monitor.update(8110U, true, 3000U).recovered);
-  EXPECT_TRUE(monitor.update(11110U, false, 3000U).alarm_due);
+  EXPECT_FALSE(monitor.update(13110U, true, 3000U).recovered);
+  EXPECT_TRUE(monitor.update(16110U, false, 3000U).alarm_due);
 }
 
 TEST(SensorDataMonitorTest, ValidFramesPreventAlarmsAtTimeoutBoundary) {
@@ -80,6 +80,6 @@ TEST(SensorDataMonitorTest, HandlesMillisecondCounterWraparound) {
   const auto alarm = monitor.update(start + 3000U, false, 3000U);
   EXPECT_TRUE(alarm.alarm_due);
   EXPECT_EQ(alarm.age_ms, 3000U);
-  EXPECT_FALSE(monitor.update(start + 7999U, false, 3000U).alarm_due);
-  EXPECT_TRUE(monitor.update(start + 8000U, false, 3000U).alarm_due);
+  EXPECT_FALSE(monitor.update(start + 12999U, false, 3000U).alarm_due);
+  EXPECT_TRUE(monitor.update(start + 13000U, false, 3000U).alarm_due);
 }

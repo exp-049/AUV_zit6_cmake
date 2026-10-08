@@ -99,6 +99,9 @@ void ControlTask::init() {
   last_tick_ = HAL_GetTick();
   ins_data_monitor_.reset(last_tick_);
   depth_data_monitor_.reset(last_tick_);
+  depth_fusion_.reset();
+  have_pressure_mode_z_ = false;
+  last_pressure_alarm_ms_ = last_tick_;
   auv::system::system_context.sensor_reception_status_.set({});
 }
 
@@ -106,6 +109,7 @@ void ControlTask::updateNavigation() {
   auv::motion::NavState state;
   const uint32_t now_ms = HAL_GetTick();
   bool nav_valid = false;
+  bool z_source_valid = false;
 
   bool simulated = auv::config::sys_config.simulation.sitl_enabled;
 #if AUV_SIMULATION_ENABLE
@@ -131,6 +135,7 @@ void ControlTask::updateNavigation() {
     have_nav_sample_ = true;
     last_nav_sample_ms_ = now_ms;
     nav_valid = true;
+    z_source_valid = true;
     {
       auto ns = auv::system::system_context.nav_status_.get();
       ns.imu_state = 4;
@@ -157,6 +162,7 @@ void ControlTask::updateNavigation() {
     nav_valid = have_nav_sample_ &&
                 now_ms - last_nav_sample_ms_ <=
                     auv::motion::Constants::NAV_VALID_MAX_AGE_MS;
+    z_source_valid = nav_valid;
     {
       auto ns = auv::system::system_context.nav_status_.get();
       ns.imu_state = nav_valid ? 4 : 0;
@@ -192,24 +198,75 @@ void ControlTask::updateNavigation() {
       }
     }
 
-    // Keep polling the selected depth backend so runtime source switches can
-    // use its latest sample. Only USE_MS5837_Z overrides the INS navigation Z;
-    // the hardware preset determines the actual external sensor (e.g. M14).
+    // Keep polling the external depth backend and the INS pressure field.
     const int depth_frame_ready = ctx_->depth_sensor->Read();
     const float depth_z = ctx_->depth_sensor->getMS5837Z();
     if (depth_frame_ready && std::isfinite(depth_z)) {
       have_depth_sample_ = true;
       last_depth_sample_ms_ = now_ms;
     }
-    if (auv::config::sys_config.system.sensors.z_data_source ==
-        auv::config::ZDataSource::USE_MS5837_Z) {
-      state.pos_world[2] = depth_z;
-      nav_valid = nav_valid && have_depth_sample_ &&
-                  now_ms - last_depth_sample_ms_ <=
-                      auv::motion::Constants::NAV_VALID_MAX_AGE_MS;
-    }
-
     const uint32_t sensor_now_ms = HAL_GetTick();
+    const uint32_t configured_timeout_ms =
+        auv::config::sys_config.system.soft_watchdog.timeout_ms;
+    const uint32_t source_timeout_ms = configured_timeout_ms > 0U
+        ? configured_timeout_ms
+        : auv::motion::Constants::NAV_VALID_MAX_AGE_MS;
+    const float pressure_z = ctx_->ins_driver->getManometerZ();
+    auv::motion::DepthFusionInput fusion_input{};
+    fusion_input.now_ms = sensor_now_ms;
+    fusion_input.source_timeout_ms = source_timeout_ms;
+    fusion_input.have_ins_frame = have_nav_sample_;
+    fusion_input.ins_frame_received = ins_frame_ready;
+    fusion_input.ins_frame_ms = last_nav_sample_ms_;
+    fusion_input.ins_pressure_z = pressure_z;
+    fusion_input.have_m14_sample = have_depth_sample_;
+    fusion_input.m14_sample_ms = last_depth_sample_ms_;
+    fusion_input.m14_z = depth_z;
+    fusion_input.roll_rad = state.pos_world[3];
+    fusion_input.pitch_rad = state.pos_world[4];
+    fusion_input.u = state.vel_body[0];
+    fusion_input.v = state.vel_body[1];
+    fusion_input.w = state.vel_body[2];
+    const auto fused_depth = depth_fusion_.update(fusion_input);
+
+    switch (auv::config::sys_config.system.sensors.z_data_source) {
+    case auv::config::ZDataSource::USE_M14_Z:
+      if (fused_depth.m14_live) {
+        state.pos_world[2] = depth_z;
+      }
+      z_source_valid = fused_depth.m14_live;
+      nav_valid = nav_valid && z_source_valid;
+      break;
+    case auv::config::ZDataSource::USE_INS_PRESSURE_Z:
+      if (fused_depth.pressure_usable) {
+        state.pos_world[2] = pressure_z;
+        last_pressure_mode_z_ = pressure_z;
+        have_pressure_mode_z_ = true;
+      } else if (have_pressure_mode_z_) {
+        state.pos_world[2] = last_pressure_mode_z_;
+      }
+      z_source_valid = fused_depth.pressure_usable;
+      nav_valid = nav_valid && z_source_valid;
+      break;
+    case auv::config::ZDataSource::USE_FUSED_Z:
+      if (fused_depth.initialized) {
+        state.pos_world[2] = fused_depth.z;
+      }
+      z_source_valid = fused_depth.absolute_depth_available;
+      nav_valid = nav_valid && fused_depth.any_sensor_live &&
+                  fused_depth.initialized;
+      if (fused_depth.pressure_stale_suspect &&
+          sensor_now_ms - last_pressure_alarm_ms_ >= 10000U) {
+        last_pressure_alarm_ms_ = sensor_now_ms;
+        ROS_LOG_WARN("INS pressure depth appears stale; continuing with the "
+                     "remaining depth/velocity sources");
+      }
+      break;
+    case auv::config::ZDataSource::USE_INS_INTEGRATED_Z:
+    default:
+      z_source_valid = nav_valid && std::isfinite(state.pos_world[2]);
+      break;
+    }
     const bool depth_alarm_logged = monitorSensorReception(
         sensor_now_ms, ins_frame_ready, depth_frame_ready, depth_z);
 #if MS5837_MAIN_DIAG_ENABLE
@@ -228,7 +285,7 @@ void ControlTask::updateNavigation() {
   // The context owns raw-nav -> odom and atomically publishes its version.
   // Reusing a cached sample never refreshes its acquisition timestamp.
   auv::motion::motion_context.updateNavigationSnapshot(
-      state, last_nav_sample_ms_, nav_valid);
+      state, last_nav_sample_ms_, nav_valid, z_source_valid);
 }
 
 bool ControlTask::monitorSensorReception(uint32_t now_ms,

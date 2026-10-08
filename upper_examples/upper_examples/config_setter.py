@@ -76,10 +76,18 @@ class ConfigWidget(QWidget):
             "simulation.hitl_enabled",
             "simulation.sitl_enabled",
         }
-        self._enum_paths = {"system.z_data_sourse"}
+        self._enum_paths = {"system.depth_source", "system.z_data_sourse"}
         self._enum_allowed = {
+            "system.depth_source": {
+                "use_fused_z",
+                "use_m14_z",
+                "use_ins_integrated_z",
+                "use_ins_pressure_z",
+            },
             "system.z_data_sourse": {
                 "use_ins_integrated_z",
+                "use_fused_z",
+                "use_m14_z",
                 "use_ms5837_z",
                 "use_ins_pressure_z",
                 "use_manometer_z",
@@ -87,6 +95,7 @@ class ConfigWidget(QWidget):
         }
         self._enum_aliases = {
             "use_manometer_z": "use_ins_pressure_z",
+            "use_ms5837_z": "use_m14_z",
         }
         self._types_map = {}
         

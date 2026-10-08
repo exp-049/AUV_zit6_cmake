@@ -43,17 +43,19 @@ void SafetyMonitor::check(uint32_t now_ms) {
 
   // 分支 C：检查解锁条件是否满足
   if (isArmingConditionsMet(now_ms, a.start_ms, a.heartbeat_count)) {
+    const bool direct_thrust_mode =
+        a.last_heartbeat_data == kRemoteModeHeartbeatData;
     const bool origin_ok =
         auv::motion::motion_context.getOdomSnapshot().origin_initialized;
     const bool nav_ok = auv::system::system_context.getNavigationValid();
-    bool can_arm_flag = origin_ok &&
-        ((a.last_heartbeat_data == kRemoteModeHeartbeatData) ||
-         (a.last_heartbeat_data == 1 && nav_ok));
+    const bool navigation_arm_mode =
+        a.last_heartbeat_data == 1 && origin_ok && nav_ok;
+    const bool can_arm_flag = direct_thrust_mode || navigation_arm_mode;
 
     if (can_arm_flag) {
       executeArm(now_ms);
     } else {
-      if (!origin_ok || (a.last_heartbeat_data == 1 && !nav_ok)) {
+      if (a.last_heartbeat_data == 1 && (!origin_ok || !nav_ok)) {
         if (now_ms - last_warn_denied_ms_ > 2000) {
           last_warn_denied_ms_ = now_ms;
           ROS_LOG_WARN("Arm denied - origin not set or navigation invalid");
@@ -82,12 +84,16 @@ void SafetyMonitor::executeArm(uint32_t now_ms) {
   // Revalidate the latest qualification under the SAME lock as setorigin.
   // A service may have reset the counters after check() read its initial copy.
   auto &a = auv::system::system_context.arm_state_.unsafe();
-  const bool mode_ok = a.last_heartbeat_data == kRemoteModeHeartbeatData ||
-      (a.last_heartbeat_data == 1 &&
-       auv::system::system_context.getNavigationValid());
+  const bool direct_thrust_mode =
+      a.last_heartbeat_data == kRemoteModeHeartbeatData;
+  const bool origin_ok =
+      auv::motion::motion_context.getOdomSnapshot().origin_initialized;
+  const bool navigation_arm_mode =
+      a.last_heartbeat_data == 1 && origin_ok &&
+      auv::system::system_context.getNavigationValid();
+  const bool arm_mode_ok = direct_thrust_mode || navigation_arm_mode;
   const uint32_t current_ms = HAL_GetTick();
-  if (!auv::motion::motion_context.getOdomSnapshot().origin_initialized ||
-      !mode_ok ||
+  if (!arm_mode_ok ||
       !isArmingConditionsMet(current_ms, a.start_ms, a.heartbeat_count) ||
       current_ms - a.last_heartbeat_ms > kDisarmedHeartbeatTimeoutMs) {
     taskEXIT_CRITICAL();

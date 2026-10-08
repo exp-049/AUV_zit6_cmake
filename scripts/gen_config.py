@@ -64,6 +64,8 @@ def get_cpp_type(val, path="", type_overrides=None):
     if isinstance(val, str):
         # 特殊处理枚举
         enum_vals = {
+            "use_fused_z",
+            "use_m14_z",
             "use_ms5837_z",
             "use_ins_integrated_z",
             "use_ins_pressure_z",
@@ -204,11 +206,13 @@ def gen_system_config(json_path, out_dir):
         config_for_params["system"] = sys_params
     params = collect_params(config_for_params, type_overrides=type_overrides)
 
-    z_src = str(sys_cfg.get('z_data_sourse', 'use_ins_integrated_z'))
-    if z_src == 'use_ms5837_z':
-        z_enum = 'USE_MS5837_Z'
+    z_src = str(sys_cfg.get('depth_source', sys_cfg.get('z_data_sourse', 'use_ins_integrated_z'))).lower()
+    if z_src in ('use_m14_z', 'use_ms5837_z'):
+        z_enum = 'USE_M14_Z'
     elif z_src in ('use_ins_pressure_z', 'use_manometer_z'):
         z_enum = 'USE_INS_PRESSURE_Z'
+    elif z_src == 'use_fused_z':
+        z_enum = 'USE_FUSED_Z'
     else:
         z_enum = 'USE_INS_INTEGRATED_Z'
 
@@ -251,17 +255,25 @@ const ParamMeta SYSTEM_PARAMS[] = {{
     for p in params:
         cpp_path = p['path']
         # 修正 JSON 路径到 C++ 成员路径的映射
-        if cpp_path == "z_data_sourse" or cpp_path == "system.z_data_sourse":
+        if cpp_path in ("depth_source", "system.depth_source",
+                        "z_data_sourse", "system.z_data_sourse"):
             cpp_path = "system.sensors.z_data_source"
         # 不再需要旧的 PID 映射，因为现在是扁平化的 AxisConfig
 
         cpp_content += f'    {{"{p["path"]}", &sys_config.{cpp_path}, {p["type"]}}},\n'
+
+    # Register both spellings even when only one appears in the build config.
+    # Existing deployed config clients can keep using the misspelled key.
+    registered_paths = {p["path"] for p in params}
+    for alias in ("system.depth_source", "system.z_data_sourse"):
+        if alias not in registered_paths:
+            cpp_content += f'    {{"{alias}", &sys_config.system.sensors.z_data_source, ParamType::ENUM_Z}},\n'
     
     # 手动添加非 JSON 配置项的注册
     cpp_content += '    {"firmware.version", sys_config.firmware_version, ParamType::STRING},\n'
     cpp_content += "    {NULL, NULL, ParamType::FLOAT}\n"
     cpp_content += "};\n\n"
-    cpp_content += f"const size_t SYSTEM_PARAMS_COUNT = {len(params) + 1};\n\n"
+    cpp_content += f"const size_t SYSTEM_PARAMS_COUNT = {len(params) + 1 + sum(1 for alias in ('system.depth_source', 'system.z_data_sourse') if alias not in registered_paths)};\n\n"
     cpp_content += "} // namespace config\n"
     cpp_content += "} // namespace auv\n"
 

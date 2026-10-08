@@ -2,6 +2,7 @@
 #define __CONTROL_TASK_HPP
 
 #include "../Common/AppContext.hpp"
+#include "../Common/DepthFusion.hpp"
 #include "../Common/MotionContext.hpp"
 #include "USBL_Driver.hpp"
 #include "SensorDataMonitor.hpp"
@@ -25,8 +26,12 @@ private:
   auv::motion::NavState last_sitl_state_{};
   uint32_t last_nav_sample_ms_ = 0;
   uint32_t last_depth_sample_ms_ = 0;
+  uint32_t last_pressure_alarm_ms_ = 0;
   bool have_nav_sample_ = false;
   bool have_depth_sample_ = false;
+  bool have_pressure_mode_z_ = false;
+  float last_pressure_mode_z_ = 0.0f;
+  auv::motion::DepthFusion depth_fusion_{};
   auv::peripheral::UsblState usbl_state_{};
   auv::component::SensorDataMonitor ins_data_monitor_;
   auv::component::SensorDataMonitor depth_data_monitor_;

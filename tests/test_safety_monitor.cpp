@@ -324,11 +324,10 @@ TEST_F(SafetyMonitorTest, AllArmModesRequireOriginInCurrentBoot) {
 TEST_F(SafetyMonitorTest, StaleNavigationDeniesNormalArm) {
   auto ctx = makeContext();
   component::SafetyMonitor sm(&ctx);
-  for (int i = 1; i <= 15; ++i)
-    injectHeartbeat(auv::system::system_context, i * 50, 1);
-  setHALTick(1200);
-  setHALTick(1200);
-  sm.check(1200);
+  for (int i = 0; i < 15; ++i)
+    injectHeartbeat(auv::system::system_context, 9500 + i * 100, 1);
+  setHALTick(11000); // navigation sample is older than NAV_VALID_MAX_AGE_MS
+  sm.check(11000);
   EXPECT_FALSE(auv::system::system_context.arm_state_.get().is_armed);
 }
 
@@ -414,6 +413,20 @@ TEST(MotionOrigin, RejectsMissingInvalidStaleAndNonfiniteSamples) {
   EXPECT_FALSE(context.trySetOrigin(301, 200, commit));
   EXPECT_FALSE(context.getOdomSnapshot().origin_initialized);
   EXPECT_EQ(context.getOdomSnapshot().origin_generation, 0U);
+}
+
+TEST(MotionOrigin, RequiresOneValidAbsoluteDepthSource) {
+  motion::MotionContext context;
+  motion::OriginCommit commit;
+  motion::NavState raw{};
+
+  // Fresh INS navigation alone is insufficient when no z source is available.
+  context.updateNavigationSnapshot(raw, 100, true, false);
+  EXPECT_FALSE(context.trySetOrigin(100, 200, commit));
+
+  // A single absolute z source is enough; x/y/yaw still come from INS.
+  context.updateNavigationSnapshot(raw, 110, true, true);
+  EXPECT_TRUE(context.trySetOrigin(110, 200, commit));
 }
 
 TEST(MotionOrigin, SampleAgeHandlesMillisecondWraparound) {

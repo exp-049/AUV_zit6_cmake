@@ -39,7 +39,8 @@ void MotionContext::updateOdomLocked() {
 }
 
 void MotionContext::updateNavigationSnapshot(const NavState &raw,
-                                              uint32_t sample_ms, bool valid) {
+                                              uint32_t sample_ms, bool valid,
+                                              bool z_source_valid) {
   for (size_t i = 0; i < 6; ++i)
     valid = valid && std::isfinite(raw.pos_world[i]) &&
             std::isfinite(raw.vel_body[i]);
@@ -48,6 +49,7 @@ void MotionContext::updateNavigationSnapshot(const NavState &raw,
   snapshot.raw_nav = raw;
   snapshot.nav_timestamp_ms = sample_ms;
   snapshot.nav_valid = valid;
+  snapshot.z_source_valid = z_source_valid;
   snapshot.have_sample = snapshot.have_sample || valid;
   updateOdomLocked();
   taskEXIT_CRITICAL();
@@ -57,7 +59,7 @@ bool MotionContext::trySetOrigin(uint32_t now_ms, uint32_t max_age_ms,
                                   OriginCommit &commit) {
   taskENTER_CRITICAL();
   const auto &raw = raw_nav_snapshot_.unsafe();
-  if (!raw.have_sample || !raw.nav_valid ||
+  if (!raw.have_sample || !raw.nav_valid || !raw.z_source_valid ||
       now_ms - raw.nav_timestamp_ms > max_age_ms) {
     taskEXIT_CRITICAL();
     return false;

@@ -154,6 +154,46 @@ TEST_F(ConfigServiceFullTest, UpdateParamsBool) {
   EXPECT_TRUE(config::sys_config.simulation.sitl_enabled);
 }
 
+TEST_F(ConfigServiceFullTest, DepthSourceAcceptsCanonicalAndLegacyNames) {
+  const char *canonical_path[] = {"system.depth_source"};
+  const char *fused_value[] = {"use_fused_z"};
+  ASSERT_TRUE(component::ConfigService::updateParams(
+      nullptr, canonical_path, fused_value, 1, nullptr, 0));
+  EXPECT_EQ(config::sys_config.system.sensors.z_data_source,
+            config::ZDataSource::USE_FUSED_Z);
+
+  const char *legacy_path[] = {"system.z_data_sourse"};
+  const char *legacy_value[] = {"use_ms5837_z"};
+  ASSERT_TRUE(component::ConfigService::updateParams(
+      nullptr, legacy_path, legacy_value, 1, nullptr, 0));
+  EXPECT_EQ(config::sys_config.system.sensors.z_data_source,
+            config::ZDataSource::USE_M14_Z);
+
+  const char *m14_value[] = {"use_m14_z"};
+  ASSERT_TRUE(component::ConfigService::updateParams(
+      nullptr, canonical_path, m14_value, 1, nullptr, 0));
+  EXPECT_EQ(config::sys_config.system.sensors.z_data_source,
+            config::ZDataSource::USE_M14_Z);
+}
+
+TEST_F(ConfigServiceFullTest, DepthSourceQueryUsesCanonicalName) {
+  config::sys_config.system.sensors.z_data_source =
+      config::ZDataSource::USE_FUSED_Z;
+  const char *paths[] = {"system.depth_source"};
+  const char *json = component::ConfigService::getParamsJson(paths, 1);
+  ASSERT_NE(json, nullptr);
+  EXPECT_NE(strstr(json, "use_fused_z"), nullptr);
+}
+
+TEST_F(ConfigServiceFullTest, LegacyDepthSourceQueryKeepsLegacyValue) {
+  config::sys_config.system.sensors.z_data_source =
+      config::ZDataSource::USE_M14_Z;
+  const char *paths[] = {"system.z_data_sourse"};
+  const char *json = component::ConfigService::getParamsJson(paths, 1);
+  ASSERT_NE(json, nullptr);
+  EXPECT_NE(strstr(json, "use_ms5837_z"), nullptr);
+}
+
 // ============================================================================
 // updateParams — JSON 更新
 // ============================================================================

@@ -10,8 +10,15 @@ cmake --build --preset Release-M14Depth-GpioPushrod
 ```
 
 ELF 输出位于 `build/Release-M14Depth-GpioPushrod/UserApp/AUV_zit6.elf`。
-`config.json` 中 `system.z_data_sourse=use_ms5837_z` 使用 M14 覆写导航 Z；
-INS 选项保留 INS 的导航 Z。
+`config.json` 中 `system.depth_source=use_fused_z` 使用 INS 压力深度、M14 深度和 INS 垂向速度融合导航 Z；
+也可设置 `use_m14_z`、`use_ins_pressure_z` 或 `use_ins_integrated_z` 使用单一来源。旧键 `system.z_data_sourse` 与旧值 `use_ms5837_z` 仍兼容。
+
+融合深度以 INS 压力计为参考，只估计一个标量偏置 `b = z_INS_pressure - z_M14`，并将 M14 校正为 `z_M14 + b`。
+`b` 的低通时间常数为 30 秒，变化率限制为 0.01 m/s；如果上电时只有一路深度，先用该路连续输出，另一来源恢复后再慢速校准偏置。
+垂向速度由 INS 机体系速度和姿态转换到 NED 向下轴，用于两路绝对深度暂不可用时的预测。
+
+INS 协议没有压力样本更新标志或计数器，压力新鲜度只能估计：压力值变化至少 0.01 m 才刷新变化时间；超过 1 秒未变化时权重降至 0.25；若这段时间内垂向速度累计预测位移达到 0.1 m，则将压力标记为疑似陈旧，直到压力值再次变化。静止时的重复压力值仍可作为低权重绝对观测。
+`setorigin` 仍要求 INS 全局导航样本新鲜，并要求 M14 或 INS 压力至少一路有效；`nav_valid` 继续表示整体导航有效，消息结构不增加单独的 z 有效位。
 
 实机模式持续监测惯导和深度计的**有效帧**。INS 有效帧指 133 字节长度、`FA AF` 帧头和
 `FB BF` 帧尾均匹配；当前 XOR 结果不参与帧有效性判断。超时阈值沿用
@@ -29,7 +36,7 @@ M14 UART4 保留任务上下文恢复：UART 错误或有效帧超时会触发�
 
 失联时通过 `/zit6/log` 和 RTT 通道 0 立即输出 `ERROR`，并输出
 惯导接收/解析计数、DMA 位置/状态、UART/DMA HAL 阶段状态及深度计的原始字节等诊断信息。
-持续失联时每 5 秒重复一次；恢复有效帧后输出一次 `INFO` 恢复日志。
+持续失联时每 10 秒重复一次；恢复有效帧后输出一次 `INFO` 恢复日志。
 其中 `INS data reception recovered` 表示再次解析到帧结构有效的数据，不表示 DMA 被重启。
 Release 正常接收期间不输出每秒深度诊断，失联诊断在 Release 中仍保留。
 HITL/SITL 仿真分支不监测物理传感器。

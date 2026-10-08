@@ -28,8 +28,10 @@ struct ParamMeta {
 // 传感器枚举定义
 enum class ZDataSource {
     USE_INS_INTEGRATED_Z,
-    USE_MS5837_Z,
-    USE_INS_PRESSURE_Z
+    USE_M14_Z,
+    USE_MS5837_Z = USE_M14_Z, // Backwards-compatible enum spelling.
+    USE_INS_PRESSURE_Z,
+    USE_FUSED_Z
 };
 
 // --- 配置结构体定义 ---

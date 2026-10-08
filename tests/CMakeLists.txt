@@ -351,6 +351,10 @@ target_include_directories(test_sensor_data_monitor PRIVATE
 target_link_libraries(test_sensor_data_monitor GTest::gtest_main)
 gtest_discover_tests(test_sensor_data_monitor DISCOVERY_MODE PRE_TEST)
 
+add_executable(test_depth_fusion test_depth_fusion.cpp)
+target_link_libraries(test_depth_fusion GTest::gtest_main)
+gtest_discover_tests(test_depth_fusion DISCOVERY_MODE PRE_TEST)
+
 add_executable(test_ins_uart_recovery
     test_ins_uart_recovery.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../UserApp/Porting/INS/src/INS_Porting.cpp

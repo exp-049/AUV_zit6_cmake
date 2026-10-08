@@ -47,6 +47,7 @@ struct NavSnapshot {
   NavState raw_nav{};
   uint32_t nav_timestamp_ms = 0;
   bool nav_valid = false;
+  bool z_source_valid = false;
   bool have_sample = false;
 };
 
@@ -141,7 +142,7 @@ public:
   LockedField<NavSnapshot> raw_nav_snapshot_{};
   LockedField<OdomSnapshot> odom_snapshot_{};
   void updateNavigationSnapshot(const NavState &raw, uint32_t sample_ms,
-                                bool valid);
+                                bool valid, bool z_source_valid = true);
   OdomSnapshot getOdomSnapshot() const { return odom_snapshot_.get(); }
   bool trySetOrigin(uint32_t now_ms, uint32_t max_age_ms, OriginCommit &commit);
 

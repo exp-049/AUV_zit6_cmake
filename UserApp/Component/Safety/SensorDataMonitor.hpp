@@ -14,7 +14,7 @@ public:
     uint32_t age_ms = 0U;
   };
 
-  static constexpr uint32_t kAlarmIntervalMs = 5000U;
+  static constexpr uint32_t kAlarmIntervalMs = 10000U;
 
   void reset(uint32_t now_ms) {
     last_frame_ms_ = now_ms;
