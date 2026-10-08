@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
-import sys
 import argparse
+import sys
 import threading
 import time
 
 import rclpy
 from rclpy.node import Node
+
 from zit6_interfaces.msg import ZitSetpoint, ZitStatus
+from zit6_interfaces.srv import SetOrigin
+
+from .heartbeat import FloatingHeartbeatPanel
 from .topic_compat import DualTopicPublisher, create_priority_subscriptions
 
 SETPOINT_TOPICS = (
@@ -20,27 +23,33 @@ STATUS_TOPICS = (
     '/auv/hardware/zit6/state/status',
     '/zit6/state/status',
 )
+SET_ORIGIN_SERVICE = '/auv/hardware/zit6/cmd/setorigin'
 
 # Qt imports
 try:
     from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                                  QPushButton, QLabel, QDoubleSpinBox, QComboBox, QFrame, QGroupBox, QGridLayout, QSplitter)
-    from PyQt5.QtCore import Qt, pyqtSignal, QTimer
+    from PyQt5.QtCore import Qt, pyqtSignal
 except ImportError:
     from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                                    QPushButton, QLabel, QDoubleSpinBox, QComboBox, QFrame, QGroupBox, QGridLayout, QSplitter)
-    from PySide6.QtCore import Qt, Signal as pyqtSignal, QTimer
+    from PySide6.QtCore import Qt, Signal as pyqtSignal
 
 class MotionControlWidget(QWidget):
     """
     运动控制台组件，整合了指令单次下发与实时状态监控
     """
     status_signal = pyqtSignal(object)
+    origin_result_signal = pyqtSignal(object)
 
     def __init__(self, node):
         super().__init__()
         self.node = node
         self.seq = 0
+        self.latest_status = None
+        self.origin_request_in_flight = False
+        self.origin_client = self.node.create_client(
+            SetOrigin, SET_ORIGIN_SERVICE)
         
         # 1. 发布者
         self.pub = DualTopicPublisher(
@@ -58,6 +67,7 @@ class MotionControlWidget(QWidget):
         self.update_mask_styles()
         
         self.status_signal.connect(self.update_status_ui)
+        self.origin_result_signal.connect(self.update_origin_result_ui)
 
     def init_style(self):
         self.setStyleSheet("""
@@ -257,10 +267,40 @@ class MotionControlWidget(QWidget):
             }
         """)
         left_layout.addWidget(self.btn_publish)
+
+        # 原点只能通过 hw_manager 的代理 service 修改；MCU 会再次校验
+        # 上锁状态和导航样本新鲜度，UI 侧状态仅用于提前给出原因。
+        origin_group = QGroupBox('里程计原点')
+        origin_layout = QVBoxLayout(origin_group)
+        self.btn_set_origin = QPushButton('设置坐标原点')
+        self.btn_set_origin.setToolTip(
+            '将当前有效 nav 姿态设为 ZIT6 odom 原点；仅 MCU 上锁时可设置')
+        self.btn_set_origin.clicked.connect(self.request_set_origin)
+        self.btn_set_origin.setStyleSheet("""
+            QPushButton {
+                background-color: #6a4c93;
+                color: white;
+                font-weight: bold;
+                font-size: 13px;
+                padding: 10px;
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton:hover { background-color: #805cae; }
+            QPushButton:disabled { background-color: #424242; color: #9e9e9e; }
+        """)
+        self.lbl_origin_result = QLabel(
+            '要求 MCU 已上锁且导航有效；请求通过 hw_manager 转发')
+        self.lbl_origin_result.setWordWrap(True)
+        self.lbl_origin_result.setStyleSheet(
+            'color: #b0bec5; font-size: 11px; background: transparent;')
+        origin_layout.addWidget(self.btn_set_origin)
+        origin_layout.addWidget(self.lbl_origin_result)
+        left_layout.addWidget(origin_group)
         left_layout.addStretch()
-        
+
         splitter.addWidget(left_widget)
-        
+
         # =========================================================================
         # 右分栏：状态监测 (Status Monitoring)
         # =========================================================================
@@ -467,6 +507,7 @@ class MotionControlWidget(QWidget):
         self.status_signal.emit(msg)
 
     def update_status_ui(self, msg):
+        self.latest_status = msg
         # 1. 解锁状态
         if msg.is_armed:
             self.lbl_armed.setText("已解锁 (ARMED) 🟢")
@@ -541,6 +582,76 @@ class MotionControlWidget(QWidget):
             self.err_lbl_ct.setStyleSheet("color: #ff9800; font-weight: bold; font-size: 11px;")
         else:
             self.err_lbl_ct.setStyleSheet("color: #2e7d32; font-weight: bold; font-size: 11px;")
+
+    def request_set_origin(self):
+        """Request an MCU-owned origin reset without blocking the Qt thread."""
+        if self.origin_request_in_flight:
+            return
+        if self.latest_status is None:
+            self.lbl_origin_result.setText('设置失败：尚未收到 MCU 状态')
+            self.lbl_origin_result.setStyleSheet(
+                'color: #ff9800; font-size: 11px; background: transparent;')
+            return
+        if self.latest_status.is_armed:
+            self.lbl_origin_result.setText('设置失败：请先让 MCU 上锁')
+            self.lbl_origin_result.setStyleSheet(
+                'color: #ff9800; font-size: 11px; background: transparent;')
+            return
+        if not self.latest_status.navigation_ready:
+            self.lbl_origin_result.setText('设置失败：导航当前未就绪')
+            self.lbl_origin_result.setStyleSheet(
+                'color: #ff9800; font-size: 11px; background: transparent;')
+            return
+        if not self.origin_client.service_is_ready():
+            self.lbl_origin_result.setText(
+                f'设置失败：代理服务不可用 ({SET_ORIGIN_SERVICE})')
+            self.lbl_origin_result.setStyleSheet(
+                'color: #ff9800; font-size: 11px; background: transparent;')
+            return
+
+        self.origin_request_in_flight = True
+        self.btn_set_origin.setEnabled(False)
+        self.lbl_origin_result.setText('正在请求 MCU 设置坐标原点…')
+        self.lbl_origin_result.setStyleSheet(
+            'color: #00e5ff; font-size: 11px; background: transparent;')
+        try:
+            future = self.origin_client.call_async(SetOrigin.Request())
+        except Exception as exc:
+            self.update_origin_result_ui(
+                (False, f'服务调用异常：{exc}', [], 0))
+            return
+        future.add_done_callback(self._origin_future_done)
+
+    def _origin_future_done(self, future):
+        """Convert the ROS result on its executor thread, then signal Qt."""
+        try:
+            response = future.result()
+            result = (
+                bool(response.success), str(response.message),
+                list(response.origin_nav), int(response.origin_generation),
+            )
+        except Exception as exc:
+            result = (False, f'服务调用异常：{exc}', [], 0)
+        self.origin_result_signal.emit(result)
+
+    def update_origin_result_ui(self, result):
+        """Display the service receipt on the Qt thread."""
+        success, message, origin_nav, generation = result
+        self.origin_request_in_flight = False
+        self.btn_set_origin.setEnabled(True)
+        if success and len(origin_nav) >= 6:
+            self.lbl_origin_result.setText(
+                '设置成功 | generation={} | nav xyz=({:.3f}, {:.3f}, {:.3f}) m, '
+                'yaw={:.3f} rad'.format(
+                    generation, origin_nav[0], origin_nav[1], origin_nav[2],
+                    origin_nav[5]))
+            color = '#4caf50'
+        else:
+            self.lbl_origin_result.setText(
+                f'设置失败：{message or "MCU 未确认原点设置"}')
+            color = '#ff9800'
+        self.lbl_origin_result.setStyleSheet(
+            f'color: {color}; font-size: 11px; background: transparent;')
 
     def close(self):
         pass

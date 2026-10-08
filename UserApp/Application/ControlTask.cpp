@@ -154,7 +154,9 @@ void ControlTask::updateNavigation() {
         state = last_sitl_state_;
       }
     }
-    nav_valid = have_nav_sample_ && now_ms - last_nav_sample_ms_ <= 200U;
+    nav_valid = have_nav_sample_ &&
+                now_ms - last_nav_sample_ms_ <=
+                    auv::motion::Constants::NAV_VALID_MAX_AGE_MS;
     {
       auto ns = auv::system::system_context.nav_status_.get();
       ns.imu_state = nav_valid ? 4 : 0;
@@ -170,7 +172,8 @@ void ControlTask::updateNavigation() {
     }
     const auto ns = auv::system::system_context.nav_status_.get();
     nav_valid = have_nav_sample_ && (ns.imu_state == 3 || ns.imu_state == 4) &&
-                now_ms - last_nav_sample_ms_ <= 200U;
+                now_ms - last_nav_sample_ms_ <=
+                    auv::motion::Constants::NAV_VALID_MAX_AGE_MS;
     // 轮询 DMA 环形缓冲并解包最新 USBL 帧。数据暂不参与融合，供后续
     // 数据源选择/融合模块通过 AppContext::usbl_driver 读取。
     if (ctx_->usbl_driver->update(usbl_state_)) {
@@ -202,7 +205,8 @@ void ControlTask::updateNavigation() {
         auv::config::ZDataSource::USE_MS5837_Z) {
       state.pos_world[2] = depth_z;
       nav_valid = nav_valid && have_depth_sample_ &&
-                  now_ms - last_depth_sample_ms_ <= 200U;
+                  now_ms - last_depth_sample_ms_ <=
+                      auv::motion::Constants::NAV_VALID_MAX_AGE_MS;
     }
 
     const uint32_t sensor_now_ms = HAL_GetTick();

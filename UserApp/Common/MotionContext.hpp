@@ -107,6 +107,7 @@ struct HomeOffset {
 };
 
 struct Constants {
+  static constexpr uint32_t NAV_VALID_MAX_AGE_MS = 10000U; ///< 导航数据有效期上限 (ms)
   static constexpr float CONTROL_FREQ = 100.0f;     ///< 控制频率 (Hz)
   static constexpr uint32_t CONTROL_PERIOD_MS = 10; ///< 控制周期 (ms)
   static constexpr float DEG2RAD = 0.0174532925f;   ///< 角度转弧度

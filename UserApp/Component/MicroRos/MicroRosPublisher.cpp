@@ -222,7 +222,8 @@ void MicroRosPublisher::publish(uint32_t now_ms) {
     }
     odom_msg_.nav_timestamp_ms = snapshot.nav_timestamp_ms;
     odom_msg_.nav_valid = snapshot.nav_valid &&
-        now_ms - snapshot.nav_timestamp_ms <= 200U;
+        now_ms - snapshot.nav_timestamp_ms <=
+            auv::motion::Constants::NAV_VALID_MAX_AGE_MS;
     odom_msg_.origin_initialized = snapshot.origin_initialized;
     odom_msg_.origin_generation = snapshot.origin_generation;
     (void)rcl_publish(&odom_pub_, &odom_msg_, NULL);

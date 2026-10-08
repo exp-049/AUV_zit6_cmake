@@ -237,14 +237,19 @@ class ImageViewerWidget(QWidget):
         self._frame_counts = [0, 0]
         self._active_endpoint = None
         self._endpoint_dirty = False
-        self._record_process = None
+        self._record_processes = {}
         self._record_output_dir = None
+        self._record_output_paths = {}
         self._record_started_at = None
         self._record_streams = []
         self._record_format = "mkv"
-        self._record_log_path = None
-        self._record_log_handle = None
+        self._record_duration_seconds = 0
+        self._record_log_paths = {}
+        self._record_log_handles = {}
         self._record_stop_requested = False
+        self._record_stop_deadline = None
+        self._record_terminate_deadline = None
+        self._record_failure_reason = ""
 
         self.init_ui()
 
@@ -368,7 +373,7 @@ class ImageViewerWidget(QWidget):
         self.record_format_combo.addItem("MP4（H.264，音频有则 AAC）", "mp4")
         self.record_format_combo.setToolTip(
             "MKV 和 MP4 都保留 H.264 视频，不做二次压缩；若有音频，MP4 转为 AAC。"
-            "停止时会将首个媒体时间戳归零并重新封装。")
+            "每路画面独立保存为一个文件。")
         sidebar_layout.addWidget(self.record_format_combo)
 
         record_path_label = QLabel(
@@ -381,8 +386,7 @@ class ImageViewerWidget(QWidget):
         duration_label = QLabel("录制时长（墙上时钟秒；0 表示手动停止）")
         duration_label.setStyleSheet("color: #9aa7ad;")
         duration_label.setToolTip(
-            "计时从收到首帧后开始。输出文件保留视频源时间轴；"
-            "仿真速度低于实时速率时，文件时长会短于此设置。")
+            "计时从点击开始录制后启动 FFmpeg 时开始；0 表示一直录制到手动停止。")
         sidebar_layout.addWidget(duration_label)
         self.record_duration_spin = QSpinBox()
         self.record_duration_spin.setRange(0, 86400)
@@ -533,17 +537,18 @@ class ImageViewerWidget(QWidget):
         }
 
     def toggle_recording(self):
-        if self._record_process is not None and self._record_process.poll() is None:
+        if any(process.poll() is None
+               for process in self._record_processes.values()):
             self.stop_recording()
         else:
             self.start_recording()
 
     def start_recording(self):
-        if self._record_process is not None:
-            if self._record_process.poll() is None:
+        if self._record_processes:
+            if any(process.poll() is None
+                   for process in self._record_processes.values()):
                 return
-            self._record_process = None
-            self._close_record_log()
+            self._poll_recording()
 
         source = self._recording_source()
         if source is None:
@@ -554,11 +559,6 @@ class ImageViewerWidget(QWidget):
             return
 
         root = self._workspace_root()
-        script = root / "scripts" / "record_go2rtc.sh"
-        if not script.is_file():
-            self.record_status_label.setText(f"找不到录制脚本：{script}")
-            return
-
         output_root = root / "video_record"
         record_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_dir = output_root / record_timestamp
@@ -577,40 +577,88 @@ class ImageViewerWidget(QWidget):
         endpoint = source["endpoint"]
         record_format = self.record_format_combo.currentData()
         duration = self.record_duration_spin.value()
-        self._record_log_path = output_dir / "recorder.log"
-        environment = os.environ.copy()
-        environment.update({
-            "GORTC_HOST": endpoint["host"],
-            "GORTC_PORT": str(endpoint["port"]),
-            "GORTC_STREAMS": " ".join(streams),
-            "OUT_DIR": str(output_root),
-            "RECORD_DIR": str(output_dir),
-            "RECORD_TIMESTAMP": output_dir.name,
-            "RECORD_FORMAT": str(record_format),
-        })
-
+        log_dir = output_dir / "logs"
         try:
-            self._record_log_handle = open(
-                self._record_log_path, "w", encoding="utf-8", buffering=1)
-            self._record_process = subprocess.Popen(
-                ["bash", str(script), str(duration)],
-                cwd=str(root),
-                env=environment,
-                stdin=subprocess.DEVNULL,
-                stdout=self._record_log_handle,
-                stderr=subprocess.STDOUT,
-            )
+            log_dir.mkdir()
         except OSError as exc:
-            self._record_process = None
-            self._close_record_log()
-            self.record_status_label.setText(f"启动录制失败：{exc}")
+            self.record_status_label.setText(
+                f"无法创建录制日志目录：{log_dir}\n{exc}")
             return
 
+        ffmpeg = os.environ.get("FFMPEG", "ffmpeg")
+        processes = {}
+        log_paths = {}
+        log_handles = {}
+        output_paths = {}
+        try:
+            for stream in streams:
+                log_path = log_dir / f"ffmpeg_{stream}.log"
+                output_path = output_dir / f"{stream}.{record_format}"
+                url = (
+                    f"http://{endpoint['authority']}"
+                    f"/api/stream.mp4?src={stream}")
+                command = [
+                    ffmpeg,
+                    "-hide_banner",
+                    "-nostdin",
+                    "-y",
+                    "-loglevel", "warning",
+                    "-rw_timeout", "15000000",
+                    "-i", url,
+                    "-map", "0:v:0",
+                    "-c:v", "copy",
+                    "-map", "0:a?",
+                    "-c:a", "aac" if record_format == "mp4" else "copy",
+                ]
+                if record_format == "mp4":
+                    command.extend(["-movflags", "+faststart"])
+                command.append(str(output_path))
+
+                handle = open(
+                    log_path, "w", encoding="utf-8", buffering=1)
+                try:
+                    process = subprocess.Popen(
+                        command,
+                        cwd=str(root),
+                        stdin=subprocess.DEVNULL,
+                        stdout=handle,
+                        stderr=subprocess.STDOUT,
+                    )
+                except OSError:
+                    handle.close()
+                    raise
+                processes[stream] = process
+                log_paths[stream] = log_path
+                log_handles[stream] = handle
+                output_paths[stream] = output_path
+        except OSError as exc:
+            self._interrupt_and_wait(processes)
+            for handle in log_handles.values():
+                try:
+                    handle.close()
+                except OSError:
+                    pass
+            detail = (
+                f"启动 FFmpeg 失败：{exc}\n"
+                "请确认本机已安装 ffmpeg（或设置 FFMPEG 环境变量）。")
+            self.record_status_label.setStyleSheet(
+                "font-size: 11px; color: #ff8a80; padding: 2px;")
+            self.record_status_label.setText(f"{detail}\n输出目录：{output_dir}")
+            return
+
+        self._record_processes = processes
+        self._record_log_paths = log_paths
+        self._record_log_handles = log_handles
+        self._record_output_paths = output_paths
         self._record_output_dir = output_dir
         self._record_streams = streams
         self._record_format = record_format
         self._record_started_at = time.monotonic()
         self._record_stop_requested = False
+        self._record_stop_deadline = None
+        self._record_terminate_deadline = None
+        self._record_failure_reason = ""
+        self._record_duration_seconds = duration
         self.btn_record.setEnabled(True)
         self.btn_record.setText("停止录制")
         self.btn_record.setStyleSheet(
@@ -618,104 +666,203 @@ class ImageViewerWidget(QWidget):
         self.record_status_label.setStyleSheet(
             "font-size: 11px; color: #ffcc80; padding: 2px;")
         self.record_status_label.setText(
-            f"正在检查并录制 {len(streams)} 路 {record_format.upper()}\n"
+            f"已为 {len(streams)} 路启动 FFmpeg 直录 {record_format.upper()}\n"
             f"HTTP {endpoint['authority']}\n"
             f"来源：{' / '.join(streams)}\n"
             f"输出 {output_dir}")
 
     def stop_recording(self):
-        process = self._record_process
-        if process is None:
+        if not self._record_processes:
             return
-        if process.poll() is None:
-            try:
-                process.send_signal(signal.SIGINT)
-            except OSError:
-                try:
-                    process.terminate()
-                except OSError:
-                    pass
+        if not self._record_stop_requested:
+            for stream, process in self._record_processes.items():
+                if process.poll() is not None:
+                    self._record_failure_reason = (
+                        f"{stream} 流的 FFmpeg 提前退出 "
+                        f"（代码 {process.returncode}）")
+                    break
+        running = [process for process in self._record_processes.values()
+                   if process.poll() is None]
+        if not running:
+            return
+        if not self._record_stop_requested:
             self._record_stop_requested = True
-            self.btn_record.setEnabled(False)
-            self.record_status_label.setStyleSheet(
-                "font-size: 11px; color: #ffcc80; padding: 2px;")
-            self.record_status_label.setText(
-                f"正在停止并验证录像文件…\n目录：{self._record_output_dir}")
-            return
-        self._poll_recording()
+            self._record_stop_deadline = time.monotonic() + 10.0
+            try:
+                for process in running:
+                    process.send_signal(signal.SIGINT)
+            except OSError:
+                for process in running:
+                    try:
+                        process.terminate()
+                    except OSError:
+                        pass
+        self.btn_record.setEnabled(False)
+        self.record_status_label.setStyleSheet(
+            "font-size: 11px; color: #ffcc80; padding: 2px;")
+        self.record_status_label.setText(
+            f"正在停止并封装录像文件…\n目录：{self._record_output_dir}")
 
     def _poll_recording(self):
-        process = self._record_process
-        if process is None:
+        if not self._record_processes:
             return
-        if process.poll() is None:
+        now = time.monotonic()
+        if not self._record_stop_requested:
+            for stream, process in self._record_processes.items():
+                return_code = process.poll()
+                if return_code is not None:
+                    self._record_failure_reason = (
+                        f"{stream} 流的 FFmpeg 提前退出（代码 {return_code}）")
+                    self.stop_recording()
+                    break
+            duration = getattr(self, "_record_duration_seconds", 0)
+            if (not self._record_stop_requested and duration > 0
+                    and self._record_started_at is not None
+                    and now - self._record_started_at >= duration):
+                self.stop_recording()
+
+        running = [(stream, process)
+                   for stream, process in self._record_processes.items()
+                   if process.poll() is None]
+        if running:
+            if (self._record_stop_deadline is not None
+                    and now >= self._record_stop_deadline):
+                if not self._record_failure_reason:
+                    self._record_failure_reason = (
+                        "FFmpeg 未能及时完成封装，已请求强制结束")
+                for _stream, process in running:
+                    try:
+                        process.terminate()
+                    except OSError:
+                        pass
+                self._record_stop_deadline = None
+                self._record_terminate_deadline = now + 3.0
+            elif (self._record_terminate_deadline is not None
+                  and now >= self._record_terminate_deadline):
+                for _stream, process in running:
+                    try:
+                        process.kill()
+                    except OSError:
+                        pass
+                self._record_terminate_deadline = None
+            elapsed = int(now - (self._record_started_at or now))
             if self._record_stop_requested:
-                self.record_status_label.setText(
-                    f"正在停止并验证录像文件…\n目录：{self._record_output_dir}")
-                return
-            elapsed = int(time.monotonic() - (
-                self._record_started_at or time.monotonic()))
-            log_lines = []
-            if self._record_log_path is not None:
-                try:
-                    log_lines = self._record_log_path.read_text(
-                        encoding="utf-8", errors="replace").splitlines()
-                except OSError:
-                    pass
-            ready = sum(line.startswith("已收到画面：") for line in log_lines)
-            phase = ("录制中" if ready >= len(self._record_streams)
-                     else f"等待视频流 ({ready}/{len(self._record_streams)})")
-            errors = [line for line in log_lines
-                      if line.startswith("错误：") or line.startswith("不可用：")]
-            detail = f"\n{errors[-1]}" if errors else ""
+                phase = "正在停止并封装"
+            else:
+                phase = "录制中"
             self.record_status_label.setText(
                 f"{phase}：{len(self._record_streams)} 路 "
                 f"{self._record_format.upper()} ({elapsed}s)\n"
                 f"来源：{' / '.join(self._record_streams)}\n"
-                f"输出 {self._record_output_dir}{detail}")
+                f"输出 {self._record_output_dir}")
             return
 
-        return_code = process.returncode
-        self._record_process = None
+        return_codes = {
+            stream: process.returncode
+            for stream, process in self._record_processes.items()
+        }
+        self._close_record_logs()
+        missing = [
+            stream for stream, path in self._record_output_paths.items()
+            if not path.is_file() or path.stat().st_size == 0
+        ]
+        if missing and not self._record_failure_reason:
+            self._record_failure_reason = (
+                f"没有生成有效录像文件：{'、'.join(missing)}")
+        failed = bool(self._record_failure_reason)
+        output_dir = self._record_output_dir
+        log_paths = dict(self._record_log_paths)
+        failure_reason = self._record_failure_reason
+        output_names = [path.name for path in self._record_output_paths.values()
+                        if path.is_file() and path.stat().st_size > 0]
+        self._record_processes = {}
+        self._record_log_handles = {}
         self._record_started_at = None
         self._record_stop_requested = False
-        self._close_record_log()
+        self._record_stop_deadline = None
+        self._record_terminate_deadline = None
+        self._record_failure_reason = ""
         self.btn_record.setEnabled(True)
         self.btn_record.setText("开始录制")
         self.btn_record.setStyleSheet(
             "background-color: #455a64; color: white; padding: 7px;")
-        if return_code == 0:
+        if not failed:
             self.record_status_label.setStyleSheet(
                 "font-size: 11px; color: #81c784; padding: 2px;")
             self.record_status_label.setText(
-                f"录制已完成\n文件目录：{self._record_output_dir}")
+                f"录制已完成：{' / '.join(output_names)}\n"
+                f"文件目录：{output_dir}")
         else:
-            details = self._record_log_tail()
+            details = []
+            for stream, return_code in return_codes.items():
+                log_path = log_paths.get(stream)
+                tail = self._record_log_tail(log_path, limit=4)
+                details.append(
+                    f"{stream}: FFmpeg 退出码 {return_code}；日志 {log_path}"
+                    + (f"\n{tail}" if tail else ""))
+            detail_text = "\n".join(details)
             self.record_status_label.setStyleSheet(
                 "font-size: 11px; color: #ff8a80; padding: 2px;")
             self.record_status_label.setText(
-                f"录制进程已退出（代码 {return_code}）\n{details}\n"
-                f"日志：{self._record_log_path}")
+                f"录制失败：{failure_reason}\n"
+                f"{detail_text}\n输出目录：{output_dir}")
 
-    def _close_record_log(self):
-        handle = self._record_log_handle
-        self._record_log_handle = None
-        if handle is not None:
+    def _close_record_logs(self):
+        for handle in self._record_log_handles.values():
             try:
                 handle.flush()
                 handle.close()
             except OSError:
                 pass
+        self._record_log_handles = {}
 
-    def _record_log_tail(self, limit=16):
-        if self._record_log_path is None:
+    @staticmethod
+    def _record_log_tail(path, limit=8):
+        if path is None:
             return ""
         try:
-            lines = self._record_log_path.read_text(
+            lines = path.read_text(
                 encoding="utf-8", errors="replace").splitlines()
         except OSError:
-            return "无法读取录制日志"
+            return "无法读取 FFmpeg 日志"
         return "\n".join(lines[-limit:])
+
+    @staticmethod
+    def _interrupt_and_wait(processes, timeout=8.0):
+        running = [process for process in processes.values()
+                   if process.poll() is None]
+        for process in running:
+            try:
+                process.send_signal(signal.SIGINT)
+            except OSError:
+                pass
+        deadline = time.monotonic() + timeout
+        while any(process.poll() is None for process in running):
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+        running = [process for process in running if process.poll() is None]
+        for process in running:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+        deadline = time.monotonic() + 2.0
+        while any(process.poll() is None for process in running):
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+        for process in running:
+            if process.poll() is None:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+        for process in running:
+            try:
+                process.wait(timeout=1.0)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
 
     @staticmethod
     def _stream_item_text(stream):
@@ -1013,7 +1160,10 @@ class ImageViewerWidget(QWidget):
 
     def close(self):
         self.record_timer.stop()
-        self.stop_recording()
+        if self._record_processes:
+            self._interrupt_and_wait(self._record_processes)
+            self._close_record_logs()
+            self._record_processes = {}
         self._stop_stream()
 
 

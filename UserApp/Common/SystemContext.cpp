@@ -11,7 +11,9 @@ SystemContext system_context{};
 
 bool SystemContext::getNavigationValid() const {
   const auto odom = auv::motion::motion_context.getOdomSnapshot();
-  return odom.nav_valid && HAL_GetTick() - odom.nav_timestamp_ms <= 200U;
+  return odom.nav_valid &&
+         HAL_GetTick() - odom.nav_timestamp_ms <=
+             auv::motion::Constants::NAV_VALID_MAX_AGE_MS;
 }
 
 void SystemContext::resetArmingQualification() {
