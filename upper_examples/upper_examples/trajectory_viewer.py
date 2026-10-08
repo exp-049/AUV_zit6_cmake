@@ -516,7 +516,13 @@ class TrajectoryViewerWidget(QWidget):
         msg, _topic = update
         self.armed_label.setText("已解锁 🟢" if msg.is_armed else "已锁定 🔴")
         self.nav_label.setText("就绪 🟢" if msg.navigation_ready else "未就绪 🔴")
-        levels = {0: "NONE", 1: "POSITION", 2: "VELOCITY", 3: "FORCE"}
+        levels = {
+            0: "NONE",
+            1: "POSITION",
+            2: "VELOCITY",
+            3: "FORCE",
+            4: "MIXED",
+        }
         self.control_label.setText(levels.get(msg.control_level, str(msg.control_level)))
 
     def _set_paused(self, paused):

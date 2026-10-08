@@ -141,7 +141,7 @@ ros2 topic pub -r 2 /zit6/cmd/agxhbt std_msgs/msg/UInt32 '{data: 3}'
 
 ```text
 control_key: 模式 + 标志位
-type_mask: skip mask，bit=1 表示跳过该轴；bit0..2/5 对应 X/Y/Z/Yaw，Roll/Pitch 始终旁路
+type_mask: skip mask，bit=1 表示该轴的目标和控制模式都不变；bit0..2/5 对应 X/Y/Z/Yaw，Roll/Pitch 始终旁路
 x y z roll pitch yaw: 6-DOF payload（Roll/Pitch 为兼容字段，不参与控制）
 seq: 序列号
 ```
@@ -166,7 +166,18 @@ ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{contr
 - `17 = 0x10 | 0x01`：BODY + VELOCITY
 - `type_mask = 62`：跳过 Y/Z/Yaw，只更新 X；Roll/Pitch 即使不置 mask 也始终旁路
 
-##### 5.3 机体系位置增量：向前增量移动 0.5 m
+##### 5.3 位置保持，同时只给 Yaw 角速度
+
+若要让 X/Y/Z 继续保持位置模式，同时让 Yaw 定角速度，先下发位置目标，再下发机体系速度指令：
+
+```bash
+ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{control_key: 17, type_mask: 31, x: 0.0, y: 0.0, z: 0.0, roll: 0.0, pitch: 0.0, yaw: 0.2, seq: 3}'
+```
+
+`type_mask = 31` 跳过 X/Y/Z/Roll/Pitch，只更新 Yaw；`yaw` 是机体系角速度，单位 rad/s。被跳过轴保留原模式和目标。
+若位置目标周期发送，位置消息也要屏蔽 Yaw（bit 5 置 1），避免它把 Yaw 模式切回 POSITION。
+
+##### 5.4 机体系位置增量：向前增量移动 0.5 m
 
 ```bash
 ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{control_key: 48, type_mask: 62, x: 0.5, y: 0.0, z: 0.0, roll: 0.0, pitch: 0.0, yaw: 0.0, seq: 3}'
@@ -176,7 +187,7 @@ ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{contr
 - `48 = 0x10 | 0x20`：BODY + INCREMENT + POSITION
 - 当前代码中 body 增量位置会先旋转到世界系后再叠加
 
-##### 5.4 直接推力控制：只控制 Fx
+##### 5.5 直接推力控制：只控制 Fx
 
 ```bash
 ros2 topic pub --once /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{control_key: 18, type_mask: 62, x: 0.1, y: 0.0, z: 0.0, roll: 0.0, pitch: 0.0, yaw: 0.0, seq: 4}'

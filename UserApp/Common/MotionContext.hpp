@@ -23,8 +23,11 @@ enum class ControlLevel : uint8_t {
   NONE = 0,     ///< 待机/锁定模式
   POSITION = 1, ///< 位置闭环
   VELOCITY = 2, ///< 速度闭环
-  ACTUATOR = 3  ///< 直接推力控制
+  ACTUATOR = 3, ///< 直接推力控制
+  MIXED = 4     ///< 各控制轴处于不同层级（仅用于整体状态报告）
 };
+
+using AxisControlLevels = std::array<ControlLevel, 6>;
 
 /**
  * @struct NavState

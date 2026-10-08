@@ -44,6 +44,20 @@ protected:
     auv::motion::motion_context.nav_state_.set(ns);
   }
 
+  motion::ControlLevel route(motion::ControlLevel /*current_level*/,
+                             motion::ControlLevel new_level,
+                             const float val[6], uint32_t mask, bool is_body,
+                             bool is_inc) {
+    axis_levels_ = router_.route(axis_levels_, new_level, val, mask, is_body,
+                                 is_inc);
+    for (int i = 1; i < 6; ++i) {
+      if (axis_levels_[i] != axis_levels_[0])
+        return motion::ControlLevel::MIXED;
+    }
+    return axis_levels_[0];
+  }
+
+  motion::AxisControlLevels axis_levels_{};
   component::SetpointRouter router_;
 };
 
@@ -53,7 +67,7 @@ protected:
 
 TEST_F(SetpointRouterTest, PositionWorldAbsolute) {
   float val[6] = {5.0f, 3.0f, -2.0f, 0.2f, -0.3f, 1.57f};
-  auto lv = router_.route(
+  auto lv = route(
       motion::ControlLevel::NONE, motion::ControlLevel::POSITION,
       val, 0, false, false);
 
@@ -76,7 +90,7 @@ TEST_F(SetpointRouterTest, PositionBodyToWorld) {
   setNavPos(0, 0, 0, 0, 0, M_PI_2);
 
   float val[6] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};  // 机体向前 1m
-  router_.route(
+  route(
       motion::ControlLevel::NONE, motion::ControlLevel::POSITION,
       val, 0, true, false);
 
@@ -95,12 +109,12 @@ TEST_F(SetpointRouterTest, PositionIncrementalBody) {
 
   // 先设初始 setpoint
   float init[6] = {10.0f, 20.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-  router_.route(motion::ControlLevel::NONE, motion::ControlLevel::POSITION,
+  route(motion::ControlLevel::NONE, motion::ControlLevel::POSITION,
                 init, 0, false, false);
 
   // 机体向前 1m → 旋转到世界系（朝东时 body_x → world_y）
   float val[6] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-  router_.route(motion::ControlLevel::POSITION, motion::ControlLevel::POSITION,
+  route(motion::ControlLevel::POSITION, motion::ControlLevel::POSITION,
                 val, 0, true, true);  // is_body=true, is_inc=true
 
   auto sp = auv::motion::motion_context.current_setpoint_.get();
@@ -117,12 +131,12 @@ TEST_F(SetpointRouterTest, MaskSkipsAxes) {
   float val[6] = {5.0f, 3.0f, -2.0f, 0.2f, -0.3f, 1.57f};
 
   // 先设一个初始值
-  router_.route(motion::ControlLevel::NONE, motion::ControlLevel::POSITION,
+  route(motion::ControlLevel::NONE, motion::ControlLevel::POSITION,
                 val, 0, false, false);
 
   // mask = 0b0001 = bit0 → 跳过 X 轴
   float val2[6] = {99.0f, 6.0f, -3.0f, 0.8f, -0.9f, 0.5f};
-  router_.route(motion::ControlLevel::POSITION, motion::ControlLevel::POSITION,
+  route(motion::ControlLevel::POSITION, motion::ControlLevel::POSITION,
                 val2, 0b0001, false, false);
 
   auto sp = auv::motion::motion_context.current_setpoint_.get();
@@ -135,12 +149,12 @@ TEST_F(SetpointRouterTest, MaskSkipsAxes) {
 
 TEST_F(SetpointRouterTest, MaskSkipsAllAttitudeAxes) {
   float initial[6] = {1.0f, 2.0f, 3.0f, 0.1f, 0.2f, 0.3f};
-  router_.route(motion::ControlLevel::NONE, motion::ControlLevel::POSITION,
+  route(motion::ControlLevel::NONE, motion::ControlLevel::POSITION,
                 initial, 0, false, false);
 
   // bit3..5 跳过 Roll/Pitch/Yaw，只更新位置三轴。
   float next[6] = {9.0f, 8.0f, 7.0f, 1.1f, 1.2f, 1.3f};
-  router_.route(motion::ControlLevel::POSITION, motion::ControlLevel::POSITION,
+  route(motion::ControlLevel::POSITION, motion::ControlLevel::POSITION,
                 next, 0b111000, false, false);
 
   auto sp = auv::motion::motion_context.current_setpoint_.get();
@@ -158,7 +172,7 @@ TEST_F(SetpointRouterTest, MaskSkipsAllAttitudeAxes) {
 
 TEST_F(SetpointRouterTest, VelocityBodyFrame) {
   float val[6] = {0.5f, 0.0f, 0.0f, 0.2f, -0.3f, 0.1f};
-  router_.route(
+  route(
       motion::ControlLevel::NONE, motion::ControlLevel::VELOCITY,
       val, 0, true, false);
 
@@ -178,7 +192,7 @@ TEST_F(SetpointRouterTest, VelocityWorldToBody) {
   setNavPos(0, 0, 0, 0, 0, M_PI_2);
 
   float val[6] = {0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f};  // 世界 Y 方向 1m/s
-  router_.route(
+  route(
       motion::ControlLevel::NONE, motion::ControlLevel::VELOCITY,
       val, 0, false, false);
 
@@ -191,20 +205,20 @@ TEST_F(SetpointRouterTest, VelocityWorldToBody) {
 // 模式切换 — 无扰动对齐
 // ============================================================================
 
-TEST_F(SetpointRouterTest, BumplessTransitionToPosition) {
+TEST_F(SetpointRouterTest, FullyMaskedCommandLeavesTargetsAndModesUnchanged) {
   setNavPos(5.0f, 3.0f, -1.0f, 0.0f, 0.0f, 0.5f);
 
-  // 从 NONE 切换到 POSITION（传 val 但用 mask 全屏蔽来验证 bumpless）
+  // mask 全屏蔽时不更新任何轴，也不切换任何轴的模式。
   float val[6] = {99.0f, 99.0f, 99.0f, 99.0f, 99.0f, 99.0f};
-  router_.route(
+  auto lv = route(
       motion::ControlLevel::NONE, motion::ControlLevel::POSITION,
       val, 0xFFFF, false, false);  // mask=全1 → 跳过所有轴
 
   auto sp = auv::motion::motion_context.current_setpoint_.get();
-  // mask 全屏蔽后保留 bumpless 快照值
-  EXPECT_FLOAT_EQ(sp.pos_world[0], 5.0f);
-  EXPECT_FLOAT_EQ(sp.pos_world[1], 3.0f);
-  EXPECT_FLOAT_EQ(sp.pos_world[2], -1.0f);
+  EXPECT_EQ(lv, motion::ControlLevel::NONE);
+  EXPECT_FLOAT_EQ(sp.pos_world[0], 0.0f);
+  EXPECT_FLOAT_EQ(sp.pos_world[1], 0.0f);
+  EXPECT_FLOAT_EQ(sp.pos_world[2], 0.0f);
 }
 
 // ============================================================================
@@ -213,7 +227,7 @@ TEST_F(SetpointRouterTest, BumplessTransitionToPosition) {
 
 TEST_F(SetpointRouterTest, ActuatorDirectThrust) {
   float val[6] = {0.3f, 0.0f, 0.0f, 0.2f, -0.1f, 0.4f};
-  router_.route(
+  route(
       motion::ControlLevel::NONE, motion::ControlLevel::ACTUATOR,
       val, 0, true, false);
 
@@ -228,7 +242,7 @@ TEST_F(SetpointRouterTest, ActuatorWorldWrenchTransformsForceAndMoment) {
   // 世界系绕 Z 旋转 90°：世界 +X 力和 +X 力矩应分别变为机体系 -Y。
   setNavPos(0, 0, 0, 0, 0, M_PI_2);
   float world_wrench[6] = {1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
-  router_.route(motion::ControlLevel::NONE, motion::ControlLevel::ACTUATOR,
+  route(motion::ControlLevel::NONE, motion::ControlLevel::ACTUATOR,
                 world_wrench, 0, false, false);
 
   auto sp = auv::motion::motion_context.current_setpoint_.get();
@@ -240,15 +254,15 @@ TEST_F(SetpointRouterTest, ActuatorWorldWrenchTransformsForceAndMoment) {
 
 TEST_F(SetpointRouterTest, RollPitchSetpointsAreForwardedToRouter) {
   float pos[6] = {1.0f, 2.0f, 3.0f, 1.1f, -1.2f, 0.3f};
-  router_.route(motion::ControlLevel::NONE, motion::ControlLevel::POSITION,
+  route(motion::ControlLevel::NONE, motion::ControlLevel::POSITION,
                 pos, 0, false, false);
 
   float vel[6] = {0.1f, 0.2f, 0.3f, 1.1f, -1.2f, 0.4f};
-  router_.route(motion::ControlLevel::POSITION,
+  route(motion::ControlLevel::POSITION,
                 motion::ControlLevel::VELOCITY, vel, 0, true, false);
 
   float wrench[6] = {0.1f, 0.2f, 0.3f, 0.8f, -0.9f, 0.5f};
-  router_.route(motion::ControlLevel::VELOCITY,
+  route(motion::ControlLevel::VELOCITY,
                 motion::ControlLevel::ACTUATOR, wrench, 0, true, false);
 
   auto sp = auv::motion::motion_context.current_setpoint_.get();
@@ -268,7 +282,7 @@ TEST_F(SetpointRouterTest, ModeSwitchWithNullVal) {
   // 从 NONE→POSITION，val 会被 route 读取（非 bumpless 场景也会处理 val）
   // 所以传空指针会崩溃，这里用全零替代
   float val[6] = {0,0,0,0,0,0};
-  router_.route(
+  route(
       motion::ControlLevel::NONE, motion::ControlLevel::POSITION,
       val, 0, false, false);
 

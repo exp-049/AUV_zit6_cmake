@@ -21,9 +21,9 @@ std::array<float, 6> ChassisManager::update() { return controller_.update(); }
 void ChassisManager::updateSetpoint(auv::motion::ControlLevel new_level,
                                     const float val[6], uint32_t mask,
                                     bool is_body, bool is_inc) {
-  auto lv = router_.route(controller_.getControlLevel(), new_level, val, mask,
-                          is_body, is_inc);
-  controller_.setControlLevel(lv);
+  auto levels = router_.route(controller_.getAxisControlLevels(), new_level,
+                              val, mask, is_body, is_inc);
+  controller_.setAxisControlLevels(levels);
 }
 
 void ChassisManager::setControlLevel(auv::motion::ControlLevel new_level) {

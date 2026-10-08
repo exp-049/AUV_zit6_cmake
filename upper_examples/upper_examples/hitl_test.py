@@ -7,7 +7,7 @@ control_key 编码:
   bits 0-1: level (0=POSITION, 1=VELOCITY, 2=ACTUATOR)
   bit  4   : is_body  (0=world frame, 1=body frame)
   bit  5   : is_inc   (0=absolute, 1=incremental)
-  type_mask: bit set = skip axis (bit0=X, bit1=Y, bit2=Z, bit5=Yaw); Roll/Pitch are bypassed
+  type_mask: bit set = keep that axis target and mode (bit0=X, bit1=Y, bit2=Z, bit5=Yaw); Roll/Pitch are bypassed
 
 测试场景一览:
   1. frame_world_pos     世界系位置指令

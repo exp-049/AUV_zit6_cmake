@@ -29,8 +29,12 @@ public:
 
   /**
    * @brief 获取当前控制层级
+   * @return 全轴同模式时返回该模式，否则返回 MIXED
    */
   auv::motion::ControlLevel getControlLevel() const;
+
+  /** @brief 获取各控制轴当前使用的模式 */
+  auv::motion::AxisControlLevels getAxisControlLevels() const;
 
   /**
    * @brief 执行 100Hz 级联控制演进 (固定 dt=0.01s)
@@ -43,10 +47,12 @@ public:
   std::array<float, 6> update();
 
   /**
-   * @brief 切换控制层级 (Bumpless Transition)
-   * @param new_level 目标控制层级
+   * @brief 将所有轴切换到相同控制层级
    */
   void setControlLevel(auv::motion::ControlLevel new_level);
+
+  /** @brief 逐轴切换控制层级，并对发生切换的轴做无扰动对齐 */
+  void setAxisControlLevels(const auv::motion::AxisControlLevels &new_levels);
 
   /**
    * @brief 配置指定轴的 PID 参数
@@ -71,6 +77,7 @@ public:
 
 private:
   auv::motion::ControlLevel level_ = auv::motion::ControlLevel::NONE;
+  auv::motion::AxisControlLevels axis_levels_{};
 
   std::array<KinematicProfile, 6> profiles_; ///< 6轴影子平滑器矩阵
   std::array<PID_Controller, 6> pos_pids_;   ///< 6个位置环 PID

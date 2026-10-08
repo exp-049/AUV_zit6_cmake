@@ -172,6 +172,7 @@ class MotionControlWidget(QWidget):
         
         # 掩码组 (type_mask)
         mask_group = QGroupBox("控制轴掩码状态 (Type Mask)")
+        mask_group.setToolTip("bit=1 时该轴目标和控制模式保持不变；bit=0 时更新目标并切换到当前所选模式")
         mask_layout = QHBoxLayout(mask_group)
         mask_layout.setContentsMargins(10, 12, 10, 12)
         
@@ -525,7 +526,13 @@ class MotionControlWidget(QWidget):
             self.lbl_arm_mode.setText(f"UNKNOWN ({msg.arm_mode})")
             
         # 3. 控制层级
-        levels = {0: "NONE (0) [安全挂起]", 1: "POS (1) [位置环]", 2: "VEL (2) [速度环]", 3: "FORCE (3) [直接力控]"}
+        levels = {
+            0: "NONE (0) [安全挂起]",
+            1: "POS (1) [位置环]",
+            2: "VEL (2) [速度环]",
+            3: "FORCE (3) [直接力控]",
+            4: "MIXED (4) [逐轴混合]",
+        }
         self.lbl_control_level.setText(levels.get(msg.control_level, f"UNKNOWN ({msg.control_level})"))
         
         # 4. 惯导状态

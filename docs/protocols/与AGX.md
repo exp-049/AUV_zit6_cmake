@@ -72,7 +72,7 @@ uint32 seq
 
 #### `type_mask` 定义
 
-`type_mask` 的语义是：**bit 置 1 表示跳过该轴，不更新该轴目标**。
+`type_mask` 的语义是：**bit 置 1 表示跳过该轴**；该轴的目标和控制模式都保持不变。bit 为 0 的轴更新目标，并切换到本条指令指定的控制模式。
 
 | bit | 轴 | 含义 |
 |---|---|---|
@@ -87,6 +87,9 @@ uint32 seq
 - `type_mask = 0`：更新实际控制的 X/Y/Z/Yaw；Roll/Pitch 字段仍被旁路
 - `type_mask = 32`：跳过 Yaw，只更新 X/Y/Z
 - `type_mask = 62`：只更新 X，保持 Y/Z/Yaw 不变；Roll/Pitch 始终旁路
+
+控制模式按轴生效。例如，先对所有轴发送 POSITION，再发送
+`control_key = 17`、`type_mask = 31` 的 VELOCITY 指令，只会把 Yaw 切换为机体系角速度控制；X/Y/Z 继续使用原有位置目标。整体状态会报告 `control_level = 4`（MIXED）。
 
 这和旧文档里“mask=1|2 表示不控制 X 和 Y”的解释方向一致，但要特别强调：**这是 skip mask，不是 enable mask**。
 
@@ -220,6 +223,8 @@ float32 cycle_time_ms
 float32 battery_voltage
 uint32 error_flags
 ```
+
+`control_level` 的 `0/1/2/3` 分别表示 NONE/POSITION/VELOCITY/ACTUATOR；`4` 表示逐轴模式不同（MIXED）。
 
 说明：
 - `forces` 当前是 6 元素：`[Fx, Fy, Fz, Mroll, Mpitch, Myaw]`
@@ -375,19 +380,30 @@ ros2 topic pub /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{control_key:
 - `17 = 0x10 | 0x01`：Body + Velocity
 - `62 = 0b111110`：仅更新 X，跳过 Y/Z/Roll/Pitch/Yaw
 
-### 7.5 查询全部参数
+### 7.5 保持 XYZ 位置，同时只给 Yaw 角速度
+
+先发送位置目标，再发送只更新 Yaw 的机体系速度指令：
+
+```bash
+ros2 topic pub /zit6/cmd/setpoint zit6_interfaces/msg/ZitSetpoint '{control_key: 17, type_mask: 31, x: 0.0, y: 0.0, z: 0.0, roll: 0.0, pitch: 0.0, yaw: 0.2, seq: 3}'
+```
+
+`31` 跳过 X/Y/Z/Roll/Pitch，只更新 Yaw；`yaw` 是机体系角速度，单位 rad/s。X/Y/Z 保留原有的位置模式和目标，整体 `control_level` 报告为 `4`（MIXED）。
+若位置指令仍周期发送，需在位置指令中继续屏蔽 Yaw（`type_mask` bit 5 置 1），否则每条全轴 POSITION 指令都会把 Yaw 模式切回 POSITION。
+
+### 7.6 查询全部参数
 
 ```bash
 ros2 service call /zit6/get_params zit6_interfaces/srv/GetParams '{paths: []}'
 ```
 
-### 7.6 JSON 方式更新参数
+### 7.7 JSON 方式更新参数
 
 ```bash
 ros2 service call /zit6/update_params zit6_interfaces/srv/UpdateParams '{json: "{\"chassis\":{\"x\":{\"vel_kp\":1.2}}}", paths: [], values: []}'
 ```
 
-### 7.7 路径方式更新参数
+### 7.8 路径方式更新参数
 
 ```bash
 ros2 service call /zit6/update_params zit6_interfaces/srv/UpdateParams '{json: "", paths: ["chassis.x.vel_kp"], values: ["1.2"]}'
